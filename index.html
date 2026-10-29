@@ -118,7 +118,13 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .segline .c.extra::after{background:var(--bad);opacity:.35}
 .segline .c.p{color:var(--muted)}
 .chunks{font-family:var(--f-zh);font-size:19px;line-height:1.9}
-.chunks span{border-bottom:2px solid var(--accent);margin-right:6px}
+.chunks span{border-bottom:2px solid var(--accent);margin-right:8px;white-space:nowrap}
+.how{background:var(--bg);border-radius:12px;padding:12px 14px;font-size:13.5px;display:flex;flex-direction:column;gap:6px}
+.how-ex{font-size:20px}
+.how-ex i,.chunks i.may{display:inline-block;width:0;height:1em;margin:0 6px;vertical-align:-2px}
+.how-ex i.must{border-left:3px solid var(--accent)}
+.how-ex i.may,.chunks i.may{border-left:2px dotted var(--muted)}
+.offline{position:sticky;top:env(safe-area-inset-top,0px);z-index:8;background:var(--gold-soft);color:var(--ink);border-radius:10px;padding:8px 12px;font-size:13px}
 /* reader */
 .plist{display:flex;flex-direction:column;gap:10px}
 .pitem{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:6px}
@@ -217,12 +223,13 @@ async function connectRemote() {
     DB = db; UID = id;
     const snap = await DB.doc("data/users/" + UID + "/state").get();
     if (snap.exists) {
-      const remote = snap.data();
-      if ((remote.updatedAt || 0) > (S.updatedAt || 0)) {
-        S = Object.assign(freshState(), JSON.parse(JSON.stringify(remote)));
+      const remote = JSON.parse(JSON.stringify(snap.data()));
+      if ((remote.updatedAt || 0) !== (S.updatedAt || 0)) {
+        S = mergeStates(S, remote); indexGen();
         try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
+        remoteDirty = true; pushRemote();
         if (!busyView()) render();
-      } else if ((S.updatedAt || 0) > (remote.updatedAt || 0)) { remoteDirty = true; pushRemote(); }
+      }
     } else if (S.updatedAt) { remoteDirty = true; pushRemote(); }
     syncNote = "进度已同步到你的 Claude 账号（手机和电脑通用）";
     if (VIEW === "me") render();
@@ -230,9 +237,50 @@ async function connectRemote() {
 }
 let syncNote = window.claude ? "正在连接同步…" : "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
 
+/* ============ merge two saved states (sync + import never lose work) ============ */
+function mergeStates(a, b) {
+  const newerFirst = (a.updatedAt || 0) >= (b.updatedAt || 0);
+  const m = Object.assign(freshState(), JSON.parse(JSON.stringify(newerFirst ? a : b)));
+  const o = JSON.parse(JSON.stringify(newerFirst ? b : a));
+  for (const id in o.items || {}) {
+    const x = o.items[id], y = m.items[id];
+    if (!y || (x.n || 0) > (y.n || 0) || ((x.n || 0) === (y.n || 0) && (x.due || 0) > (y.due || 0))) m.items[id] = x;
+  }
+  for (const k in o.bank || {}) if (!m.bank[k]) m.bank[k] = o.bank[k];
+  for (const k in o.reads || {}) if (!m.reads[k] || (o.reads[k].t || 0) > (m.reads[k].t || 0)) m.reads[k] = o.reads[k];
+  for (const d in o.log || {}) {
+    const x = o.log[d], y = m.log[d];
+    m.log[d] = !y ? x : { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
+  }
+  const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
+  m.gen = { ladder: byId(m.gen.ladder || [], (o.gen || {}).ladder || [], "id"), passages: byId(m.gen.passages || [], (o.gen || {}).passages || [], "id") };
+  m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
+  m.pending = byId(m.pending || [], o.pending || [], "k");
+  m.graded = byId(m.graded || [], o.graded || [], "k").sort((p, q) => q.t - p.t).slice(0, 20);
+  m.best = { combo: Math.max((m.best || {}).combo || 0, (o.best || {}).combo || 0) };
+  m.placed = !!(m.placed || o.placed);
+  if (!m.skills && o.skills) { m.skills = o.skills; m.recent = o.recent || {}; }
+  for (const k of ["segSeen", "lastExport", "lastImport"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
+  m.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
+  return m;
+}
+
+/* ============ connection status ============ */
+const HOSTED = !!(window.claude && window.claude.use);
+let ONLINE = navigator.onLine !== false;
+function drawOffline() {
+  let b = $("#offbar");
+  if (!HOSTED || ONLINE) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
+  b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
+}
+addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); if (DB && UID) { remoteDirty = true; pushRemote(); } });
+addEventListener("offline", () => { ONLINE = false; drawOffline(); });
+let PERSISTED = null;
+
 /* ============ AI (Claude-hosted only) ============ */
 let AI = null;
-if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); }).catch(() => {});
+if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); }).catch(() => {});
 function aiErr(e) {
   const c = e && e.code;
   if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
@@ -299,7 +347,10 @@ function parseSeg(s) {
   const fixed = new Set();
   for (let i = 0; i < chars.length - 1; i++) if (isPunct(chars[i]) || isPunct(chars[i + 1])) fixed.add(i);
   for (const b of fixed) { req.delete(b); opt.delete(b); }
-  return { chars, req, opt, fixed, spans };
+  // every other gap is inside a word: cutting there is a mistake
+  const inside = new Set();
+  for (let i = 0; i < chars.length - 1; i++) if (!req.has(i) && !opt.has(i) && !fixed.has(i)) inside.add(i);
+  return { chars, req, opt, fixed, inside, spans };
 }
 
 /* ============ SRS ============ */
@@ -420,6 +471,8 @@ function renderHome(main) {
   ${!S.placed ? `<div class="card"><span class="label">第一步 · First step</span><h2>先做水平测试（约 10 分钟）</h2>
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
+  ${gradedCard()}
+  ${backupNudge()}
   <div class="card"><div class="spread"><h2>今天练多久？</h2><span class="small muted">${dueN ? dueN + " 题到期" : "没有积压"}</span></div>
     <div class="times">
       <button class="time hot" data-min="0.5"><b>30</b><span>秒 · 1 题</span></button>
@@ -434,8 +487,32 @@ function renderHome(main) {
   <div class="card"><span class="label">为什么这样排 · Why this mix</span>
     <p class="small">${S.placed ? mixReason() : "Until you take the test, the mix assumes your Anki pattern: strong recognition, weak production. Production gets the biggest share."}</p></div>`;
   $$(".time", main).forEach(b => b.onclick = () => startSession(+b.dataset.min));
+  const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
+  const bk = $("#backup-go", main); if (bk) bk.onclick = () => setView("me");
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
   const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
+}
+function gradedCard() {
+  const g = (S.graded || []).filter(x => !x.seen);
+  const waiting = (S.pending || []).length;
+  if (!g.length && !waiting) return "";
+  const lab = sc => sc >= 3 ? "对了 ✓" : sc === 2 ? "意思对，可以更地道" : "还不对";
+  return `<div class="card"><span class="label">离线答案的批改 · Feedback on answers you wrote offline</span>
+    ${waiting ? `<p class="small muted">${waiting} 条等待批改 waiting for Claude${ONLINE ? "" : " (offline)"}</p>` : ""}
+    ${g.map(x => `<div class="fb ${x.score >= 3 ? "ok" : x.score === 2 ? "mid" : "no"}"><span class="small muted">${esc(x.en)}</span>
+      <span class="verdict">${lab(x.score)}${x.self != null && (x.self >= 2) !== (x.score >= 2) ? ` <span class="small">(你自评 ${x.self >= 2 ? "对" : "不对"}; level adjusted)</span>` : ""}</span>
+      <span>你的：<span class="zh">${esc(x.raw)}</span></span>
+      ${x.fixed && norm(x.fixed) !== norm(x.raw) ? `<span>改一改：<span class="zh">${esc(x.fixed)}</span></span>` : ""}
+      ${x.notes.length ? `<ul>${x.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+      <span class="small muted">参考：${esc(x.model)}</span></div>`).join("")}
+    ${g.length ? `<button class="btn ghost" id="graded-ok">知道了 Got it</button>` : ""}</div>`;
+}
+function backupNudge() {
+  if (HOSTED) return "";
+  const practicedSince = (S.updatedAt || 0) > (S.lastExport || 0) + MIN;
+  if (!practicedSince || now() - (S.lastExport || 0) < 4 * DAY || !Object.keys(S.items).length) return "";
+  return `<div class="card"><span class="label">备份 · Backup</span><p class="small">This offline copy only keeps progress on this device. Last copied out: <b>${ago(S.lastExport)}</b>. Copy a code (and merge it into the online version when you can).</p>
+    <button class="btn soft" id="backup-go">去导出 Go to export</button></div>`;
 }
 function mixReason() {
   const k = ["ctx", "seg", "news", "pick", "write", "speed"].map(x => [x, skillVal(x)]).sort((a, b) => a[1] - b[1]);
@@ -499,6 +576,7 @@ function renderCard(card, el, onResult, onNext) {
   if (card.t === "ctx") return renderCtx(card.item || CTX.get(card.id), el, onResult, onNext, card.placement);
   if (card.t === "bank") return renderBank(card.id, el, onResult, onNext);
   if (card.t === "news") return renderNews(card.item, el, onResult, onNext);
+  if (card.t === "pick") return renderPick(card.item, el, onResult, onNext);
 }
 function nextButton(el, onNext, label = "继续 Continue") {
   const b = document.createElement("button"); b.className = "btn wide"; b.textContent = label; b.onclick = () => { document.removeEventListener("keydown", kd); onNext(); };
@@ -513,7 +591,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     <p class="prompt-en">${esc(item.en)}</p>`;
   el.innerHTML = `<div class="card" id="cc">${head}<div id="body" class="stack"></div><div id="fb"></div></div>`;
   const body = $("#body", el), fb = $("#fb", el), cc = $("#cc", el);
-  let answered = false;
+  let answered = false, given = "";
   const finish = (score, html) => {
     if (answered) return; answered = true;
     let promoted = false, mastered = false;
@@ -524,7 +602,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
       <span class="model">${esc(p.model)}</span>
       ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 2).map(esc).join(" ／ ")}</span>` : ""}
       <span>${esc(item.why)}</span></div>`;
-    onResult({ ok: score >= 2, score, promoted, mastered });
+    onResult({ ok: score >= 2, score, promoted, mastered, given });
     nextButton(cc, onNext);
   };
   if (rung === 1 || rung === 2) {
@@ -536,7 +614,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     }
     body.insertAdjacentHTML("beforeend", `<div class="opts">${opts.map((o, i) => `<button class="opt zh" data-i="${i}">${esc(o)}</button>`).join("")}</div>`);
     $$(".opt", body).forEach(b => b.onclick = () => {
-      const pick = opts[+b.dataset.i];
+      const pick = opts[+b.dataset.i]; given = pick;
       $$(".opt", body).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === correct) x.classList.add("right"); });
       if (pick !== correct) b.classList.add("wrong");
       finish(pick === correct ? 3 : 0);
@@ -555,7 +633,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     $$("#tiles .tile", body).forEach(b => b.onclick = () => { if (answered) return; built.push(+b.dataset.j); draw(); });
     $("#undo", body).onclick = () => { if (answered) return; built.pop(); draw(); };
     $("#check", body).onclick = () => {
-      const ans = norm(built.map(j => tiles[j].t).join(""));
+      const ans = norm(built.map(j => tiles[j].t).join("")); given = built.map(j => tiles[j].t).join(" ");
       $("#check", body).disabled = true; $("#undo", body).disabled = true;
       finish(accepted(item).has(ans) ? 3 : 0, accepted(item).has(ans) ? "" : `<span>你的：<span class="zh">${esc(built.map(j => tiles[j].t).join(" "))}</span></span>`);
     };
@@ -569,33 +647,81 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     $("#giveup", body).onclick = () => { $("#check", body).disabled = true; $("#giveup", body).disabled = true; ta.disabled = true; finish(0); };
     $("#check", body).onclick = async () => {
       const raw = ta.value.trim(); if (!raw) { ta.focus(); return; }
+      given = raw;
       $("#check", body).disabled = true; $("#giveup", body).disabled = true; ta.disabled = true;
       if (accepted(item).has(norm(raw))) return finish(3);
-      if (AI) {
+      const queue = () => queueGrade(item, rung, raw, placement);
+      if (AI && ONLINE) {
         fb.innerHTML = `<div class="fb mid"><span><span class="spin"></span> 批改中… Claude is reading your answer</span><button class="btn ghost" id="selfg">不等了，自己判断 Grade it myself</button></div>`;
-        let cancelled = false;
-        $("#selfg", fb).onclick = () => { cancelled = true; selfGrade(raw); };
+        let cancelled = false, entry = null;
+        $("#selfg", fb).onclick = () => { cancelled = true; entry = queue(); selfGrade(raw, entry, true); };
         try {
           const g = await gradeAI(item, raw);
-          if (cancelled || answered) return;
+          if (cancelled || answered) { if (entry) settleGrade(entry, g); return; }
           const sc = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
           const notes = (Array.isArray(g.notes) ? g.notes : []).slice(0, 3);
           finish(sc, `<span>你的：<span class="zh">${esc(raw)}</span></span>
             ${g.fixed && norm(g.fixed) !== norm(raw) ? `<span>改一改：<span class="zh" style="font-size:17px">${esc(g.fixed)}</span></span>` : ""}
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
             ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`);
-        } catch (e) { if (!cancelled && !answered) { toast(aiErr(e)); selfGrade(raw); } }
-      } else selfGrade(raw);
+        } catch (e) {
+          if (cancelled || answered) return;
+          const transient = !ONLINE || !e || !e.code || e.code === "upstream_error" || e.code === "rate_limited";
+          if (transient && AI) selfGrade(raw, queue(), false);
+          else { toast(aiErr(e)); selfGrade(raw); }
+        }
+      } else if (AI) selfGrade(raw, queue(), false);
+      else selfGrade(raw);
     };
-    function selfGrade(raw) {
+    function selfGrade(raw, entry, waiting) {
       fb.innerHTML = `<div class="fb mid"><span>你的：<span class="zh" style="font-size:18px">${esc(raw)}</span></span>
         <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span>
         ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 3).map(esc).join(" ／ ")}</span>` : ""}
+        ${entry ? `<span class="small">${waiting ? "Claude 的批改到了会放在首页。Claude's feedback will appear on the home screen when it arrives." : "现在连不上 Claude。先自己判断；联网后 Claude 会补批改，结果放在首页。Can't reach Claude right now, so grade yourself; Claude's feedback will appear on the home screen once you're back online."}</span>` : ""}
         <span class="small">自己判断 How did you do?</span>
         <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
-      $$("[data-s]", fb).forEach(b => b.onclick = () => finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`));
+      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`); });
     }
   }
+}
+/* ---------- grading queue: answers written while Claude was unreachable ---------- */
+function queueGrade(item, rung, raw, placement) {
+  const entry = { k: item.id + ":" + now(), id: item.id, rung, raw, t: now(), self: null, pl: !!placement };
+  (S.pending = S.pending || []).push(entry);
+  if (S.pending.length > 30) S.pending = S.pending.slice(-30);
+  save();
+  return entry;
+}
+function settleGrade(entry, g) {
+  const item = LADDER.get(entry.id);
+  S.pending = (S.pending || []).filter(x => x.k !== entry.k);
+  if (!item) { save(); return; }
+  const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
+  (S.graded = S.graded || []).unshift({ k: entry.k, id: entry.id, en: item.en, raw: entry.raw, score, self: entry.self, fixed: String(g.fixed || ""), good: String(g.good || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), model: ladParts(item).model, t: now(), seen: false });
+  S.graded = S.graded.slice(0, 20);
+  // if Claude disagrees with the self-grade, correct the drill's level
+  const it = S.items[entry.id];
+  if (it && !entry.pl && entry.self != null) {
+    const selfPass = entry.self >= 2, aiPass = score >= 2;
+    if (selfPass && !aiPass) { it.r = Math.max(1, it.r - 2); it.m = false; it.due = now(); }
+    else if (!selfPass && aiPass) { it.r = Math.min(5, it.r + 1); }
+  }
+  save();
+  if (VIEW === "home") render();
+}
+let GRADING = false;
+async function processPending() {
+  if (GRADING || !AI || !ONLINE || !(S.pending || []).length) return;
+  GRADING = true;
+  try {
+    for (const entry of S.pending.slice(0, 10)) {
+      if (entry.self == null && now() - entry.t < 5 * MIN) continue; // still on screen, not yet self-graded
+      const item = LADDER.get(entry.id);
+      if (!item) { S.pending = S.pending.filter(x => x.k !== entry.k); continue; }
+      try { settleGrade(entry, await gradeAI(item, entry.raw)); }
+      catch (e) { if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
+    }
+  } finally { GRADING = false; }
 }
 async function gradeAI(item, answer) {
   const p = ladParts(item);
@@ -610,31 +736,40 @@ Score: 3 = natural and correct (a native speaker would say it this way); 2 = cor
 Reply with only JSON: {"score": 0-3, "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "good": "one short note on what they did right, or empty string", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
   return AI.json(prompt, { modelTier: "default", effort: "low" });
 }
+const SEG_HOW = `<div class="how"><b>怎么切 · How it's scored</b>
+  <p class="zh how-ex">解放碑<i class="must"></i>附近<i class="must"></i>那家<i class="may"></i>小面<i class="must"></i>真的<i class="may"></i>绝</p>
+  <p>Cut where you feel a break between <b>chunks</b> (solid bars). Inside a chunk, cutting between words is optional (dotted): 那家小面 and 那家|小面 both count. It's only wrong if you <b>cut through a word</b> (解放|碑附) or <b>miss a chunk break</b>.</p></div>`;
 function renderSeg(item, el, onResult, onNext, placement) {
   const P = parseSeg(item.s);
   const cuts = new Set();
-  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">断词 · Chunking</span><span class="chip ${item.reg}">${{ news: "新闻 News", xhs: "小红书", book: "书面 Book" }[item.reg] || ""}</span></div>
-    <p class="small muted">点字，在它后面切一刀，把句子分成词块。Tap a character to cut after it. Split into the words/chunks you'd read as units.</p>
+  const showHow = (S.segSeen || 0) < 3;
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">断词 · Chunking</span><span class="chip ${item.reg}">${{ news: "新闻 News", xhs: "小红书", book: "书面 Book", trap: "陷阱 Trap" }[item.reg] || ""}</span></div>
+    <p class="small muted">点字，在它后面切一刀。Tap a character to cut after it; tap again to undo.</p>
+    ${showHow ? SEG_HOW : `<details><summary class="small muted">怎么算分 How it's scored</summary>${SEG_HOW}</details>`}
     <div class="segline" id="sl">${P.chars.map((ch, i) => `<span class="c ${isPunct(ch) ? "p" : (i < P.chars.length - 1 && !P.fixed.has(i) ? "tap" : "")}" data-i="${i}">${esc(ch)}</span>`).join("")}</div>
     <button class="btn" id="check">检查 Check</button><div id="fb"></div></div>`;
   const cc = $("#cc", el);
   $$(".c.tap", el).forEach(s => s.onclick = () => { const i = +s.dataset.i; if (cuts.has(i)) cuts.delete(i); else cuts.add(i); s.classList.toggle("cut", cuts.has(i)); });
   $("#check", el).onclick = () => {
     $("#check", el).remove();
-    let missed = 0, extra = 0;
+    S.segSeen = (S.segSeen || 0) + 1;
+    let missed = 0, broke = 0;
+    const given = P.chars.map((ch, i) => ch + (cuts.has(i) ? "|" : "")).join("");
     $$(".c", el).forEach(s => {
       const i = +s.dataset.i; s.classList.remove("tap"); s.onclick = null;
       if (P.req.has(i) && !cuts.has(i)) { missed++; s.classList.add("miss"); }
-      else if (cuts.has(i) && !P.req.has(i) && !P.opt.has(i)) { extra++; s.classList.add("extra"); }
+      else if (cuts.has(i) && P.inside.has(i)) { broke++; s.classList.add("extra"); }
     });
-    const score = Math.max(0, 1 - (missed + extra) / Math.max(1, P.req.size));
-    const ok = score >= 0.85;
-    if (!placement) recordBox(item.id, "seg", ok, "seg"); else pushRecent("seg", score);
-    const chunks = item.s.split("|").map(t => t.replace(/\//g, "")).filter(t => !isPunct(t));
-    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : score >= .6 ? "mid" : "no"}"><span class="verdict">${pct(score)} · 漏切 ${missed} · 多切 ${extra}</span>
-      <div class="chunks">${chunks.map(c => `<span>${esc(c)}</span>`).join("")}</div><span>${esc(item.en)}</span>
-      <span class="small muted">红线 = 该切没切 (missed). 淡红 = 不该切 (extra). Particles like 了/的 can go either way.</span></div>`;
-    onResult({ ok, score });
+    const errors = missed + broke;
+    const score = Math.max(0, 1 - errors / Math.max(2, P.req.size));
+    const ok = errors === 0 || (errors === 1 && P.req.size >= 4);
+    if (!placement) recordBox(item.id, "seg", ok, "seg"); else save();
+    const chunks = item.s.split("|").filter(t => !Array.from(t).every(isPunct));
+    $("#fb", el).innerHTML = `<div class="fb ${errors === 0 ? "ok" : ok ? "mid" : "no"}"><span class="verdict">${errors === 0 ? "全对 ✓" : `漏切 ${missed} · 切断了词 ${broke}`}</span>
+      <div class="chunks">${chunks.map(c => `<span>${c.split("/").map(esc).join('<i class="may"></i>')}</span>`).join("")}</div>
+      ${item.note ? `<span>${esc(item.note)}</span>` : ""}<span>${esc(item.en)}</span>
+      ${errors ? `<span class="small muted">红线 = missed chunk break · 淡红 = cut through a word</span>` : ""}</div>`;
+    onResult({ ok, score, given });
     nextButton(cc, onNext);
   };
 }
@@ -652,8 +787,9 @@ function renderCtx(item, el, onResult, onNext, placement) {
     $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
     if (!ok) b.classList.add("wrong");
     if (!placement) recordBox(item.id, "ctx", ok, "ctx");
+    const given = opts[+b.dataset.i];
     $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span><span class="zh" style="font-size:20px">${esc(item.w)}</span> ${d ? esc(d.py) + " · " + esc(d.gl) : ""}</span><span>${esc(item.en)}</span></div>`;
-    onResult({ ok, score: ok ? 1 : 0 });
+    onResult({ ok, score: ok ? 1 : 0, given });
     nextButton(cc, onNext);
   });
 }
@@ -686,57 +822,121 @@ function renderNews(item, el, onResult, onNext) {
     const ok = opts[+b.dataset.i] === right;
     $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
     if (!ok) b.classList.add("wrong");
-    onResult({ ok, score: ok ? 1 : 0 });
+    onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i] });
+    nextButton(cc, onNext);
+  });
+}
+function renderPick(item, el, onResult, onNext) {
+  const right = item.opts[0], opts = shuffle(item.opts);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">选最自然 · Most natural</span></div>
+    <p class="prompt-en">${esc(item.en)}</p><p class="small muted">哪一句最像中国人会说的？ Which would a native speaker actually say?</p>
+    <div class="opts">${opts.map((o, i) => `<button class="opt zh" data-i="${i}">${esc(o)}</button>`).join("")}</div><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  $$(".opt", el).forEach(b => b.onclick = () => {
+    const ok = opts[+b.dataset.i] === right;
+    $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
+    if (!ok) b.classList.add("wrong");
+    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span>${esc(item.why)}</span></div>`;
+    onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i] });
     nextButton(cc, onNext);
   });
 }
 
-/* ---------- placement ---------- */
+/* ---------- placement (adaptive) ---------- */
+// Each adaptive section is a staircase over levels (easiest first): right -> up a level, wrong -> down a level.
+// It stops after 2 misses at one level, after the top level is passed twice, or after MAX_STEPS items.
+const SECTIONS = [
+  { key: "ctx", zh: "语境词", en: "Words inside real sentences. It starts easy and gets harder each time you're right, until you start missing. Missing some is expected." },
+  { key: "seg", zh: "断词", en: "Split sentences into chunks. The last level has trap sentences where a wrong cut changes the words." },
+  { key: "news", zh: "新闻理解", en: "One-sentence news items in formal written Chinese, getting denser as you go." },
+  { key: "pick", zh: "选最自然", en: "English → pick what a native speaker would say. At higher levels every option is grammatical; only one is natural." },
+  { key: "write", zh: "自己写", en: "Five sentences to type in Chinese. Don't look anything up." },
+  { key: "read", zh: "限时阅读", en: "Read a short post at your normal pace, then answer 3 questions without looking back. The clock runs while you read." }
+];
+const MAX_STEPS = 9;
 function startPlacement() {
   const pl = C.placement;
-  const steps = [];
-  steps.push({ intro: "语境词", en: "Words you marked as known in Anki — now inside real sentences." });
-  pl.ctx.forEach((item, i) => steps.push({ sec: "ctx", card: { t: "ctx", item: Object.assign({ id: "PC" + i }, item), placement: true } }));
-  steps.push({ intro: "断词", en: "Split sentences into the chunks you'd read as units." });
-  pl.seg.forEach(id => steps.push({ sec: "seg", card: { t: "seg", id, placement: true } }));
-  steps.push({ intro: "新闻理解", en: "One-sentence news items in formal written register." });
-  pl.news.forEach(item => steps.push({ sec: "news", card: { t: "news", item, placement: true } }));
-  steps.push({ intro: "选最自然", en: "English → pick the most natural Chinese." });
-  pl.pick.forEach(id => steps.push({ sec: "pick", card: { t: "lad", id, r: 1, placement: true } }));
-  steps.push({ intro: "自己写", en: "English → type the Chinese yourself. Don't look anything up." });
-  pl.write.forEach(id => steps.push({ sec: "write", card: { t: "lad", id, r: 5, placement: true } }));
-  steps.push({ intro: "限时阅读", en: "Read a short post at your normal pace, then answer 3 questions. The clock runs while you read." });
-  steps.push({ sec: "read", read: pl.read });
-  PLACE = { steps, i: 0, res: { ctx: [], seg: [], news: [], pick: [], write: [], speed: [], readq: [] }, seen: {} };
+  PLACE = { sec: 0, intro: true, st: null, log: [], res: {}, t0: now(), seen: {} };
   setView("place");
+}
+function stairInit(key) {
+  const levels = C.placement[key];
+  return { key, levels, level: Math.min(2, levels.length) - 1, used: levels.map(() => 0), miss: levels.map(() => 0), best: -1, topPass: 0, steps: 0, done: false, cap: levels.length };
+}
+function stairNext(st) {
+  if (st.done || st.steps >= MAX_STEPS) return null;
+  const pool = st.levels[st.level];
+  if (st.used[st.level] >= pool.length) {
+    // out of items at this level: try a neighbour, else stop
+    const alt = st.level + 1 < st.levels.length && st.used[st.level + 1] < st.levels[st.level + 1].length ? st.level + 1 : st.level - 1;
+    if (alt < 0 || st.used[alt] >= st.levels[alt].length) return null;
+    st.level = alt;
+  }
+  return st.levels[st.level][st.used[st.level]++];
+}
+function stairAnswer(st, ok) {
+  st.steps++;
+  const L = st.level, top = st.levels.length - 1;
+  if (ok) {
+    st.best = Math.max(st.best, L);
+    if (L === top) { st.topPass++; if (st.topPass >= 2) st.done = true; }
+    else st.level = L + 1;
+  } else {
+    st.miss[L]++;
+    if (st.miss[L] >= 2) { st.cap = Math.min(st.cap, L); st.done = true; }
+    else if (L > 0) st.level = L - 1;
+  }
+}
+function stairScore(st) {
+  // levels are 0-based; score = highest level held, as a fraction of all levels
+  const held = Math.min(st.best + 1, st.cap);
+  return Math.max(0.05, held / st.levels.length);
 }
 function renderPlace(main) {
   const P = PLACE;
-  if (P.i >= P.steps.length) return finishPlacement(main);
-  const st = P.steps[P.i];
-  const prog = Math.round(P.i / P.steps.length * 100);
-  main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="退出">×</button><div class="mix" style="flex:1;background:var(--line)"><i style="width:${prog}%;background:var(--accent)"></i></div><span class="small muted">${prog}%</span></div><div id="slot"></div>`;
+  const sec = SECTIONS[P.sec];
+  if (!sec) return finishPlacement(main);
+  const prog = Math.round(P.sec / SECTIONS.length * 100);
+  main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="退出">×</button><div class="mix" style="flex:1;background:var(--line)"><i style="width:${prog}%;background:var(--accent)"></i></div><span class="small muted">${P.sec + 1}/${SECTIONS.length}</span></div><div id="slot"></div>`;
   $("#quit").onclick = () => { PLACE = null; setView("home"); };
   const slot = $("#slot");
-  const next = () => { P.i++; render(); window.scrollTo(0, 0); };
-  if (st.intro) {
-    slot.innerHTML = `<div class="card"><span class="label">下一部分 · Next section</span><h1 class="zh" style="font-size:30px">${esc(st.intro)}</h1><p>${esc(st.en)}</p></div>`;
-    nextButton($(".card", slot), next, "开始 Go");
+  const nextSection = () => { P.sec++; P.intro = true; P.st = null; render(); window.scrollTo(0, 0); };
+  if (P.intro) {
+    slot.innerHTML = `<div class="card"><span class="label">第 ${P.sec + 1} 部分 · Section ${P.sec + 1}</span><h1 class="zh" style="font-size:30px">${esc(sec.zh)}</h1><p>${esc(sec.en)}</p></div>`;
+    nextButton($(".card", slot), () => { P.intro = false; render(); }, "开始 Go");
     return;
   }
-  if (st.read) return placementRead(slot, st.read, next);
-  renderCard(st.card, slot, r => {
-    const k = st.sec;
-    if (k === "write") P.res.write.push(r.score / 3);
-    else if (k === "seg") P.res.seg.push(r.score);
-    else P.res[k].push(r.ok ? 1 : 0);
-    if (st.card.t === "lad") P.seen[st.card.id] = { r: st.card.r, ok: r.ok };
-  }, next);
+  if (sec.key === "read") return placementRead(slot, C.placement.read, nextSection);
+  if (sec.key === "write") {
+    P.wi = P.wi || 0;
+    const ids = C.placement.write;
+    if (P.wi >= ids.length) { P.res.write = (P.res.writeScores || []).reduce((a, b) => a + b, 0) / ids.length; return nextSection(); }
+    const id = ids[P.wi], t0 = now();
+    renderCard({ t: "lad", id, r: 5, placement: true }, slot, r => {
+      (P.res.writeScores = P.res.writeScores || []).push(r.score / 3);
+      P.seen[id] = { r: 5, ok: r.ok };
+      P.log.push({ sec: "write", id, prompt: LADDER.get(id).en, given: r.given || "", score: r.score, ok: r.ok, ms: now() - t0 });
+    }, () => { P.wi++; render(); window.scrollTo(0, 0); });
+    return;
+  }
+  if (!P.st) P.st = stairInit(sec.key);
+  const st = P.st;
+  const item = stairNext(st);
+  if (!item) { P.res[sec.key] = stairScore(st); P.res[sec.key + "Level"] = Math.min(st.best + 1, st.cap); return nextSection(); }
+  const level = st.level, t0 = now();
+  let card;
+  if (sec.key === "ctx") card = { t: "ctx", item: Object.assign({ id: "P:" + item.w }, item), placement: true };
+  else if (sec.key === "news") card = { t: "news", item };
+  else if (sec.key === "pick") card = { t: "pick", item };
+  else card = { t: "seg", id: item, placement: true };
+  renderCard(card, slot, r => {
+    stairAnswer(st, r.ok);
+    P.log.push({ sec: sec.key, level: level + 1, id: typeof item === "string" ? item : (item.w || item.en || item.s), given: r.given || "", ok: r.ok, score: r.score, ms: now() - t0 });
+  }, () => { render(); window.scrollTo(0, 0); });
 }
 function placementRead(slot, pid, next) {
   const p = PSG.get(pid);
-  const chars = p.paras.join("").replace(/[|\/]/g, "");
-  const n = Array.from(chars).filter(c => !isPunct(c)).length;
+  const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
   const t0 = now();
   slot.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">限时阅读 · Timed read</span><span class="chip xhs">小红书</span></div>
     <h2 class="zh" style="font-size:20px">${esc(p.title)}</h2>
@@ -744,45 +944,47 @@ function placementRead(slot, pid, next) {
     <button class="btn wide" id="done">读完了 Done reading</button></div>`;
   $("#done", slot).onclick = () => {
     const sec = (now() - t0) / 1000;
-    const cpm = n / (sec / 60);
-    PLACE.res.cpm = Math.round(cpm);
-    let qi = 0;
+    const cpm = Math.round(n / (sec / 60));
+    PLACE.res.cpm = cpm;
+    let qi = 0, right = 0;
     const askQ = () => {
-      if (qi >= p.qs.length) { PLACE.res.speed.push(Math.min(1, cpm / 320)); return next(); }
+      if (qi >= p.qs.length) {
+        PLACE.res.readAcc = right / p.qs.length;
+        PLACE.res.speed = Math.min(1, cpm / 320) * (0.4 + 0.6 * PLACE.res.readAcc);
+        PLACE.log.push({ sec: "read", id: pid, given: cpm + " cpm", ok: right === p.qs.length, score: right, ms: sec * 1000 });
+        return next();
+      }
       const q = p.qs[qi];
-      const right = q.opts[0], opts = shuffle(q.opts);
-      slot.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${qi + 1}/3 · 不能回看</span><p class="prompt-en">${esc(q.q)}</p>
+      const opts = shuffle(q.opts);
+      slot.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${qi + 1}/3 · 不能回看 No looking back</span><p class="prompt-en">${esc(q.q)}</p>
         <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
-      $$(".opt", slot).forEach(b => b.onclick = () => { PLACE.res.readq.push(opts[+b.dataset.i] === right ? 1 : 0); qi++; askQ(); });
+      $$(".opt", slot).forEach(b => b.onclick = () => { if (opts[+b.dataset.i] === q.opts[0]) right++; qi++; askQ(); });
     };
     askQ();
   };
 }
 function finishPlacement(main) {
   const R = PLACE.res;
-  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0.5;
-  const readAcc = avg(R.readq);
-  const sk = {
-    ctx: avg(R.ctx), seg: avg(R.seg), news: avg(R.news), pick: avg(R.pick), write: avg(R.write),
-    speed: Math.min(1, (R.speed[0] || 0.4) * (0.4 + 0.6 * readAcc))
-  };
+  const sk = { ctx: R.ctx ?? .5, seg: R.seg ?? .5, news: R.news ?? .5, pick: R.pick ?? .5, write: R.write ?? .5, speed: R.speed ?? .4 };
   S.skills = sk; S.placed = true; S.placedAt = now(); S.cpm = R.cpm;
-  // seed placement ladder items
+  S.recent = {}; // fresh start: the new profile shouldn't be diluted by answers from an older test
+  S.placementLog = (S.placementLog || []).concat([{ t: now(), skills: sk, levels: { ctx: R.ctxLevel, seg: R.segLevel, news: R.newsLevel, pick: R.pickLevel }, cpm: R.cpm, readAcc: R.readAcc, answers: PLACE.log }]).slice(-3);
   for (const id in PLACE.seen) {
     const x = PLACE.seen[id];
-    if (!S.items[id]) S.items[id] = { t: "lad", r: x.ok ? Math.min(5, x.r + 1) : Math.max(1, x.r - 2), due: now() + (x.ok ? DAY : 0), ivl: 0, n: 1, ok: x.ok ? 1 : 0, m: false };
+    if (!S.items[id]) S.items[id] = { t: "lad", r: x.ok ? 5 : 3, due: now() + (x.ok ? DAY : 0), ivl: 0, n: 1, ok: x.ok ? 1 : 0, m: false };
   }
   save();
   const names = { ctx: "语境识词 Words in context", seg: "断词 Chunking", news: "书面语理解 News parsing", pick: "选自然表达 Natural choice", write: "自己写 Writing", speed: "阅读速度 Reading speed" };
+  const lv = k => R[k + "Level"] != null ? ` · 第 ${R[k + "Level"]}/${C.placement[k].length} 级` : "";
   const order = Object.keys(sk).sort((a, b) => sk[a] - sk[b]);
   const gap = (sk.ctx + sk.news) / 2 - (sk.pick + sk.write) / 2;
   main.innerHTML = `<div class="card"><span class="label">测试结果 · Your profile</span>
     <div class="bars">${Object.keys(sk).map(k => `<div class="bar"><span>${names[k].split(" ")[0]}</span><span class="t"><i style="width:${pct(sk[k])}"></i></span><span class="v">${pct(sk[k])}</span></div>`).join("")}</div>
-    <p class="small muted">阅读速度：约 ${R.cpm || "—"} 字/分钟 (characters per minute) · 理解 ${Math.round(readAcc * 3)}/3</p></div>
+    <p class="small muted">${["ctx", "seg", "news", "pick"].map(k => names[k].split(" ")[0] + lv(k)).join(" · ")}<br>阅读速度：约 ${R.cpm || "—"} 字/分钟 · 理解 ${Math.round((R.readAcc || 0) * 3)}/3</p></div>
     <div class="card"><span class="label">这说明什么 · What this means</span>
     <p>Weakest: <b>${names[order[0]]}</b>, then <b>${names[order[1]]}</b>.</p>
-    <p>${gap > 0.15 ? `Recognition is ahead of production by about ${Math.round(gap * 100)} points, which matches your Anki history (it only ever trained Chinese → English). Daily sessions lean on the production ladder until that gap closes.` : gap < -0.1 ? `Interesting: production held up better than recognition in context. Sessions will push more reading and chunking.` : `Recognition and production are fairly even here; sessions spread across both.`}</p>
-    <p class="small muted">The mix updates itself as you practice: it blends this test with your last ~40 answers in each skill.</p></div>
+    <p>${gap > 0.15 ? `Recognition is ahead of production by about ${Math.round(gap * 100)} points. Sessions lean on the production ladder until that gap closes.` : gap < -0.1 ? `Production held up better than recognition here, so sessions will push more reading and chunking.` : `Recognition and production came out fairly even; sessions spread across both.`}</p>
+    <p class="small muted">Every answer from this test is saved, so it can be reviewed later. The mix updates as you practice, blending this result with your last ~40 answers per skill.</p></div>
     <button class="btn wide" id="go">开始今天的练习 Start practicing</button>`;
   $("#go", main).onclick = () => { PLACE = null; setView("home"); };
 }
@@ -943,12 +1145,21 @@ function renderMe(main) {
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
   ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad">生成 8 道新题 Generate</button><div id="glst" class="small muted"></div></div>` : ""}
   <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
-    <p class="small muted">Use this to carry progress to the offline copy (for China) and back. Copy the code on one, paste it on the other.</p>
-    <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste code</button></div><div id="xio"></div></div>`;
+    <p class="small muted">Carry progress between the online and offline versions: <b>Copy</b> on the one you used last, <b>Merge</b> on the other. Merging never deletes anything.</p>
+    <p class="small">上次导出 Last copied: <b>${ago(S.lastExport)}</b> · 上次合并 Last merged in: <b>${ago(S.lastImport)}</b></p>
+    <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste & merge</button></div><div id="xio"></div>
+    ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
+    <p class="small muted"><b>iPhone / iPad:</b> add this page to your home screen and always open it from there. Paste codes inside the home-screen app, not a Safari tab: the two keep separate data, and Safari tabs lose their data after 7 days unused.</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
   const gl = $("#genlad"); if (gl) gl.onclick = genLadder;
+}
+function ago(t) {
+  if (!t) return "从未 never";
+  const d = Math.floor((now() - t) / DAY);
+  if (d <= 0) return "今天 today";
+  return d + " 天前 days ago";
 }
 async function exportCode() {
   const json = JSON.stringify(S);
@@ -959,6 +1170,7 @@ async function exportCode() {
     let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     code = "ZW1:" + btoa(bin);
   } catch (e) { code = "ZW0:" + btoa(unescape(encodeURIComponent(json))); }
+  S.lastExport = now(); save();
   const box = $("#xio");
   box.innerHTML = `<textarea class="code" id="codebox" readonly>${esc(code)}</textarea><p class="small muted">${Math.round(code.length / 1024)} KB</p>`;
   const ta = $("#codebox");
@@ -966,7 +1178,7 @@ async function exportCode() {
 }
 function importUI() {
   const box = $("#xio");
-  box.innerHTML = `<textarea class="code" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">覆盖当前进度 Replace my progress</button></div>`;
+  box.innerHTML = `<textarea class="code" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div><p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p>`;
   $("#doimp").onclick = async () => {
     const code = $("#codein").value.trim();
     try {
@@ -978,7 +1190,7 @@ function importUI() {
       else throw 0;
       const data = JSON.parse(json);
       if (!data || data.v !== 1) throw 0;
-      S = Object.assign(freshState(), data); indexGen(); save(); toast("已导入 Imported"); render();
+      S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
     } catch (e) { toast("代码无效 — that code didn't work"); }
   };
 }
@@ -1015,7 +1227,9 @@ Reply with only a JSON array of 8 objects:
   catch (e) { $("#main").innerHTML = `<div class="card"><h2>加载失败</h2><p class="muted">Couldn't load the word data. Check your connection and reload.</p></div>`; return; }
   $("#tabs").hidden = false;
   render();
+  drawOffline();
   connectRemote();
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(v => { PERSISTED = v; if (VIEW === "me") render(); }).catch(() => {}); } catch (e) {}
   if ("serviceWorker" in navigator && !window.claude && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
 </script>
