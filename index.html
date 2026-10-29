@@ -225,7 +225,7 @@ async function connectRemote() {
     if (snap.exists) {
       const remote = JSON.parse(JSON.stringify(snap.data()));
       if ((remote.updatedAt || 0) !== (S.updatedAt || 0)) {
-        S = mergeStates(S, remote); indexGen();
+        S = mergeStates(S, remote); indexGen(); if (C) rescoreLastPlacement();
         try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
         remoteDirty = true; pushRemote();
         if (!busyView()) render();
@@ -306,6 +306,7 @@ function indexGen() {
   (S.gen.ladder || []).forEach(x => LADDER.set(x.id, x));
   (S.gen.passages || []).forEach(x => PSG.set(x.id, x));
 }
+const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎" };
 const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "词库外" };
 function lookup(tok, gl = {}) {
   const key = tok.replace(/\//g, "");
@@ -380,14 +381,48 @@ function recordLadder(id, rung, score) {
   save();
   return it;
 }
-function recordBox(id, t, ok, cat) {
+// credit: 1 = right and fluent; 0.5–1 = right but slow (counts as correct, comes back sooner)
+function recordBox(id, t, ok, cat, credit = 1) {
   const it = S.items[id] = S.items[id] || { t, b: 0, due: 0, n: 0, ok: 0 };
   it.n++;
-  if (ok) { it.ok++; it.b = Math.min(5, it.b + 1); it.due = now() + BOX_IVL[it.b]; }
+  if (ok && credit >= 0.75) { it.ok++; it.b = Math.min(5, it.b + 1); it.due = now() + BOX_IVL[it.b]; }
+  else if (ok) { it.ok++; it.b = Math.max(1, it.b); it.due = now() + BOX_IVL[it.b] / 2; }
   else { it.b = 0; it.due = now() + 10 * MIN; }
-  if (cat) pushRecent(cat, ok ? 1 : 0);
+  if (cat) pushRecent(cat, ok ? credit : 0);
   save();
 }
+
+/* ============ quiet timing ============ */
+// No clock is ever shown. Time only counts while the page is visible; answers far slower than
+// your own usual pace are treated as interruptions and their time is ignored.
+function makeTimer() {
+  let acc = 0, start = document.hidden ? null : now();
+  const onVis = () => { if (document.hidden) { if (start) { acc += now() - start; start = null; } } else if (start == null) start = now(); };
+  document.addEventListener("visibilitychange", onVis);
+  return { stop() { if (start) acc += now() - start; start = null; document.removeEventListener("visibilitychange", onVis); return acc; } };
+}
+const zhLen = s => Array.from(String(s || "")).filter(c => /[\u4e00-\u9fff]/.test(c)).length;
+const TARGET_MS_PER_CHAR = 240; // ≈250 characters a minute: a fluent-learner reading pace
+function expectedMs(kind, text) {
+  const n = zhLen(text);
+  if (kind === "seg") return n * (TARGET_MS_PER_CHAR + 700) + 3000;
+  if (kind === "news") return n * TARGET_MS_PER_CHAR + 7000;
+  return n * TARGET_MS_PER_CHAR + 5000; // ctx
+}
+const median = a => { if (!a.length) return null; const b = a.slice().sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
+function timeCredit(kind, ms, text, paceList) {
+  const r = ms / expectedMs(kind, text);
+  const list = paceList || ((S.pace || {})[kind] || []);
+  const med = list.length >= 4 ? median(list) : null;
+  if (ms > 3 * MIN || (med && r > 5 * Math.max(med, 1))) return { credit: null, r };
+  return { credit: r <= 1.5 ? 1 : Math.max(0.5, 1 - (r - 1.5) * 0.1), r };
+}
+function timedResult(kind, ok, ms, text) {
+  const t = timeCredit(kind, ms, text);
+  if (ok && t.credit != null) { S.pace = S.pace || {}; (S.pace[kind] = S.pace[kind] || []).push(+t.r.toFixed(2)); if (S.pace[kind].length > 30) S.pace[kind] = S.pace[kind].slice(-30); }
+  return { credit: ok ? (t.credit == null ? 1 : t.credit) : 0, interrupted: t.credit == null, ms };
+}
+const SLOW_NOTE = `<span class="small muted">对了，就是慢了点 · Right, just not quick yet. It'll come back a bit sooner to build speed.</span>`;
 
 /* ============ session builder ============ */
 function weights() {
@@ -743,6 +778,7 @@ function renderSeg(item, el, onResult, onNext, placement) {
   const P = parseSeg(item.s);
   const cuts = new Set();
   const showHow = (S.segSeen || 0) < 3;
+  const timer = makeTimer();
   el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">断词 · Chunking</span><span class="chip ${item.reg}">${{ news: "新闻 News", xhs: "小红书", book: "书面 Book", trap: "陷阱 Trap" }[item.reg] || ""}</span></div>
     <p class="small muted">点字，在它后面切一刀。Tap a character to cut after it; tap again to undo.</p>
     ${showHow ? SEG_HOW : `<details><summary class="small muted">怎么算分 How it's scored</summary>${SEG_HOW}</details>`}
@@ -763,13 +799,14 @@ function renderSeg(item, el, onResult, onNext, placement) {
     const errors = missed + broke;
     const score = Math.max(0, 1 - errors / Math.max(2, P.req.size));
     const ok = errors === 0 || (errors === 1 && P.req.size >= 4);
-    if (!placement) recordBox(item.id, "seg", ok, "seg"); else save();
+    const tr = timedResult("seg", ok, timer.stop(), item.s);
+    if (!placement) recordBox(item.id, "seg", ok, "seg", tr.credit); else save();
     const chunks = item.s.split("|").filter(t => !Array.from(t).every(isPunct));
     $("#fb", el).innerHTML = `<div class="fb ${errors === 0 ? "ok" : ok ? "mid" : "no"}"><span class="verdict">${errors === 0 ? "全对 ✓" : `漏切 ${missed} · 切断了词 ${broke}`}</span>
       <div class="chunks">${chunks.map(c => `<span>${c.split("/").map(esc).join('<i class="may"></i>')}</span>`).join("")}</div>
       ${item.note ? `<span>${esc(item.note)}</span>` : ""}<span>${esc(item.en)}</span>
-      ${errors ? `<span class="small muted">红线 = missed chunk break · 淡红 = cut through a word</span>` : ""}</div>`;
-    onResult({ ok, score, given });
+      ${errors ? `<span class="small muted">红线 = missed chunk break · 淡红 = cut through a word</span>` : ""}${!placement && ok && tr.credit < 0.75 ? SLOW_NOTE : ""}</div>`;
+    onResult({ ok, score, given, credit: tr.credit, ms: tr.ms, interrupted: tr.interrupted });
     nextButton(cc, onNext);
   };
 }
@@ -777,6 +814,7 @@ function renderCtx(item, el, onResult, onNext, placement) {
   const right = item.opts[0];
   const opts = shuffle(item.opts);
   const d = DICT.get(item.w);
+  const timer = makeTimer();
   el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">语境词 · Word in context</span>${d && !placement ? `<span class="tier ${d.tier}">${TIER_NAME[d.tier]}</span>` : ""}</div>
     <p class="sent">${esc(item.s).replace(esc(item.w), `<mark>${esc(item.w)}</mark>`)}</p>
     <p class="small muted">这里的「${esc(item.w)}」是什么意思？ What does it mean here?</p>
@@ -784,12 +822,13 @@ function renderCtx(item, el, onResult, onNext, placement) {
   const cc = $("#cc", el);
   $$(".opt", el).forEach(b => b.onclick = () => {
     const ok = opts[+b.dataset.i] === right;
+    const tr = timedResult("ctx", ok, timer.stop(), item.s);
     $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
     if (!ok) b.classList.add("wrong");
-    if (!placement) recordBox(item.id, "ctx", ok, "ctx");
+    if (!placement) recordBox(item.id, "ctx", ok, "ctx", tr.credit);
     const given = opts[+b.dataset.i];
-    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span><span class="zh" style="font-size:20px">${esc(item.w)}</span> ${d ? esc(d.py) + " · " + esc(d.gl) : ""}</span><span>${esc(item.en)}</span></div>`;
-    onResult({ ok, score: ok ? 1 : 0, given });
+    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span><span class="zh" style="font-size:20px">${esc(item.w)}</span> ${d ? esc(d.py) + " · " + esc(d.gl) : ""}</span><span>${esc(item.en)}</span>${!placement && ok && tr.credit < 0.75 ? SLOW_NOTE : ""}</div>`;
+    onResult({ ok, score: ok ? 1 : 0, given, credit: tr.credit, ms: tr.ms, interrupted: tr.interrupted });
     nextButton(cc, onNext);
   });
 }
@@ -814,15 +853,17 @@ function renderBank(id, el, onResult, onNext) {
 }
 function renderNews(item, el, onResult, onNext) {
   const right = item.opts[0], opts = shuffle(item.opts);
+  const timer = makeTimer();
   el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">新闻理解 · News parsing</span></div>
     <p class="sent" style="font-size:21px">${esc(item.s)}</p><p class="prompt-en" style="font-size:16px">${esc(item.q)}</p>
     <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
   const cc = $("#cc", el);
   $$(".opt", el).forEach(b => b.onclick = () => {
     const ok = opts[+b.dataset.i] === right;
+    const tr = timedResult("news", ok, timer.stop(), item.s);
     $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
     if (!ok) b.classList.add("wrong");
-    onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i] });
+    onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i], credit: tr.credit, ms: tr.ms, interrupted: tr.interrupted });
     nextButton(cc, onNext);
   });
 }
@@ -906,7 +947,7 @@ function renderPlace(main) {
     nextButton($(".card", slot), () => { P.intro = false; render(); }, "开始 Go");
     return;
   }
-  if (sec.key === "read") return placementRead(slot, C.placement.read, nextSection);
+  if (sec.key === "read") { P.readPid = P.readPid || pickPlacementPassage(); return placementRead(slot, P.readPid, nextSection); }
   if (sec.key === "write") {
     P.wi = P.wi || 0;
     const ids = C.placement.write;
@@ -922,7 +963,14 @@ function renderPlace(main) {
   if (!P.st) P.st = stairInit(sec.key);
   const st = P.st;
   const item = stairNext(st);
-  if (!item) { P.res[sec.key] = stairScore(st); P.res[sec.key + "Level"] = Math.min(st.best + 1, st.cap); return nextSection(); }
+  if (!item) {
+    const credits = P.log.filter(a => a.sec === sec.key && a.ok).map(a => a.credit == null ? 1 : a.credit);
+    const fluency = credits.length ? credits.reduce((x, y) => x + y, 0) / credits.length : 1;
+    P.res[sec.key] = stairScore(st) * (sec.key === "pick" ? 1 : fluency);
+    P.res[sec.key + "Level"] = Math.min(st.best + 1, st.cap);
+    P.res[sec.key + "Fluency"] = fluency;
+    return nextSection();
+  }
   const level = st.level, t0 = now();
   let card;
   if (sec.key === "ctx") card = { t: "ctx", item: Object.assign({ id: "P:" + item.w }, item), placement: true };
@@ -931,19 +979,24 @@ function renderPlace(main) {
   else card = { t: "seg", id: item, placement: true };
   renderCard(card, slot, r => {
     stairAnswer(st, r.ok);
-    P.log.push({ sec: sec.key, level: level + 1, id: typeof item === "string" ? item : (item.w || item.en || item.s), given: r.given || "", ok: r.ok, score: r.score, ms: now() - t0 });
+    P.log.push({ sec: sec.key, level: level + 1, id: typeof item === "string" ? item : (item.w || item.en || item.s), given: r.given || "", ok: r.ok, score: r.score, ms: r.ms != null ? Math.round(r.ms) : now() - t0, credit: r.credit, interrupted: !!r.interrupted });
   }, () => { render(); window.scrollTo(0, 0); });
+}
+function pickPlacementPassage() {
+  const used = new Set([...Object.keys(S.reads || {}), ...(S.placementLog || []).map(r => (r.answers || []).find(a => a.sec === "read")).filter(Boolean).map(a => a.id)]);
+  const list = C.placement.read;
+  return list.find(id => !used.has(id) && PSG.has(id)) || [...PSG.keys()].find(id => !used.has(id) && !PSG.get(id).gen) || list[0];
 }
 function placementRead(slot, pid, next) {
   const p = PSG.get(pid);
   const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
-  const t0 = now();
-  slot.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">限时阅读 · Timed read</span><span class="chip xhs">小红书</span></div>
+  const timer = makeTimer();
+  slot.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">限时阅读 · Timed read</span><span class="chip ${p.reg}">${REG_NAME[p.reg] || ""}</span></div>
     <h2 class="zh" style="font-size:20px">${esc(p.title)}</h2>
     <div class="reading" style="font-size:19px;line-height:1.9">${p.paras.map(x => `<p>${esc(x.replace(/[|\/]/g, ""))}</p>`).join("")}</div>
     <button class="btn wide" id="done">读完了 Done reading</button></div>`;
   $("#done", slot).onclick = () => {
-    const sec = (now() - t0) / 1000;
+    const sec = timer.stop() / 1000;
     const cpm = Math.round(n / (sec / 60));
     PLACE.res.cpm = cpm;
     let qi = 0, right = 0;
@@ -952,6 +1005,7 @@ function placementRead(slot, pid, next) {
         PLACE.res.readAcc = right / p.qs.length;
         PLACE.res.speed = Math.min(1, cpm / 320) * (0.4 + 0.6 * PLACE.res.readAcc);
         PLACE.log.push({ sec: "read", id: pid, given: cpm + " cpm", ok: right === p.qs.length, score: right, ms: sec * 1000 });
+        S.reads[pid] = { cpm, score: right, t: now(), looked: 0, placement: true };
         return next();
       }
       const q = p.qs[qi];
@@ -963,12 +1017,13 @@ function placementRead(slot, pid, next) {
     askQ();
   };
 }
+function slowList(R, names) { return ["ctx", "seg", "news"].filter(k => R[k + "Fluency"] != null && R[k + "Fluency"] < 0.85).map(k => names[k].split(" ")[0]).join("、"); }
 function finishPlacement(main) {
   const R = PLACE.res;
   const sk = { ctx: R.ctx ?? .5, seg: R.seg ?? .5, news: R.news ?? .5, pick: R.pick ?? .5, write: R.write ?? .5, speed: R.speed ?? .4 };
   S.skills = sk; S.placed = true; S.placedAt = now(); S.cpm = R.cpm;
   S.recent = {}; // fresh start: the new profile shouldn't be diluted by answers from an older test
-  S.placementLog = (S.placementLog || []).concat([{ t: now(), skills: sk, levels: { ctx: R.ctxLevel, seg: R.segLevel, news: R.newsLevel, pick: R.pickLevel }, cpm: R.cpm, readAcc: R.readAcc, answers: PLACE.log }]).slice(-3);
+  S.placementLog = (S.placementLog || []).concat([{ t: now(), timed: true, skills: sk, levels: { ctx: R.ctxLevel, seg: R.segLevel, news: R.newsLevel, pick: R.pickLevel }, cpm: R.cpm, readAcc: R.readAcc, answers: PLACE.log }]).slice(-3);
   for (const id in PLACE.seen) {
     const x = PLACE.seen[id];
     if (!S.items[id]) S.items[id] = { t: "lad", r: x.ok ? 5 : 3, due: now() + (x.ok ? DAY : 0), ivl: 0, n: 1, ok: x.ok ? 1 : 0, m: false };
@@ -980,7 +1035,7 @@ function finishPlacement(main) {
   const gap = (sk.ctx + sk.news) / 2 - (sk.pick + sk.write) / 2;
   main.innerHTML = `<div class="card"><span class="label">测试结果 · Your profile</span>
     <div class="bars">${Object.keys(sk).map(k => `<div class="bar"><span>${names[k].split(" ")[0]}</span><span class="t"><i style="width:${pct(sk[k])}"></i></span><span class="v">${pct(sk[k])}</span></div>`).join("")}</div>
-    <p class="small muted">${["ctx", "seg", "news", "pick"].map(k => names[k].split(" ")[0] + lv(k)).join(" · ")}<br>阅读速度：约 ${R.cpm || "—"} 字/分钟 · 理解 ${Math.round((R.readAcc || 0) * 3)}/3</p></div>
+    <p class="small muted">${["ctx", "seg", "news", "pick"].map(k => names[k].split(" ")[0] + lv(k)).join(" · ")}<br>${slowList(R, names) ? `答对了但比较慢 Right but slow: ${slowList(R, names)}. Those are scored partly on speed.<br>` : ""}<br>阅读速度：约 ${R.cpm || "—"} 字/分钟 · 理解 ${Math.round((R.readAcc || 0) * 3)}/3</p></div>
     <div class="card"><span class="label">这说明什么 · What this means</span>
     <p>Weakest: <b>${names[order[0]]}</b>, then <b>${names[order[1]]}</b>.</p>
     <p>${gap > 0.15 ? `Recognition is ahead of production by about ${Math.round(gap * 100)} points. Sessions lean on the production ladder until that gap closes.` : gap < -0.1 ? `Production held up better than recognition here, so sessions will push more reading and chunking.` : `Recognition and production came out fairly even; sessions spread across both.`}</p>
@@ -1003,16 +1058,16 @@ function coverage(p) {
 function renderRead(main) {
   if (READ && READ.pid) return renderPassage(main);
   const all = [...PSG.values()];
-  const REG = { xhs: "小红书", news: "新闻", book: "书面" };
+  const REG = REG_NAME;
   main.innerHTML = `<div class="top"><div><h1>阅读</h1><p class="date">Tap any word for meaning. Turn on 分词 to see chunk boundaries.</p></div></div>
     ${AI ? `<div class="card"><span class="label">生成新短文 · New passage for you</span>
       <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting.</p>
       <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}">${v}</button>`).join("")}</div><div id="genst" class="small muted"></div></div>` : ""}
     <div class="plist">${[...all.filter(p => p.gen).reverse(), ...all.filter(p => !p.gen)].map(p => {
       const r = S.reads[p.id];
-      return `<button class="pitem" data-p="${esc(p.id)}"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span>${p.gen ? `<span class="chip">新 AI</span>` : ""}<span class="small muted">已知词 ${pct(coverage(p))}</span>${r ? `<span class="small muted">· 读过 ${r.cpm} 字/分 · ${r.score}/3</span>` : ""}</div><h3>${esc(p.title)}</h3></button>`;
+      return `<button class="pitem" data-p="${esc(p.id)}"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span>${p.gen ? `<span class="chip">新 AI</span>` : ""}<span class="small muted">已知词 ${pct(coverage(p))}</span>${r ? `<span class="small muted">· 读过 ${r.cpm} 字/分 · ${r.score}/3${r.re ? " · 重读 " + r.re : ""}</span>` : `<span class="small muted">· 没读过 new</span>`}</div><h3>${esc(p.title)}</h3></button>`;
     }).join("")}</div>`;
-  $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, t0: now(), looked: new Set(), spaced: false }; render(); window.scrollTo(0, 0); });
+  $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false }; render(); window.scrollTo(0, 0); });
   $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen, main));
 }
 function renderPassage(main) {
@@ -1026,7 +1081,7 @@ function renderPassage(main) {
       return Array.from(show).every(isPunct) || /^\p{Extended_Pictographic}+$/u.test(show) ? esc(show) : `<span class="tk ${READ.looked.has(pi + ":" + ti) ? "looked" : ""}" data-k="${pi}:${ti}">${esc(show)}</span>`;
     }).join("")}</p>`).join("")}</div>
     <button class="btn wide" id="done">读完了，答题 Done → questions</button></div>`;
-  $("#back").onclick = () => { READ = null; render(); };
+  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); READ = null; render(); };
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
   $$(".tk", main).forEach(s => s.onclick = () => {
     const [pi, ti] = s.dataset.k.split(":").map(Number);
@@ -1067,19 +1122,22 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet()
 function passageQuiz(main, p) {
   closeSheet();
   const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
-  const sec = (now() - READ.t0) / 1000;
+  const sec = READ.timer.stop() / 1000;
   const cpm = Math.round(n / (sec / 60));
+  const first = !S.reads[p.id];
   let qi = 0, score = 0;
   const ask = () => {
     if (qi >= p.qs.length) {
-      S.reads[p.id] = { cpm, score, t: now(), looked: READ.looked.size };
-      pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
+      if (first) {
+        S.reads[p.id] = { cpm, score, t: now(), looked: READ.looked.size };
+        if (sec < 20 * 60) pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
+      } else { const r = S.reads[p.id]; r.re = (r.re || 0) + 1; r.lastCpm = cpm; }
       logDay(Math.min(sec, 900), score >= 2); save();
-      main.innerHTML = `<div class="card"><span class="label">读完 · Finished</span>
+      main.innerHTML = `<div class="card"><span class="label">${first ? "读完 · Finished" : "重读 · Re-read (doesn't count toward reading speed)"}</span>
         <div class="stats3"><div class="stat"><b>${cpm}</b><span>字/分钟</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
         <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>
         <button class="btn wide" id="again">再读一遍（看看快了多少）Re-read</button><button class="btn ghost wide" id="list">回到列表 Back to list</button></div>`;
-      $("#again").onclick = () => { READ = { pid: p.id, t0: now(), looked: new Set(), spaced: false }; render(); };
+      $("#again").onclick = () => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false }; render(); };
       $("#list").onclick = () => { READ = null; render(); };
       return;
     }
@@ -1116,7 +1174,7 @@ Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | b
     if (!j || !Array.isArray(j.paras) || !j.paras.length || !Array.isArray(j.qs) || j.qs.length < 2) throw { code: "invalid_json" };
     const p = { id: "G" + now().toString(36), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) })), gen: true };
     S.gen.passages.push(p); PSG.set(p.id, p); save();
-    READ = { pid: p.id, t0: now(), looked: new Set(), spaced: false }; render();
+    READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false }; render();
   } catch (e) { st.textContent = aiErr(e); $$("[data-gen]", main).forEach(b => b.disabled = false); }
 }
 
@@ -1221,11 +1279,32 @@ Reply with only a JSON array of 8 objects:
   btn.disabled = false;
 }
 
+/* ============ one-time: rescore a placement taken before timing counted ============ */
+function rescoreLastPlacement() {
+  const run = (S.placementLog || []).slice(-1)[0];
+  if (!run || run.timed || !S.skills) return;
+  const ctxText = w => { for (const lv of C.placement.ctx) for (const x of lv) if (x.w === w) return x.s; return w; };
+  const textOf = a => a.sec === "ctx" ? ctxText(a.id) : a.sec === "seg" ? (SEG.get(a.id) || {}).s : a.id;
+  const nLevels = { ctx: C.placement.ctx.length, seg: C.placement.seg.length, news: C.placement.news.length };
+  for (const sec of ["ctx", "seg", "news"]) {
+    const right = run.answers.filter(a => a.sec === sec && a.ok);
+    if (!right.length || !run.levels || run.levels[sec] == null) continue;
+    const ratios = right.map(a => a.ms / expectedMs(sec, textOf(a)));
+    const credits = right.map(a => { const t = timeCredit(sec, a.ms, textOf(a), ratios); a.credit = t.credit == null ? 1 : t.credit; return a.credit; });
+    const fluency = credits.reduce((x, y) => x + y, 0) / credits.length;
+    S.skills[sec] = Math.max(0.05, run.levels[sec] / nLevels[sec]) * fluency;
+  }
+  run.skills = Object.assign({}, S.skills);
+  run.timed = true; run.rescored = now();
+  save();
+}
+
 /* ============ boot ============ */
 (async function boot() {
   try { await loadData(); }
   catch (e) { $("#main").innerHTML = `<div class="card"><h2>加载失败</h2><p class="muted">Couldn't load the word data. Check your connection and reload.</p></div>`; return; }
   $("#tabs").hidden = false;
+  rescoreLastPlacement();
   render();
   drawOffline();
   connectRemote();
