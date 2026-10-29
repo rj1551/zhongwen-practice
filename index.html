@@ -152,8 +152,8 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .pitem.done{opacity:.62;background:transparent}
 .pitem.done:hover{opacity:.9}
 .chip.new{background:transparent;color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
-.toast.act{display:flex;gap:14px;align-items:center}
-.toast.act button{color:inherit;font-weight:700;text-decoration:underline}
+.toast.act{display:flex;gap:10px;align-items:center;font-size:12.5px;padding:6px 12px}
+.toast.act button{color:inherit;font-weight:700;text-decoration:underline;font-size:12.5px}
 .chars{display:flex;flex-direction:column;gap:4px;font-size:14px}
 .chars span.zh{font-size:17px;margin-right:6px}
 .tier{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px}
@@ -1293,7 +1293,7 @@ function sentenceAround(toks, ti) {
   while (b < toks.length - 1 && !end.test(toks[b])) b++;
   return toks.slice(a, b + 1).join("").replace(/\//g, "");
 }
-function toastAction(msg, label, fn, ms = 5000) {
+function toastAction(msg, label, fn, ms = 2500) {
   $$(".toast").forEach(t => t.remove());
   const t = document.createElement("div"); t.className = "toast act";
   t.innerHTML = `<span>${esc(msg)}</span><button>${esc(label)}</button>`;
@@ -1344,7 +1344,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
     if (S.bank[word]) { removeFromBank(word); toast("已移出复习 Removed"); closeSheet(); return; }
     S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? L.gl : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
     save(); closeSheet();
-    toastAction("已加入复习 Added " + word, "撤销 Undo", () => { removeFromBank(word); toast("已撤销 Undone"); });
+    toastAction("已加入 " + word, "撤销 Undo", () => { removeFromBank(word); toast("已撤销 Undone"); });
   };
 }
 function closeSheet() { const s = $("#sheet"); if (s) s.remove(); document.body.style.paddingBottom = ""; }
@@ -1446,7 +1446,7 @@ function renderMe(main) {
     ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
     <p class="small muted"><b>iPhone / iPad:</b> add this page to your home screen and always open it from there. Paste codes inside the home-screen app, not a Safari tab: the two keep separate data, and Safari tabs lose their data after 7 days unused.</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
-  $$(".rmw", main).forEach(b => b.onclick = () => { const w = b.dataset.w; const saved = S.bank[w]; removeFromBank(w); render(); toastAction("已移出 Removed " + w, "撤销 Undo", () => { S.bank[w] = saved; save(); render(); }); });
+  $$(".rmw", main).forEach(b => b.onclick = () => { const w = b.dataset.w; const saved = S.bank[w]; removeFromBank(w); render(); toastAction("已移出 " + w, "撤销 Undo", () => { S.bank[w] = saved; save(); render(); }); });
   $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
