@@ -1,0 +1,1024 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<title>中文练功房</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#2f4ba8">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;700&display=swap" media="print" onload="this.media='all'">
+<style>
+/* Layout: one phone-width column, bottom tab bar; practice cards fill the column. Grid-paper (稿纸) answer boxes are the signature detail. */
+:root{
+  --bg:#f1f3f6; --surface:#ffffff; --ink:#18202b; --muted:#5b6676; --line:#dce1e8;
+  --accent:#2f4ba8; --accent-ink:#ffffff; --accent-soft:#e3e8f7;
+  --good:#1d8566; --good-soft:#dcf1ea; --bad:#c2412d; --bad-soft:#f8e2dd; --gold:#a77a14; --gold-soft:#f5ead0;
+  --grid:rgba(47,75,168,.10);
+  --f-ui:"Figtree","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+  --f-zh:"Noto Serif SC","Songti SC","STSong","SimSun","PingFang SC",serif;
+  --r:14px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1218; --surface:#171d26; --ink:#e7ecf3; --muted:#97a2b3; --line:#283140;
+  --accent:#8ea6ff; --accent-ink:#0e1218; --accent-soft:#1d2848;
+  --good:#4cc9a0; --good-soft:#12352b; --bad:#f07a64; --bad-soft:#3d1c16; --gold:#e2b54b; --gold-soft:#3a2e12;
+  --grid:rgba(142,166,255,.12); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1218; --surface:#171d26; --ink:#e7ecf3; --muted:#97a2b3; --line:#283140;
+  --accent:#8ea6ff; --accent-ink:#0e1218; --accent-soft:#1d2848;
+  --good:#4cc9a0; --good-soft:#12352b; --bad:#f07a64; --bad-soft:#3d1c16; --gold:#e2b54b; --gold-soft:#3a2e12;
+  --grid:rgba(142,166,255,.12); color-scheme:dark}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.5;-webkit-tap-highlight-color:transparent}
+#app{max-width:600px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{flex:1;padding-block:18px 96px;display:flex;flex-direction:column;gap:16px}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1,h2,h3{margin:0;text-wrap:balance}
+h1{font-size:22px;font-weight:700;letter-spacing:.01em}
+h2{font-size:17px;font-weight:600}
+p{margin:0}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.zh{font-family:var(--f-zh)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.stack{display:flex;flex-direction:column;gap:10px}
+.spread{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.label{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;border-radius:12px;font-weight:600;background:var(--accent);color:var(--accent-ink);min-height:46px}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.soft{background:var(--accent-soft);color:var(--ink)}
+.btn.wide{width:100%}
+.btn:disabled{opacity:.45;cursor:default}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--ink)}
+.chip.news{background:var(--gold-soft)} .chip.book{background:var(--good-soft)}
+/* header */
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.top .date{font-size:13px;color:var(--muted)}
+/* time buttons */
+.times{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.time{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 6px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.time b{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.time span{font-size:12px;color:var(--muted)}
+.time.hot{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.time.hot span{color:inherit;opacity:.8}
+.mix{display:flex;height:8px;border-radius:99px;overflow:hidden;gap:2px}
+.mix i{display:block;height:100%}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.legend b{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:0}
+/* tab bar */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);z-index:5}
+nav.tabs .in{max-width:600px;width:100%;display:grid;grid-template-columns:repeat(3,1fr)}
+nav.tabs button{padding:10px 0 12px;display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--muted);font-size:12px}
+nav.tabs button .zh{font-size:18px;font-weight:700}
+nav.tabs button[aria-current="page"]{color:var(--accent)}
+/* session */
+.sbar{display:flex;align-items:center;gap:12px}
+.cells{flex:1;display:flex;gap:3px;flex-wrap:wrap}
+.cells i{flex:1 0 8px;max-width:22px;height:8px;border-radius:2px;background:var(--line)}
+.cells i.ok{background:var(--good)} .cells i.no{background:var(--bad)} .cells i.now{background:var(--accent)}
+.combo{font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums;min-width:56px;text-align:right;font-size:14px}
+.combo.pop{animation:pop .35s ease}
+@keyframes pop{50%{transform:scale(1.35)}}
+.x{width:36px;height:36px;border-radius:10px;border:1px solid var(--line);font-size:18px;line-height:1;color:var(--muted)}
+.kind{display:flex;justify-content:space-between;align-items:center}
+.prompt-en{font-size:19px;line-height:1.45;font-weight:500}
+.sent{font-family:var(--f-zh);font-size:23px;line-height:1.75;overflow-wrap:anywhere}
+.sent mark{background:var(--gold-soft);color:inherit;border-radius:4px;padding:0 2px}
+.blank{display:inline-block;min-width:3.2em;border-bottom:2px solid var(--accent);margin:0 2px;text-align:center;color:var(--accent)}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opt{text-align:left;padding:13px 15px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-size:16px;line-height:1.5}
+.opt.zh{font-size:19px}
+.opt:hover:not(:disabled){border-color:var(--accent)}
+.opt.right{border-color:var(--good);background:var(--good-soft)}
+.opt.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.opt:disabled{cursor:default}
+/* tiles */
+.built{min-height:62px;border-radius:12px;border:1px dashed var(--line);padding:10px;display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start;background-image:linear-gradient(var(--grid) 1px,transparent 1px);background-size:100% 30px}
+.tiles{display:flex;flex-wrap:wrap;gap:8px}
+.tile{font-family:var(--f-zh);font-size:19px;padding:7px 12px;border-radius:10px;background:var(--accent-soft);border:1px solid transparent}
+.tile.used{visibility:hidden}
+/* grid-paper answer */
+.paper{width:100%;min-height:96px;resize:vertical;border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-family:var(--f-zh);font-size:22px;line-height:34px;color:var(--ink);
+  background-color:var(--surface);background-image:linear-gradient(90deg,var(--grid) 1px,transparent 1px),linear-gradient(var(--grid) 1px,transparent 1px);background-size:34px 34px;background-position:9px 7px}
+.hint{font-size:14px;color:var(--muted)} .hint b{font-family:var(--f-zh);color:var(--ink);font-size:17px}
+/* feedback */
+.fb{border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;font-size:14.5px}
+.fb.ok{background:var(--good-soft)} .fb.no{background:var(--bad-soft)} .fb.mid{background:var(--gold-soft)}
+.fb .verdict{font-weight:700;font-size:15px}
+.fb .model{font-family:var(--f-zh);font-size:19px;line-height:1.6}
+.fb ul{margin:0;padding-left:18px}
+.fb .alts{font-family:var(--f-zh);font-size:15px;color:var(--muted)}
+/* segmentation */
+.segline{display:flex;flex-wrap:wrap;row-gap:12px;font-family:var(--f-zh);font-size:25px;line-height:1}
+.segline .c{position:relative;padding:6px 7px;border-radius:6px}
+.segline .c.tap{cursor:pointer}
+.segline .c.tap:hover{background:var(--accent-soft)}
+.segline .c.cut::after{content:"";position:absolute;right:-2px;top:2px;bottom:2px;width:3px;border-radius:2px;background:var(--accent)}
+.segline .c.miss::after{content:"";position:absolute;right:-2px;top:2px;bottom:2px;width:3px;border-radius:2px;background:var(--bad)}
+.segline .c.extra::after{background:var(--bad);opacity:.35}
+.segline .c.p{color:var(--muted)}
+.chunks{font-family:var(--f-zh);font-size:19px;line-height:1.9}
+.chunks span{border-bottom:2px solid var(--accent);margin-right:6px}
+/* reader */
+.plist{display:flex;flex-direction:column;gap:10px}
+.pitem{text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.pitem h3{font-family:var(--f-zh);font-size:18px;font-weight:700}
+.reading{font-family:var(--f-zh);font-size:21px;line-height:2;display:flex;flex-direction:column;gap:14px}
+.reading p{overflow-wrap:anywhere}
+.tk{cursor:pointer;border-radius:4px;white-space:nowrap}
+.tk:hover{background:var(--accent-soft)}
+.tk.looked{background:var(--gold-soft)}
+.spaced .tk{margin-right:.32em;box-shadow:inset 0 -2px 0 var(--line)}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
+.sheet .in{width:100%;max-width:600px;background:var(--surface);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;padding:18px max(18px,env(safe-area-inset-left,0px)) 22px;box-shadow:0 -10px 30px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto}
+.sheet .w{font-family:var(--f-zh);font-size:30px;font-weight:700}
+.chars{display:flex;flex-direction:column;gap:4px;font-size:14px}
+.chars span.zh{font-size:17px;margin-right:6px}
+.tier{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px}
+.tier.s{background:var(--good-soft)} .tier.f,.tier.k{background:var(--gold-soft)} .tier.l{background:var(--bad-soft)} .tier.u,.tier.n{background:var(--accent-soft)}
+/* progress */
+.big{font-size:40px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:7.5em 1fr 2.6em;gap:10px;align-items:center;font-size:14px}
+.bar .t{height:10px;border-radius:99px;background:var(--line);overflow:hidden}
+.bar .t i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.bar .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;text-align:center;font-size:12px;color:var(--muted)}
+.week i{display:block;aspect-ratio:1;max-width:100%;border-radius:8px;background:var(--line);margin-bottom:4px}
+.stats3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat b{font-size:24px;font-variant-numeric:tabular-nums}
+.stat span{font-size:12.5px;color:var(--muted)}
+textarea.code{width:100%;min-height:80px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--bg);color:var(--ink);word-break:break-all}
+.toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;z-index:30;max-width:90vw}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.end .big{font-size:52px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:380px){.sent{font-size:21px}.times{grid-template-columns:repeat(2,1fr)}}
+</style>
+
+<div id="app"><main id="main"><div class="card"><p class="muted">正在加载… Loading…</p></div></main></div>
+<nav class="tabs" id="tabs" hidden><div class="in">
+  <button data-tab="home"><span class="zh">练</span>今日 Today</button>
+  <button data-tab="read"><span class="zh">读</span>阅读 Read</button>
+  <button data-tab="me"><span class="zh">进</span>进度 Progress</button>
+</div></nav>
+
+<script>
+"use strict";
+/* ============ utilities ============ */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const PUNCT_RE = /[\p{P}\p{S}\s]/u;
+const isPunct = ch => PUNCT_RE.test(ch) || /\p{Extended_Pictographic}/u.test(ch);
+const norm = s => Array.from(String(s || "")).filter(c => !isPunct(c)).join("").replace(/儿(?=[^一-鿿]|$)/g, "儿");
+const now = () => Date.now();
+const DAY = 864e5, MIN = 6e4;
+const dayKey = (t = now()) => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+function toast(msg, ms = 2200) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.append(t); setTimeout(() => t.remove(), ms); }
+const pct = x => Math.round((x || 0) * 100) + "%";
+
+/* ============ state & storage ============ */
+const LS_KEY = "zwlgf:state:v1";
+function freshState() {
+  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [] }, best: { combo: 0 } };
+}
+let S = freshState();
+try { const raw = localStorage.getItem(LS_KEY); if (raw) S = Object.assign(freshState(), JSON.parse(raw)); } catch (e) {}
+
+let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer = null;
+function save() {
+  S.updatedAt = now();
+  // trim
+  for (const k in S.recent) if (S.recent[k].length > 40) S.recent[k] = S.recent[k].slice(-40);
+  const days = Object.keys(S.log).sort(); while (days.length > 120) delete S.log[days.shift()];
+  if (S.gen.passages.length > 12) S.gen.passages = S.gen.passages.slice(-12);
+  if (S.gen.ladder.length > 160) S.gen.ladder = S.gen.ladder.slice(-160);
+  try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
+  if (DB && UID) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); }
+}
+async function pushRemote() {
+  if (!DB || !UID || remoteBusy || !remoteDirty) return;
+  remoteBusy = true; remoteDirty = false;
+  try { await DB.doc("data/users/" + UID + "/state").set(JSON.parse(JSON.stringify(S))); }
+  catch (e) { if (e && e.code === "unavailable") remoteDirty = true; }
+  remoteBusy = false;
+  if (remoteDirty) remoteTimer = setTimeout(pushRemote, 4000);
+}
+async function connectRemote() {
+  if (!window.claude || !window.claude.use) return;
+  try {
+    const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
+    if (!db || !user) return;
+    const id = await user.id(); if (!id) return;
+    DB = db; UID = id;
+    const snap = await DB.doc("data/users/" + UID + "/state").get();
+    if (snap.exists) {
+      const remote = snap.data();
+      if ((remote.updatedAt || 0) > (S.updatedAt || 0)) {
+        S = Object.assign(freshState(), JSON.parse(JSON.stringify(remote)));
+        try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
+        if (!busyView()) render();
+      } else if ((S.updatedAt || 0) > (remote.updatedAt || 0)) { remoteDirty = true; pushRemote(); }
+    } else if (S.updatedAt) { remoteDirty = true; pushRemote(); }
+    syncNote = "进度已同步到你的 Claude 账号（手机和电脑通用）";
+    if (VIEW === "me") render();
+  } catch (e) {}
+}
+let syncNote = window.claude ? "正在连接同步…" : "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
+
+/* ============ AI (Claude-hosted only) ============ */
+let AI = null;
+if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); }).catch(() => {});
+function aiErr(e) {
+  const c = e && e.code;
+  if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
+  if (c === "rate_limited") return "AI 调用太频繁，稍后再试。";
+  if (c === "invalid_json") return "AI 返回格式有误，再试一次。";
+  return "AI 暂时不可用。";
+}
+
+/* ============ data ============ */
+let DICT = new Map(), C = null, ANKI = { s: 0, f: 0, k: 0, l: 0, u: 0 };
+const LADDER = new Map(), SEG = new Map(), CTX = new Map(), PSG = new Map();
+async function loadData() {
+  const [w, c] = await Promise.all([fetch("data/words.json").then(r => r.json()), fetch("data/content.json").then(r => r.json())]);
+  for (const [word, py, gl, lv, tier, lapses] of w) { DICT.set(word, { py, gl, lv, tier, lapses }); ANKI[tier]++; }
+  C = c;
+  c.ladder.forEach(x => LADDER.set(x.id, x));
+  c.seg.forEach(x => SEG.set(x.id, x));
+  c.ctx.forEach(x => CTX.set(x.id, x));
+  c.passages.forEach(x => PSG.set(x.id, x));
+  indexGen();
+}
+function indexGen() {
+  (S.gen.ladder || []).forEach(x => LADDER.set(x.id, x));
+  (S.gen.passages || []).forEach(x => PSG.set(x.id, x));
+}
+const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "词库外" };
+function lookup(tok, gl = {}) {
+  const key = tok.replace(/\//g, "");
+  const d = DICT.get(key);
+  const g = gl[key] || gl[tok];
+  if (d) return { py: d.py, gl: d.gl, tier: d.tier, lv: d.lv, extra: g && g[1] !== d.gl ? g[1] : "" };
+  if (g) return { py: g[0], gl: g[1], tier: "n" };
+  return null;
+}
+function charBreak(tok) {
+  return Array.from(tok.replace(/\//g, "")).filter(c => !isPunct(c)).map(ch => { const d = DICT.get(ch); return { ch, py: d ? d.py : "", gl: d ? d.gl : "" }; });
+}
+
+/* ============ ladder helpers ============ */
+function ladParts(item) {
+  const toks = item.zh.split("|");
+  let keyIdx = toks.findIndex(t => t.startsWith("["));
+  const clean = toks.map(t => t.replace(/[\[\]]/g, ""));
+  return { toks: clean, keyIdx, key: clean[keyIdx], model: clean.join("") };
+}
+const accepted = item => { const { model } = ladParts(item); return new Set([model, ...(item.alt || [])].map(norm)); };
+
+/* ============ segmentation helpers ============ */
+const PARTICLES = new Set(["了", "的", "地", "得", "着", "过", "吗", "吧", "呢", "啊", "呀"]);
+function parseSeg(s) {
+  const chars = [], req = new Set(), opt = new Set(), spans = [];
+  const toks = s.split("|");
+  toks.forEach((tok, ti) => {
+    const start = chars.length;
+    const parts = tok.split("/");
+    parts.forEach((p, pi) => { for (const ch of Array.from(p)) chars.push(ch); if (pi < parts.length - 1) opt.add(chars.length - 1); });
+    spans.push({ start, end: chars.length - 1, text: parts.join("") });
+    if (ti < toks.length - 1) req.add(chars.length - 1);
+  });
+  for (const b of [...req]) {
+    const L = spans.find(sp => sp.end === b), R = spans.find(sp => sp.start === b + 1);
+    if ((L && PARTICLES.has(L.text)) || (R && PARTICLES.has(R.text))) { req.delete(b); opt.add(b); }
+  }
+  const fixed = new Set();
+  for (let i = 0; i < chars.length - 1; i++) if (isPunct(chars[i]) || isPunct(chars[i + 1])) fixed.add(i);
+  for (const b of fixed) { req.delete(b); opt.delete(b); }
+  return { chars, req, opt, fixed, spans };
+}
+
+/* ============ SRS ============ */
+const LAD_NEXT = { 1: 10 * MIN, 2: 1 * DAY, 3: 2 * DAY, 4: 4 * DAY };
+const BOX_IVL = [0.5, 1, 3, 7, 21, 60].map(d => d * DAY);
+function skillVal(k) {
+  const base = S.skills ? S.skills[k] : 0.5;
+  const r = S.recent[k] || [];
+  if (r.length < 8) return base;
+  const avg = r.reduce((a, b) => a + b, 0) / r.length;
+  return 0.4 * base + 0.6 * avg;
+}
+function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
+function logDay(sec, ok) { const k = dayKey(); const d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; d.n++; d.ok += ok ? 1 : 0; d.sec += Math.min(sec, 240); }
+function startRung() { return skillVal("pick") >= 0.6 ? 2 : 1; }
+function recordLadder(id, rung, score) {
+  // score: 0..3 (3 = natural, 2 = acceptable)
+  const it = S.items[id] = S.items[id] || { t: "lad", r: rung, due: 0, ivl: 0, n: 0, ok: 0, m: false };
+  it.n++;
+  const pass = score >= 2;
+  if (pass) {
+    it.ok++;
+    if (rung >= 5) { it.m = true; it.ivl = Math.max(it.ivl * 2.5, 7 * DAY); it.due = now() + it.ivl; it.r = 5; }
+    else { it.r = Math.max(it.r, rung + 1); it.due = now() + LAD_NEXT[rung]; }
+  } else { it.r = Math.max(1, rung - 1); it.ivl = 0; it.due = now() + 10 * MIN; }
+  pushRecent(rung >= 4 ? "write" : "pick", rung >= 4 ? score / 3 : (pass ? 1 : 0));
+  save();
+  return it;
+}
+function recordBox(id, t, ok, cat) {
+  const it = S.items[id] = S.items[id] || { t, b: 0, due: 0, n: 0, ok: 0 };
+  it.n++;
+  if (ok) { it.ok++; it.b = Math.min(5, it.b + 1); it.due = now() + BOX_IVL[it.b]; }
+  else { it.b = 0; it.due = now() + 10 * MIN; }
+  if (cat) pushRecent(cat, ok ? 1 : 0);
+  save();
+}
+
+/* ============ session builder ============ */
+function weights() {
+  const w = {
+    lad: (1.15 - (skillVal("pick") + skillVal("write")) / 2) * 1.7,
+    seg: (1.15 - (skillVal("seg") + skillVal("news")) / 2) * 1.0,
+    ctx: (1.15 - skillVal("ctx")) * 0.85
+  };
+  const sum = w.lad + w.seg + w.ctx;
+  for (const k in w) w[k] /= sum;
+  return w;
+}
+function candidates(cat) {
+  const t = now(), due = [], fresh = [];
+  if (cat === "lad") {
+    for (const [id] of LADDER) { const it = S.items[id]; if (!it) fresh.push({ t: "lad", id, r: startRung() }); else if (it.due <= t) due.push({ t: "lad", id, r: it.r, due: it.due }); }
+  } else if (cat === "seg") {
+    for (const [id] of SEG) { const it = S.items[id]; if (!it) fresh.push({ t: "seg", id }); else if (it.due <= t) due.push({ t: "seg", id, due: it.due }); }
+  } else {
+    for (const [id] of CTX) { const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due }); }
+    for (const id in S.bank) { const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due }); }
+  }
+  due.sort((a, b) => a.due - b.due);
+  return due.concat(fresh);
+}
+function buildSession(minutes) {
+  if (minutes < 1) {
+    const w = weights();
+    const order = Object.keys(w).sort((a, b) => w[b] - w[a]);
+    for (const cat of order) {
+      const c = candidates(cat).map(x => x.t === "lad" && x.r >= 4 ? Object.assign({}, x, { r: 3 }) : x);
+      if (c.length) return [c[0]];
+    }
+    return [];
+  }
+  const total = { 5: 8, 15: 22, 30: 42 }[minutes] || 10;
+  const w = weights();
+  const pools = { lad: candidates("lad"), seg: candidates("seg"), ctx: candidates("ctx") };
+  const n = {};
+  for (const k in w) n[k] = Math.max(pools[k].length ? 1 : 0, Math.round(total * w[k]));
+  const picked = { lad: pools.lad.slice(0, n.lad), seg: pools.seg.slice(0, n.seg), ctx: pools.ctx.slice(0, n.ctx) };
+  // interleave: production-heavy rhythm
+  const out = [];
+  const order = ["lad", "ctx", "lad", "seg"];
+  let i = 0;
+  while (picked.lad.length + picked.seg.length + picked.ctx.length) {
+    const k = order[i++ % order.length];
+    if (picked[k].length) out.push(picked[k].shift());
+  }
+  return out;
+}
+
+/* ============ views ============ */
+let VIEW = "home";
+let SESSION = null, PLACE = null, READ = null;
+const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid);
+function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
+function render() {
+  const main = $("#main");
+  $("#tabs").hidden = (VIEW === "session" && SESSION && SESSION.i < SESSION.q.length) || VIEW === "place";
+  $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
+  if (VIEW === "home") renderHome(main);
+  else if (VIEW === "session") renderSession(main);
+  else if (VIEW === "place") renderPlace(main);
+  else if (VIEW === "read") renderRead(main);
+  else if (VIEW === "me") renderMe(main);
+}
+$("#tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (!b) return; if (b.dataset.tab === "read") READ = null; setView(b.dataset.tab); });
+
+/* ---------- home ---------- */
+const CAT_COLORS = { lad: "var(--accent)", seg: "var(--gold)", ctx: "var(--good)" };
+const CAT_NAME = { lad: "造句 Production", seg: "断词 Chunking", ctx: "语境词 Words in context" };
+function renderHome(main) {
+  const w = weights();
+  const today = S.log[dayKey()] || { n: 0, sec: 0 };
+  const dueN = ["lad", "seg", "ctx"].reduce((a, k) => a + candidates(k).filter(x => x.due).length, 0);
+  const d = new Date();
+  main.innerHTML = `
+  <div class="top"><div><h1>中文练功房</h1><p class="date">${d.getMonth() + 1}月${d.getDate()}日 · 星期${"日一二三四五六"[d.getDay()]}</p></div>
+  <p class="small muted" style="text-align:right">今天 ${Math.round(today.sec / 60)} 分钟<br>${today.n} 题</p></div>
+  ${!S.placed ? `<div class="card"><span class="label">第一步 · First step</span><h2>先做水平测试（约 10 分钟）</h2>
+    <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
+    <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
+  <div class="card"><div class="spread"><h2>今天练多久？</h2><span class="small muted">${dueN ? dueN + " 题到期" : "没有积压"}</span></div>
+    <div class="times">
+      <button class="time hot" data-min="0.5"><b>30</b><span>秒 · 1 题</span></button>
+      <button class="time" data-min="5"><b>5</b><span>分钟</span></button>
+      <button class="time" data-min="15"><b>15</b><span>分钟</span></button>
+      <button class="time" data-min="30"><b>30</b><span>分钟</span></button>
+    </div>
+    <div class="stack" style="gap:8px"><span class="label">今日重点 · Today's mix</span>
+    <div class="mix">${Object.keys(w).map(k => `<i style="width:${w[k] * 100}%;background:${CAT_COLORS[k]}"></i>`).join("")}</div>
+    <div class="legend">${Object.keys(w).map(k => `<span><b style="background:${CAT_COLORS[k]}"></b>${CAT_NAME[k]} ${pct(w[k])}</span>`).join("")}</div></div>
+  </div>
+  <div class="card"><span class="label">为什么这样排 · Why this mix</span>
+    <p class="small">${S.placed ? mixReason() : "Until you take the test, the mix assumes your Anki pattern: strong recognition, weak production. Production gets the biggest share."}</p></div>`;
+  $$(".time", main).forEach(b => b.onclick = () => startSession(+b.dataset.min));
+  const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
+  const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
+}
+function mixReason() {
+  const k = ["ctx", "seg", "news", "pick", "write", "speed"].map(x => [x, skillVal(x)]).sort((a, b) => a[1] - b[1]);
+  const names = { ctx: "words in context", seg: "chunking", news: "written-register parsing", pick: "choosing natural Chinese", write: "writing Chinese", speed: "reading speed" };
+  return `Your weakest areas right now: <b>${names[k[0][0]]}</b> (${pct(k[0][1])}) and <b>${names[k[1][0]]}</b> (${pct(k[1][1])}). The weaker a skill, the more of the session it gets; production always gets a boost because it's your main goal.`;
+}
+
+/* ---------- session ---------- */
+function startSession(minutes) {
+  const q = buildSession(minutes);
+  if (!q.length) { toast("暂时没有可练的题 — nothing due right now"); return; }
+  SESSION = { q, i: 0, res: [], combo: 0, best: 0, minutes, t0: now(), requeued: new Set(), promoted: 0, mastered: 0 };
+  setView("session");
+}
+function renderSession(main) {
+  const s = SESSION;
+  if (s.i >= s.q.length) return renderEnd(main);
+  const card = s.q[s.i];
+  main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="结束">×</button>
+    <div class="cells">${s.q.map((_, j) => `<i class="${j < s.i ? (s.res[j] ? "ok" : "no") : j === s.i ? "now" : ""}"></i>`).join("")}</div>
+    <span class="combo" id="combo">${s.combo >= 2 ? "连对 ×" + s.combo : ""}</span></div><div id="slot"></div>`;
+  $("#quit").onclick = () => { s.q = s.q.slice(0, s.i); render(); };
+  const t0 = now();
+  renderCard(card, $("#slot"), (r) => {
+    logDay((now() - t0) / 1000, r.ok);
+    s.res[s.i] = r.ok;
+    if (r.ok) { s.combo++; s.best = Math.max(s.best, s.combo); const c = $("#combo"); if (c && s.combo >= 2) { c.textContent = "连对 ×" + s.combo; c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); } }
+    else s.combo = 0;
+    if (r.promoted) s.promoted++;
+    if (r.mastered) s.mastered++;
+    // in-session climb / retry
+    const key = card.t + card.id;
+    if (card.t === "lad" && s.minutes >= 5 && !s.requeued.has(key)) {
+      if (r.ok && card.r <= 2) { s.q.splice(Math.min(s.q.length, s.i + 4), 0, { t: "lad", id: card.id, r: card.r + 1 }); s.requeued.add(key); }
+      else if (!r.ok) { s.q.splice(Math.min(s.q.length, s.i + 3), 0, { t: "lad", id: card.id, r: Math.max(1, card.r - 1) }); s.requeued.add(key); }
+    } else if (!r.ok && s.minutes >= 5 && !s.requeued.has(key)) { s.q.splice(Math.min(s.q.length, s.i + 4), 0, Object.assign({}, card)); s.requeued.add(key); }
+    if (s.best > (S.best.combo || 0)) { S.best.combo = s.best; save(); }
+  }, () => { s.i++; render(); });
+}
+function renderEnd(main) {
+  const s = SESSION;
+  const n = s.res.length, ok = s.res.filter(Boolean).length;
+  const mins = Math.max(1, Math.round((now() - s.t0) / 60000));
+  const ready = [...LADDER.keys()].filter(id => S.items[id] && S.items[id].m).length;
+  main.innerHTML = `<div class="card end"><span class="label">练完了 · Done</span>
+    <div class="row" style="align-items:flex-end;gap:18px"><div class="big">${n ? pct(ok / n) : "—"}</div><p class="muted">${ok}/${n} 对 · ${s.minutes < 1 ? "30 秒" : mins + " 分钟"} · 最高连对 ${s.best}</p></div>
+    ${s.promoted ? `<p>📈 ${s.promoted} 个句型升了一级 · ${s.promoted} drill(s) climbed a rung</p>` : ""}
+    ${s.mastered ? `<p>✅ ${s.mastered} 个句型已经能写出来了 · newly production-ready</p>` : ""}
+    <p class="small muted">能写出来的句型 Production-ready: <b style="color:var(--ink)">${ready}</b> / ${LADDER.size}</p>
+    <div class="stack"><button class="btn wide" id="again">${s.minutes < 1 ? "再来一张 One more" : "再来 5 分钟 Five more minutes"}</button>
+    <button class="btn ghost wide" id="home">回首页 Home</button></div></div>`;
+  $("#again").onclick = () => startSession(s.minutes < 1 ? 0.5 : 5);
+  $("#home").onclick = () => setView("home");
+}
+
+/* ---------- card renderers ---------- */
+// onResult(r) is called once when answered; onNext() when the learner moves on.
+function renderCard(card, el, onResult, onNext) {
+  if (card.t === "lad") return renderLadder(LADDER.get(card.id), card.r, el, onResult, onNext, card.placement);
+  if (card.t === "seg") return renderSeg(SEG.get(card.id), el, onResult, onNext, card.placement);
+  if (card.t === "ctx") return renderCtx(card.item || CTX.get(card.id), el, onResult, onNext, card.placement);
+  if (card.t === "bank") return renderBank(card.id, el, onResult, onNext);
+  if (card.t === "news") return renderNews(card.item, el, onResult, onNext);
+}
+function nextButton(el, onNext, label = "继续 Continue") {
+  const b = document.createElement("button"); b.className = "btn wide"; b.textContent = label; b.onclick = () => { document.removeEventListener("keydown", kd); onNext(); };
+  const kd = e => { if (e.key === "Enter" && !e.isComposing && document.activeElement?.tagName !== "TEXTAREA") { e.preventDefault(); b.click(); } };
+  setTimeout(() => document.addEventListener("keydown", kd), 50);
+  el.append(b); b.focus({ preventScroll: true });
+}
+const RUNG_NAME = { 1: "选最自然 Pick the natural one", 2: "填空 Fill the gap", 3: "排顺序 Build the sentence", 4: "提示写 Write with a hint", 5: "自己写 Write it yourself" };
+function renderLadder(item, rung, el, onResult, onNext, placement) {
+  const p = ladParts(item);
+  const head = `<div class="kind"><span class="label">造句 · 第 ${rung} 级 · ${RUNG_NAME[rung]}</span>${placement ? "" : `<span class="chip">${esc(item.tag || "")}</span>`}</div>
+    <p class="prompt-en">${esc(item.en)}</p>`;
+  el.innerHTML = `<div class="card" id="cc">${head}<div id="body" class="stack"></div><div id="fb"></div></div>`;
+  const body = $("#body", el), fb = $("#fb", el), cc = $("#cc", el);
+  let answered = false;
+  const finish = (score, html) => {
+    if (answered) return; answered = true;
+    let promoted = false, mastered = false;
+    if (!placement) { const before = S.items[item.id] ? { ...S.items[item.id] } : null; const it = recordLadder(item.id, rung, score); promoted = score >= 2 && (!before || it.r > before.r); mastered = it.m && !(before && before.m); }
+    const cls = score >= 3 ? "ok" : score === 2 ? "mid" : "no";
+    const verdict = score >= 3 ? "对了 ✓" : score === 2 ? "意思对，可以更地道" : "还不对";
+    fb.innerHTML = `<div class="fb ${cls}"><span class="verdict">${verdict}</span>${html || ""}
+      <span class="model">${esc(p.model)}</span>
+      ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 2).map(esc).join(" ／ ")}</span>` : ""}
+      <span>${esc(item.why)}</span></div>`;
+    onResult({ ok: score >= 2, score, promoted, mastered });
+    nextButton(cc, onNext);
+  };
+  if (rung === 1 || rung === 2) {
+    let opts, correct;
+    if (rung === 1) { correct = p.model; opts = shuffle([p.model, ...item.bad.slice(0, 2)]); body.insertAdjacentHTML("beforeend", `<p class="small muted">哪一句最自然？ Which is the most natural Chinese?</p>`); }
+    else {
+      correct = p.key; opts = shuffle([p.key, ...item.cx]);
+      body.insertAdjacentHTML("beforeend", `<p class="sent">${p.toks.map((t, i) => i === p.keyIdx ? `<span class="blank">？</span>` : esc(t)).join("")}</p>`);
+    }
+    body.insertAdjacentHTML("beforeend", `<div class="opts">${opts.map((o, i) => `<button class="opt zh" data-i="${i}">${esc(o)}</button>`).join("")}</div>`);
+    $$(".opt", body).forEach(b => b.onclick = () => {
+      const pick = opts[+b.dataset.i];
+      $$(".opt", body).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === correct) x.classList.add("right"); });
+      if (pick !== correct) b.classList.add("wrong");
+      finish(pick === correct ? 3 : 0);
+    });
+  } else if (rung === 3) {
+    const words = p.toks.filter(t => !isPunct(t[0]) || t.length > 1);
+    const tiles = shuffle(words.map((t, i) => ({ t, i })));
+    let built = [];
+    body.innerHTML = `<p class="small muted">点词块排成句子 Tap the chunks in order.</p><div class="built" id="built"></div><div class="tiles" id="tiles">${tiles.map((x, j) => `<button class="tile" data-j="${j}">${esc(x.t)}</button>`).join("")}</div>
+      <div class="row"><button class="btn ghost" id="undo">撤销 Undo</button><button class="btn" id="check" disabled>检查 Check</button></div>`;
+    const draw = () => {
+      $("#built", body).innerHTML = built.map(j => `<span class="tile">${esc(tiles[j].t)}</span>`).join("");
+      $$("#tiles .tile", body).forEach(b => b.classList.toggle("used", built.includes(+b.dataset.j)));
+      $("#check", body).disabled = built.length !== tiles.length;
+    };
+    $$("#tiles .tile", body).forEach(b => b.onclick = () => { if (answered) return; built.push(+b.dataset.j); draw(); });
+    $("#undo", body).onclick = () => { if (answered) return; built.pop(); draw(); };
+    $("#check", body).onclick = () => {
+      const ans = norm(built.map(j => tiles[j].t).join(""));
+      $("#check", body).disabled = true; $("#undo", body).disabled = true;
+      finish(accepted(item).has(ans) ? 3 : 0, accepted(item).has(ans) ? "" : `<span>你的：<span class="zh">${esc(built.map(j => tiles[j].t).join(" "))}</span></span>`);
+    };
+  } else {
+    body.innerHTML = `${rung === 4 ? `<p class="hint">提示 Hint: 用 <b>${esc(p.key)}</b></p>` : `<p class="hint">用中文写出来 Write it in Chinese.</p>`}
+      <textarea class="paper" id="ans" rows="2" placeholder="在这里打字…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+      <div class="row"><button class="btn" id="check">检查 Check</button><button class="btn ghost" id="giveup">不会 Show me</button></div>`;
+    const ta = $("#ans", body);
+    setTimeout(() => ta.focus({ preventScroll: true }), 30);
+    ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#check", body).click(); } });
+    $("#giveup", body).onclick = () => { $("#check", body).disabled = true; $("#giveup", body).disabled = true; ta.disabled = true; finish(0); };
+    $("#check", body).onclick = async () => {
+      const raw = ta.value.trim(); if (!raw) { ta.focus(); return; }
+      $("#check", body).disabled = true; $("#giveup", body).disabled = true; ta.disabled = true;
+      if (accepted(item).has(norm(raw))) return finish(3);
+      if (AI) {
+        fb.innerHTML = `<div class="fb mid"><span><span class="spin"></span> 批改中… Claude is reading your answer</span><button class="btn ghost" id="selfg">不等了，自己判断 Grade it myself</button></div>`;
+        let cancelled = false;
+        $("#selfg", fb).onclick = () => { cancelled = true; selfGrade(raw); };
+        try {
+          const g = await gradeAI(item, raw);
+          if (cancelled || answered) return;
+          const sc = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
+          const notes = (Array.isArray(g.notes) ? g.notes : []).slice(0, 3);
+          finish(sc, `<span>你的：<span class="zh">${esc(raw)}</span></span>
+            ${g.fixed && norm(g.fixed) !== norm(raw) ? `<span>改一改：<span class="zh" style="font-size:17px">${esc(g.fixed)}</span></span>` : ""}
+            ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
+            ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`);
+        } catch (e) { if (!cancelled && !answered) { toast(aiErr(e)); selfGrade(raw); } }
+      } else selfGrade(raw);
+    };
+    function selfGrade(raw) {
+      fb.innerHTML = `<div class="fb mid"><span>你的：<span class="zh" style="font-size:18px">${esc(raw)}</span></span>
+        <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span>
+        ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 3).map(esc).join(" ／ ")}</span>` : ""}
+        <span class="small">自己判断 How did you do?</span>
+        <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
+      $$("[data-s]", fb).forEach(b => b.onclick = () => finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`));
+    }
+  }
+}
+async function gradeAI(item, answer) {
+  const p = ladParts(item);
+  const prompt = `You are a precise, encouraging Mandarin tutor grading an English→Chinese translation by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks.
+
+English: ${item.en}
+Reference translations (any natural equivalent is fine): ${[p.model, ...(item.alt || [])].join(" / ")}
+Chunk being practiced: ${p.key}
+Learner's answer: ${answer}
+
+Score: 3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = wrong meaning or ungrammatical. Do not penalize a different but natural phrasing, or punctuation.
+Reply with only JSON: {"score": 0-3, "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "good": "one short note on what they did right, or empty string", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
+  return AI.json(prompt, { modelTier: "default", effort: "low" });
+}
+function renderSeg(item, el, onResult, onNext, placement) {
+  const P = parseSeg(item.s);
+  const cuts = new Set();
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">断词 · Chunking</span><span class="chip ${item.reg}">${{ news: "新闻 News", xhs: "小红书", book: "书面 Book" }[item.reg] || ""}</span></div>
+    <p class="small muted">点字，在它后面切一刀，把句子分成词块。Tap a character to cut after it. Split into the words/chunks you'd read as units.</p>
+    <div class="segline" id="sl">${P.chars.map((ch, i) => `<span class="c ${isPunct(ch) ? "p" : (i < P.chars.length - 1 && !P.fixed.has(i) ? "tap" : "")}" data-i="${i}">${esc(ch)}</span>`).join("")}</div>
+    <button class="btn" id="check">检查 Check</button><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  $$(".c.tap", el).forEach(s => s.onclick = () => { const i = +s.dataset.i; if (cuts.has(i)) cuts.delete(i); else cuts.add(i); s.classList.toggle("cut", cuts.has(i)); });
+  $("#check", el).onclick = () => {
+    $("#check", el).remove();
+    let missed = 0, extra = 0;
+    $$(".c", el).forEach(s => {
+      const i = +s.dataset.i; s.classList.remove("tap"); s.onclick = null;
+      if (P.req.has(i) && !cuts.has(i)) { missed++; s.classList.add("miss"); }
+      else if (cuts.has(i) && !P.req.has(i) && !P.opt.has(i)) { extra++; s.classList.add("extra"); }
+    });
+    const score = Math.max(0, 1 - (missed + extra) / Math.max(1, P.req.size));
+    const ok = score >= 0.85;
+    if (!placement) recordBox(item.id, "seg", ok, "seg"); else pushRecent("seg", score);
+    const chunks = item.s.split("|").map(t => t.replace(/\//g, "")).filter(t => !isPunct(t));
+    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : score >= .6 ? "mid" : "no"}"><span class="verdict">${pct(score)} · 漏切 ${missed} · 多切 ${extra}</span>
+      <div class="chunks">${chunks.map(c => `<span>${esc(c)}</span>`).join("")}</div><span>${esc(item.en)}</span>
+      <span class="small muted">红线 = 该切没切 (missed). 淡红 = 不该切 (extra). Particles like 了/的 can go either way.</span></div>`;
+    onResult({ ok, score });
+    nextButton(cc, onNext);
+  };
+}
+function renderCtx(item, el, onResult, onNext, placement) {
+  const right = item.opts[0];
+  const opts = shuffle(item.opts);
+  const d = DICT.get(item.w);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">语境词 · Word in context</span>${d && !placement ? `<span class="tier ${d.tier}">${TIER_NAME[d.tier]}</span>` : ""}</div>
+    <p class="sent">${esc(item.s).replace(esc(item.w), `<mark>${esc(item.w)}</mark>`)}</p>
+    <p class="small muted">这里的「${esc(item.w)}」是什么意思？ What does it mean here?</p>
+    <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  $$(".opt", el).forEach(b => b.onclick = () => {
+    const ok = opts[+b.dataset.i] === right;
+    $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
+    if (!ok) b.classList.add("wrong");
+    if (!placement) recordBox(item.id, "ctx", ok, "ctx");
+    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span><span class="zh" style="font-size:20px">${esc(item.w)}</span> ${d ? esc(d.py) + " · " + esc(d.gl) : ""}</span><span>${esc(item.en)}</span></div>`;
+    onResult({ ok, score: ok ? 1 : 0 });
+    nextButton(cc, onNext);
+  });
+}
+function renderBank(id, el, onResult, onNext) {
+  const b = S.bank[id];
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">生词 · From your reading</span></div>
+    <p class="sent">${b.s ? esc(b.s).replace(esc(b.zh), `<mark>${esc(b.zh)}</mark>`) : `<mark>${esc(b.zh)}</mark>`}</p>
+    <button class="btn soft" id="rev">想一想，再看答案 Reveal</button><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  $("#rev", el).onclick = () => {
+    $("#rev", el).remove();
+    $("#fb", el).innerHTML = `<div class="fb mid"><span><span class="zh" style="font-size:22px">${esc(b.zh)}</span> ${esc(b.py || "")}</span><span>${esc(b.gl || "")}</span>
+      <div class="row"><button class="btn soft" data-k="1">记得 Knew it</button><button class="btn soft" data-k="0">忘了 Forgot</button></div></div>`;
+    $$("[data-k]", el).forEach(x => x.onclick = () => {
+      const ok = x.dataset.k === "1";
+      recordBox("B:" + id, "bank", ok, "ctx");
+      $$("[data-k]", el).forEach(y => y.disabled = true);
+      onResult({ ok, score: ok ? 1 : 0 });
+      nextButton(cc, onNext);
+    });
+  };
+}
+function renderNews(item, el, onResult, onNext) {
+  const right = item.opts[0], opts = shuffle(item.opts);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">新闻理解 · News parsing</span></div>
+    <p class="sent" style="font-size:21px">${esc(item.s)}</p><p class="prompt-en" style="font-size:16px">${esc(item.q)}</p>
+    <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
+  const cc = $("#cc", el);
+  $$(".opt", el).forEach(b => b.onclick = () => {
+    const ok = opts[+b.dataset.i] === right;
+    $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
+    if (!ok) b.classList.add("wrong");
+    onResult({ ok, score: ok ? 1 : 0 });
+    nextButton(cc, onNext);
+  });
+}
+
+/* ---------- placement ---------- */
+function startPlacement() {
+  const pl = C.placement;
+  const steps = [];
+  steps.push({ intro: "语境词", en: "Words you marked as known in Anki — now inside real sentences." });
+  pl.ctx.forEach((item, i) => steps.push({ sec: "ctx", card: { t: "ctx", item: Object.assign({ id: "PC" + i }, item), placement: true } }));
+  steps.push({ intro: "断词", en: "Split sentences into the chunks you'd read as units." });
+  pl.seg.forEach(id => steps.push({ sec: "seg", card: { t: "seg", id, placement: true } }));
+  steps.push({ intro: "新闻理解", en: "One-sentence news items in formal written register." });
+  pl.news.forEach(item => steps.push({ sec: "news", card: { t: "news", item, placement: true } }));
+  steps.push({ intro: "选最自然", en: "English → pick the most natural Chinese." });
+  pl.pick.forEach(id => steps.push({ sec: "pick", card: { t: "lad", id, r: 1, placement: true } }));
+  steps.push({ intro: "自己写", en: "English → type the Chinese yourself. Don't look anything up." });
+  pl.write.forEach(id => steps.push({ sec: "write", card: { t: "lad", id, r: 5, placement: true } }));
+  steps.push({ intro: "限时阅读", en: "Read a short post at your normal pace, then answer 3 questions. The clock runs while you read." });
+  steps.push({ sec: "read", read: pl.read });
+  PLACE = { steps, i: 0, res: { ctx: [], seg: [], news: [], pick: [], write: [], speed: [], readq: [] }, seen: {} };
+  setView("place");
+}
+function renderPlace(main) {
+  const P = PLACE;
+  if (P.i >= P.steps.length) return finishPlacement(main);
+  const st = P.steps[P.i];
+  const prog = Math.round(P.i / P.steps.length * 100);
+  main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="退出">×</button><div class="mix" style="flex:1;background:var(--line)"><i style="width:${prog}%;background:var(--accent)"></i></div><span class="small muted">${prog}%</span></div><div id="slot"></div>`;
+  $("#quit").onclick = () => { PLACE = null; setView("home"); };
+  const slot = $("#slot");
+  const next = () => { P.i++; render(); window.scrollTo(0, 0); };
+  if (st.intro) {
+    slot.innerHTML = `<div class="card"><span class="label">下一部分 · Next section</span><h1 class="zh" style="font-size:30px">${esc(st.intro)}</h1><p>${esc(st.en)}</p></div>`;
+    nextButton($(".card", slot), next, "开始 Go");
+    return;
+  }
+  if (st.read) return placementRead(slot, st.read, next);
+  renderCard(st.card, slot, r => {
+    const k = st.sec;
+    if (k === "write") P.res.write.push(r.score / 3);
+    else if (k === "seg") P.res.seg.push(r.score);
+    else P.res[k].push(r.ok ? 1 : 0);
+    if (st.card.t === "lad") P.seen[st.card.id] = { r: st.card.r, ok: r.ok };
+  }, next);
+}
+function placementRead(slot, pid, next) {
+  const p = PSG.get(pid);
+  const chars = p.paras.join("").replace(/[|\/]/g, "");
+  const n = Array.from(chars).filter(c => !isPunct(c)).length;
+  const t0 = now();
+  slot.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">限时阅读 · Timed read</span><span class="chip xhs">小红书</span></div>
+    <h2 class="zh" style="font-size:20px">${esc(p.title)}</h2>
+    <div class="reading" style="font-size:19px;line-height:1.9">${p.paras.map(x => `<p>${esc(x.replace(/[|\/]/g, ""))}</p>`).join("")}</div>
+    <button class="btn wide" id="done">读完了 Done reading</button></div>`;
+  $("#done", slot).onclick = () => {
+    const sec = (now() - t0) / 1000;
+    const cpm = n / (sec / 60);
+    PLACE.res.cpm = Math.round(cpm);
+    let qi = 0;
+    const askQ = () => {
+      if (qi >= p.qs.length) { PLACE.res.speed.push(Math.min(1, cpm / 320)); return next(); }
+      const q = p.qs[qi];
+      const right = q.opts[0], opts = shuffle(q.opts);
+      slot.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${qi + 1}/3 · 不能回看</span><p class="prompt-en">${esc(q.q)}</p>
+        <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
+      $$(".opt", slot).forEach(b => b.onclick = () => { PLACE.res.readq.push(opts[+b.dataset.i] === right ? 1 : 0); qi++; askQ(); });
+    };
+    askQ();
+  };
+}
+function finishPlacement(main) {
+  const R = PLACE.res;
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0.5;
+  const readAcc = avg(R.readq);
+  const sk = {
+    ctx: avg(R.ctx), seg: avg(R.seg), news: avg(R.news), pick: avg(R.pick), write: avg(R.write),
+    speed: Math.min(1, (R.speed[0] || 0.4) * (0.4 + 0.6 * readAcc))
+  };
+  S.skills = sk; S.placed = true; S.placedAt = now(); S.cpm = R.cpm;
+  // seed placement ladder items
+  for (const id in PLACE.seen) {
+    const x = PLACE.seen[id];
+    if (!S.items[id]) S.items[id] = { t: "lad", r: x.ok ? Math.min(5, x.r + 1) : Math.max(1, x.r - 2), due: now() + (x.ok ? DAY : 0), ivl: 0, n: 1, ok: x.ok ? 1 : 0, m: false };
+  }
+  save();
+  const names = { ctx: "语境识词 Words in context", seg: "断词 Chunking", news: "书面语理解 News parsing", pick: "选自然表达 Natural choice", write: "自己写 Writing", speed: "阅读速度 Reading speed" };
+  const order = Object.keys(sk).sort((a, b) => sk[a] - sk[b]);
+  const gap = (sk.ctx + sk.news) / 2 - (sk.pick + sk.write) / 2;
+  main.innerHTML = `<div class="card"><span class="label">测试结果 · Your profile</span>
+    <div class="bars">${Object.keys(sk).map(k => `<div class="bar"><span>${names[k].split(" ")[0]}</span><span class="t"><i style="width:${pct(sk[k])}"></i></span><span class="v">${pct(sk[k])}</span></div>`).join("")}</div>
+    <p class="small muted">阅读速度：约 ${R.cpm || "—"} 字/分钟 (characters per minute) · 理解 ${Math.round(readAcc * 3)}/3</p></div>
+    <div class="card"><span class="label">这说明什么 · What this means</span>
+    <p>Weakest: <b>${names[order[0]]}</b>, then <b>${names[order[1]]}</b>.</p>
+    <p>${gap > 0.15 ? `Recognition is ahead of production by about ${Math.round(gap * 100)} points, which matches your Anki history (it only ever trained Chinese → English). Daily sessions lean on the production ladder until that gap closes.` : gap < -0.1 ? `Interesting: production held up better than recognition in context. Sessions will push more reading and chunking.` : `Recognition and production are fairly even here; sessions spread across both.`}</p>
+    <p class="small muted">The mix updates itself as you practice: it blends this test with your last ~40 answers in each skill.</p></div>
+    <button class="btn wide" id="go">开始今天的练习 Start practicing</button>`;
+  $("#go", main).onclick = () => { PLACE = null; setView("home"); };
+}
+
+/* ---------- reader ---------- */
+function passageTokens(p) { return p.paras.map(para => para.split("|")); }
+function coverage(p) {
+  let known = 0, total = 0;
+  for (const toks of passageTokens(p)) for (const t of toks) {
+    const k = t.replace(/\//g, ""); if (!k || Array.from(k).every(isPunct) || /^[\d.%a-z]+$/i.test(k)) continue;
+    total++; const d = DICT.get(k);
+    if ((d && (d.tier === "s" || d.tier === "f")) || (!d && k.length > 1 && t.includes("/") && t.split("/").every(x => { const dd = DICT.get(x); return dd && dd.tier === "s"; }))) known++;
+  }
+  return total ? known / total : 0;
+}
+function renderRead(main) {
+  if (READ && READ.pid) return renderPassage(main);
+  const all = [...PSG.values()];
+  const REG = { xhs: "小红书", news: "新闻", book: "书面" };
+  main.innerHTML = `<div class="top"><div><h1>阅读</h1><p class="date">Tap any word for meaning. Turn on 分词 to see chunk boundaries.</p></div></div>
+    ${AI ? `<div class="card"><span class="label">生成新短文 · New passage for you</span>
+      <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting.</p>
+      <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}">${v}</button>`).join("")}</div><div id="genst" class="small muted"></div></div>` : ""}
+    <div class="plist">${[...all.filter(p => p.gen).reverse(), ...all.filter(p => !p.gen)].map(p => {
+      const r = S.reads[p.id];
+      return `<button class="pitem" data-p="${esc(p.id)}"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span>${p.gen ? `<span class="chip">新 AI</span>` : ""}<span class="small muted">已知词 ${pct(coverage(p))}</span>${r ? `<span class="small muted">· 读过 ${r.cpm} 字/分 · ${r.score}/3</span>` : ""}</div><h3>${esc(p.title)}</h3></button>`;
+    }).join("")}</div>`;
+  $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, t0: now(), looked: new Set(), spaced: false }; render(); window.scrollTo(0, 0); });
+  $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen, main));
+}
+function renderPassage(main) {
+  const p = PSG.get(READ.pid);
+  const paras = passageTokens(p);
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>
+    <label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></div>
+    <div class="card"><h2 class="zh" style="font-size:21px">${esc(p.title)}</h2>
+    <div class="reading ${READ.spaced ? "spaced" : ""}" id="rd">${paras.map((toks, pi) => `<p>${toks.map((t, ti) => {
+      const show = t.replace(/\//g, "");
+      return Array.from(show).every(isPunct) || /^\p{Extended_Pictographic}+$/u.test(show) ? esc(show) : `<span class="tk ${READ.looked.has(pi + ":" + ti) ? "looked" : ""}" data-k="${pi}:${ti}">${esc(show)}</span>`;
+    }).join("")}</p>`).join("")}</div>
+    <button class="btn wide" id="done">读完了，答题 Done → questions</button></div>`;
+  $("#back").onclick = () => { READ = null; render(); };
+  $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
+  $$(".tk", main).forEach(s => s.onclick = () => {
+    const [pi, ti] = s.dataset.k.split(":").map(Number);
+    READ.looked.add(s.dataset.k); s.classList.add("looked");
+    openSheet(p, paras, pi, ti);
+  });
+  $("#done").onclick = () => passageQuiz(main, p);
+}
+function sentenceAround(toks, ti) {
+  const end = /^[。！？；!?]$|^\p{Extended_Pictographic}/u;
+  let a = ti, b = ti;
+  while (a > 0 && !end.test(toks[a - 1])) a--;
+  while (b < toks.length - 1 && !end.test(toks[b])) b++;
+  return toks.slice(a, b + 1).join("").replace(/\//g, "");
+}
+function openSheet(p, paras, pi, ti) {
+  closeSheet();
+  const tok = paras[pi][ti], word = tok.replace(/\//g, "");
+  const L = lookup(tok, p.gl || {});
+  const parts = tok.includes("/") ? tok.split("/").map(x => ({ x, d: lookup(x, p.gl || {}) })) : [];
+  const chars = charBreak(tok);
+  const inBank = !!S.bank[word];
+  const sh = document.createElement("div"); sh.className = "sheet"; sh.id = "sheet";
+  sh.innerHTML = `<div class="in"><div class="spread"><span class="w">${esc(word)}</span><button class="x" id="cls" aria-label="关闭">×</button></div>
+    ${L ? `<p><b>${esc(L.py)}</b> ${L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</p><p>${esc(L.gl)}${L.extra ? `<br><span class="muted">here: ${esc(L.extra)}</span>` : ""}</p>` : `<p class="muted">词库里没有这个整词 — see the parts below.</p>`}
+    ${parts.length ? `<div class="chars">${parts.map(o => `<div><span class="zh">${esc(o.x)}</span>${o.d ? esc(o.d.py) + " · " + esc(o.d.gl) : ""}</div>`).join("")}</div>` : ""}
+    ${chars.length > 1 ? `<details><summary class="small muted">逐字 Character by character</summary><div class="chars">${chars.map(c => `<div><span class="zh">${esc(c.ch)}</span>${esc(c.py)} ${c.gl ? "· " + esc(c.gl) : ""}</div>`).join("")}</div></details>` : ""}
+    <button class="btn ${inBank ? "ghost" : ""}" id="addb" ${inBank ? "disabled" : ""}>${inBank ? "已在复习里 In review" : "加入复习 Add to review"}</button></div>`;
+  document.body.append(sh);
+  $("#cls", sh).onclick = closeSheet;
+  $("#addb", sh).onclick = () => {
+    S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? (L.extra || L.gl) : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
+    save(); toast("已加入复习 Added"); closeSheet();
+  };
+}
+function closeSheet() { const s = $("#sheet"); if (s) s.remove(); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+function passageQuiz(main, p) {
+  closeSheet();
+  const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
+  const sec = (now() - READ.t0) / 1000;
+  const cpm = Math.round(n / (sec / 60));
+  let qi = 0, score = 0;
+  const ask = () => {
+    if (qi >= p.qs.length) {
+      S.reads[p.id] = { cpm, score, t: now(), looked: READ.looked.size };
+      pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
+      logDay(Math.min(sec, 900), score >= 2); save();
+      main.innerHTML = `<div class="card"><span class="label">读完 · Finished</span>
+        <div class="stats3"><div class="stat"><b>${cpm}</b><span>字/分钟</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
+        <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>
+        <button class="btn wide" id="again">再读一遍（看看快了多少）Re-read</button><button class="btn ghost wide" id="list">回到列表 Back to list</button></div>`;
+      $("#again").onclick = () => { READ = { pid: p.id, t0: now(), looked: new Set(), spaced: false }; render(); };
+      $("#list").onclick = () => { READ = null; render(); };
+      return;
+    }
+    const q = p.qs[qi], right = q.opts[0], opts = shuffle(q.opts);
+    main.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${qi + 1}/${p.qs.length}</span><p class="prompt-en">${esc(q.q)}</p>
+      <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
+    $$(".opt", main).forEach(b => b.onclick = () => {
+      const ok = opts[+b.dataset.i] === right; if (ok) score++;
+      $$(".opt", main).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
+      if (!ok) b.classList.add("wrong");
+      nextButton($("#cc"), () => { qi++; ask(); });
+    });
+  };
+  ask();
+}
+function targetWords(n) {
+  const pool = [];
+  for (const [w, d] of DICT) if ((d.tier === "l" || d.tier === "f" || d.tier === "k") && w.length >= 2) pool.push(w);
+  return shuffle(pool).slice(0, n);
+}
+async function genPassage(kind, main) {
+  const st = $("#genst", main);
+  $$("[data-gen]", main).forEach(b => b.disabled = true);
+  const targets = targetWords(10);
+  const genre = { xhs: "a Xiaohongshu-style post (casual, internet slang, emoji allowed) about everyday life or travel in China", news: "a short news brief in formal written register (据…显示, 随着…, 有望 etc.), clearly fictional figures", book: "a short literary narrative excerpt, past tense, descriptive", travel: "a realistic dialogue between a traveller and a local in China (ordering, directions, tickets, hotels), each line prefixed 甲：or 乙：" }[kind];
+  const prompt = `Write a short Chinese reading passage for an advanced learner (knows HSK 1–6 well; struggles to parse running text quickly). Genre: ${genre}. 140–220 characters, simplified Chinese.
+Naturally include at least 5 of these words the learner keeps forgetting: ${targets.join("、")}.
+Reply with only JSON:
+{"title":"Chinese title","paras":["token|token|token|…"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"]}]}
+Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | between EVERY token (punctuation is its own token, e.g. 我|今天|去|了|上海|。); gl must cover every slang word, name, HSK7+ word and each target word you used; exactly 3 questions with the correct answer first.`;
+  st.innerHTML = `<span class="spin"></span> 生成中…（通常 20–60 秒）`;
+  try {
+    const j = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => { st.innerHTML = `<span class="spin"></span> 生成中… ${text.length} 字符`; } });
+    if (!j || !Array.isArray(j.paras) || !j.paras.length || !Array.isArray(j.qs) || j.qs.length < 2) throw { code: "invalid_json" };
+    const p = { id: "G" + now().toString(36), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) })), gen: true };
+    S.gen.passages.push(p); PSG.set(p.id, p); save();
+    READ = { pid: p.id, t0: now(), looked: new Set(), spaced: false }; render();
+  } catch (e) { st.textContent = aiErr(e); $$("[data-gen]", main).forEach(b => b.disabled = false); }
+}
+
+/* ---------- progress ---------- */
+function renderMe(main) {
+  const ladIds = [...LADDER.keys()];
+  const ready = ladIds.filter(id => S.items[id] && S.items[id].m).length;
+  const started = ladIds.filter(id => S.items[id]).length;
+  const fixed = [...CTX.keys()].filter(id => S.items[id] && S.items[id].b >= 3).length;
+  const segRecent = S.recent.seg || [];
+  const week = [];
+  for (let i = 6; i >= 0; i--) { const t = now() - i * DAY; const d = S.log[dayKey(t)]; week.push({ lab: "日一二三四五六"[new Date(t).getDay()], m: d ? d.sec / 60 : 0 }); }
+  const names = { ctx: "语境识词", seg: "断词", news: "书面语", pick: "选自然", write: "自己写", speed: "阅读速度" };
+  main.innerHTML = `<div class="top"><div><h1>进度</h1><p class="date">${esc(syncNote)}</p></div></div>
+  <div class="card"><span class="label">能写出来的句型 · Production-ready</span>
+    <div class="row" style="align-items:flex-end"><span class="big">${ready}</span><span class="muted">/ ${LADDER.size} · 在练 ${started}</span></div>
+    <div class="mix" style="background:var(--line)"><i style="width:${LADDER.size ? ready / LADDER.size * 100 : 0}%;background:var(--accent)"></i></div>
+    <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词修好 (box ≥3)</span></div><div class="stat"><b>${Object.keys(S.bank).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
+  <div class="card"><span class="label">这周 · This week (minutes)</span>
+    <div class="week">${week.map(d => `<div><i style="background:${d.m ? `color-mix(in srgb, var(--accent) ${Math.min(100, 25 + d.m * 5)}%, var(--line))` : "var(--line)"}"></i>${d.lab}<br>${d.m ? Math.round(d.m) : ""}</div>`).join("")}</div></div>
+  <div class="card"><span class="label">技能 · Skills</span>
+    ${S.skills ? `<div class="bars">${Object.keys(names).map(k => `<div class="bar"><span>${names[k]}</span><span class="t"><i style="width:${pct(skillVal(k))}"></i></span><span class="v">${pct(skillVal(k))}</span></div>`).join("")}</div>` : `<p class="muted">还没测试 — take the placement test to fill these in.</p>`}
+    <button class="btn ghost" id="replace">重新做水平测试 Retake placement test</button></div>
+  <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
+    <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
+    <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
+  ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad">生成 8 道新题 Generate</button><div id="glst" class="small muted"></div></div>` : ""}
+  <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
+    <p class="small muted">Use this to carry progress to the offline copy (for China) and back. Copy the code on one, paste it on the other.</p>
+    <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste code</button></div><div id="xio"></div></div>`;
+  $("#replace").onclick = startPlacement;
+  $("#exp").onclick = exportCode;
+  $("#imp").onclick = importUI;
+  const gl = $("#genlad"); if (gl) gl.onclick = genLadder;
+}
+async function exportCode() {
+  const json = JSON.stringify(S);
+  let code;
+  try {
+    const cs = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+    const buf = new Uint8Array(await new Response(cs).arrayBuffer());
+    let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    code = "ZW1:" + btoa(bin);
+  } catch (e) { code = "ZW0:" + btoa(unescape(encodeURIComponent(json))); }
+  const box = $("#xio");
+  box.innerHTML = `<textarea class="code" id="codebox" readonly>${esc(code)}</textarea><p class="small muted">${Math.round(code.length / 1024)} KB</p>`;
+  const ta = $("#codebox");
+  try { await navigator.clipboard.writeText(code); toast("已复制 Copied"); } catch (e) { ta.focus(); ta.select(); toast("请手动复制 Select and copy"); }
+}
+function importUI() {
+  const box = $("#xio");
+  box.innerHTML = `<textarea class="code" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">覆盖当前进度 Replace my progress</button></div>`;
+  $("#doimp").onclick = async () => {
+    const code = $("#codein").value.trim();
+    try {
+      let json;
+      if (code.startsWith("ZW1:")) {
+        const bin = atob(code.slice(4)); const buf = Uint8Array.from(bin, c => c.charCodeAt(0));
+        json = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+      } else if (code.startsWith("ZW0:")) json = decodeURIComponent(escape(atob(code.slice(4))));
+      else throw 0;
+      const data = JSON.parse(json);
+      if (!data || data.v !== 1) throw 0;
+      S = Object.assign(freshState(), data); indexGen(); save(); toast("已导入 Imported"); render();
+    } catch (e) { toast("代码无效 — that code didn't work"); }
+  };
+}
+async function genLadder() {
+  const st = $("#glst"), btn = $("#genlad");
+  btn.disabled = true;
+  const missed = [...LADDER.values()].filter(x => { const it = S.items[x.id]; return it && it.n > it.ok; }).slice(0, 10).map(x => ladParts(x).key + " (" + x.en + ")");
+  const targets = targetWords(10);
+  const prompt = `Create 8 English→Chinese production drills for an advanced Mandarin learner (HSK 6+ recognition) whose weakness is producing natural Chinese: they use English word order, long modifiers before nouns, literal word choices, and miss natural chunks (结果, 下起…来, 说得通, V得 complements, 把, 连…都).
+Patterns/words they recently got wrong: ${missed.join("; ") || "none yet"}.
+Words they keep forgetting (use some as the key chunk): ${targets.join("、")}.
+Mix everyday speech, travel in China, and expressing opinions. Each drill is one sentence.
+Reply with only a JSON array of 8 objects:
+{"en":"natural English sentence","zh":"natural Chinese split into chunks with |, with exactly ONE key chunk in square brackets, e.g. 我|本来|打算|去|，|[结果]|下雨了|。","alt":["2–4 other natural full Chinese answers"],"cx":["3 wrong but tempting fillers for the key slot"],"bad":["2 full Chinese sentences that are English-shaped or wrong, the kind this learner would write"],"why":"one or two English sentences explaining the key chunk and the trap","tag":"pattern|chunk|word|travel|express|leech"}`;
+  st.innerHTML = `<span class="spin"></span> 生成中…（通常 30–90 秒）`;
+  try {
+    const arr = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => { st.innerHTML = `<span class="spin"></span> 生成中… ${text.length} 字符`; } });
+    if (!Array.isArray(arr)) throw { code: "invalid_json" };
+    let added = 0;
+    arr.forEach((x, i) => {
+      if (!x || typeof x.zh !== "string" || (x.zh.match(/\[/g) || []).length !== 1 || !x.en || !Array.isArray(x.cx) || x.cx.length < 3 || !Array.isArray(x.bad) || x.bad.length < 2) return;
+      const item = { id: "G" + now().toString(36) + i, en: String(x.en), zh: x.zh, alt: (x.alt || []).map(String), cx: x.cx.slice(0, 3).map(String), bad: x.bad.slice(0, 2).map(String), why: String(x.why || ""), tag: String(x.tag || "ai"), gen: true };
+      S.gen.ladder.push(item); LADDER.set(item.id, item); added++;
+    });
+    save();
+    st.textContent = `加了 ${added} 道新题 — they'll show up in your next sessions.`;
+  } catch (e) { st.textContent = aiErr(e); }
+  btn.disabled = false;
+}
+
+/* ============ boot ============ */
+(async function boot() {
+  try { await loadData(); }
+  catch (e) { $("#main").innerHTML = `<div class="card"><h2>加载失败</h2><p class="muted">Couldn't load the word data. Check your connection and reload.</p></div>`; return; }
+  $("#tabs").hidden = false;
+  render();
+  connectRemote();
+  if ("serviceWorker" in navigator && !window.claude && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+
+</body></html>
