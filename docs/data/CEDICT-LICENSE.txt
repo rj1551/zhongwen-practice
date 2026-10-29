@@ -1,0 +1,5 @@
+data/cedict.txt is derived from CC-CEDICT (https://www.mdbg.net/chinese/dictionary?page=cc-cedict),
+community-maintained and published by MDBG, licensed under the Creative Commons Attribution-ShareAlike 4.0
+International License (https://creativecommons.org/licenses/by-sa/4.0/).
+Changes: simplified headwords only; numbered pinyin converted to tone marks; readings with the same pinyin merged;
+glosses shortened. This derived file is shared under the same license.

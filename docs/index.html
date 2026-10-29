@@ -143,6 +143,11 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .sheet{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
 .sheet .in{width:100%;max-width:600px;background:var(--surface);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;padding:14px max(18px,env(safe-area-inset-left,0px)) 16px;box-shadow:0 -10px 30px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto}
 .sheet .w{font-family:var(--f-zh);font-size:28px;font-weight:700}
+.rds{display:flex;flex-direction:column;gap:6px}
+.rd{font-size:14.5px;line-height:1.45}
+.rd b{font-size:16px;margin-right:8px}
+.rtag{font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--accent-soft);margin-right:6px}
+.rtag.here{background:var(--accent);color:var(--accent-ink)}
 .sheet.pop{left:auto;right:auto;bottom:auto;display:block;padding:0}
 .sheet.pop .in{border-radius:14px;border-bottom:1px solid var(--line);max-height:60vh}
 .pitem.done{opacity:.62;background:transparent}
@@ -330,17 +335,48 @@ function indexGen() {
   ((S.gen || {}).sen || []).forEach(x => SEN.set(x.id, x));
 }
 const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎" };
-const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "词库外" };
-function lookup(tok, gl = {}) {
+const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "不在你的词库 Not in your Anki list" };
+/* ---------- CC-CEDICT: full dictionary, every reading kept separately; loaded on first use ---------- */
+let CED = null, CED_P = null;
+function loadCedict() {
+  if (CED_P) return CED_P;
+  CED_P = fetch("data/cedict.txt").then(r => { if (!r.ok) throw 0; return r.text(); }).then(t => {
+    const m = new Map();
+    for (const line of t.split("\n")) {
+      if (!line) continue;
+      const f = line.split("\t"), rd = [];
+      for (let i = 1; i + 1 < f.length; i += 2) rd.push([f[i], f[i + 1]]);
+      m.set(f[0], rd);
+    }
+    CED = m;
+    if (VIEW === "read" && READ && READ.pid) refreshTitle();
+    return m;
+  }).catch(() => { CED_P = null; return null; });
+  return CED_P;
+}
+const pyKey = s => String(s || "").normalize("NFC").toLowerCase().replace(/[\s'’·\/]/g, "");
+// Every reading of a word: the passage's in-context reading first, then the one you studied in Anki, then the rest.
+function lookupAll(tok, gl = {}) {
   const key = tok.replace(/\//g, "");
-  const d = DICT.get(key);
-  const g = gl[key] || gl[tok];
-  if (d) return { py: d.py, gl: d.gl, tier: d.tier, lv: d.lv, extra: g && g[1] !== d.gl ? g[1] : "" };
-  if (g) return { py: g[0], gl: g[1], tier: "n" };
-  return null;
+  const d = DICT.get(key), g = gl[key] || gl[tok];
+  const ced = (CED && CED.get(key)) || [];
+  const cedGl = py => { const hit = ced.find(([cp]) => pyKey(cp) === pyKey(py)); return hit ? hit[1] : ""; };
+  const out = [], seen = new Set();
+  const add = (r) => { const k = pyKey(r.py); if (seen.has(k)) { const ex = out.find(x => pyKey(x.py) === k); if (ex) { ex.here = ex.here || r.here; ex.anki = ex.anki || r.anki; } return; } seen.add(k); out.push(r); };
+  if (g) add({ py: g[0], gl: g[1], here: true, anki: !!(d && pyKey(d.py.split("/")[0]) === pyKey(g[0])) });
+  if (d) for (const py of d.py.split("/")) add({ py, gl: cedGl(py) || d.gl, anki: true });
+  for (const [py, cg] of ced) add({ py, gl: cg });
+  if (!out.length) return null;
+  return { readings: out, tier: d ? d.tier : (ced.length || g ? "n" : null), lv: d ? d.lv : 0 };
+}
+function lookup(tok, gl = {}) {
+  const a = lookupAll(tok, gl);
+  if (!a) return null;
+  const r = a.readings[0];
+  return { py: r.py, gl: r.gl, tier: a.tier, lv: a.lv, extra: "" };
 }
 function charBreak(tok) {
-  return Array.from(tok.replace(/\//g, "")).filter(c => !isPunct(c)).map(ch => { const d = DICT.get(ch); return { ch, py: d ? d.py : "", gl: d ? d.gl : "" }; });
+  return Array.from(tok.replace(/\//g, "")).filter(c => !isPunct(c)).map(ch => { const l = lookup(ch); return { ch, py: l ? l.py : "", gl: l ? l.gl : "" }; });
 }
 
 /* ============ ladder helpers ============ */
@@ -1185,6 +1221,7 @@ function coverage(p) {
   return total ? known / total : 0;
 }
 function renderRead(main) {
+  loadCedict();
   if (READ && READ.pid) return renderPassage(main);
   const all = [...PSG.values()];
   const REG = REG_NAME;
@@ -1210,7 +1247,7 @@ function segmentText(text, gl = {}) {
   while (i < ch.length) {
     if (/[A-Za-z0-9]/.test(ch[i])) { let j = i; while (j < ch.length && /[A-Za-z0-9.%]/.test(ch[j])) j++; out.push(ch.slice(i, j).join("")); i = j; continue; }
     let len = 1;
-    if (!isPunct(ch[i])) for (let L = Math.min(6, ch.length - i); L > 1; L--) { const w = ch.slice(i, i + L).join(""); if (DICT.has(w) || gl[w]) { len = L; break; } }
+    if (!isPunct(ch[i])) for (let L = Math.min(6, ch.length - i); L > 1; L--) { const w = ch.slice(i, i + L).join(""); if (DICT.has(w) || gl[w] || (CED && CED.has(w))) { len = L; break; } }
     out.push(ch.slice(i, i + len).join("")); i += len;
   }
   return out;
@@ -1225,17 +1262,30 @@ function renderPassage(main) {
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>
     <label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></div>
     <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""}" id="rd">
-      <h2 class="zh" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
+      <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
       ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
     <button class="btn wide" id="done">读完了，答题 Done → questions</button></div>`;
   $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = null; render(); };
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
-  $$(".tk", main).forEach(s => s.onclick = () => {
+  READ.paras = paras;
+  bindTokens(main, p);
+  $("#done").onclick = () => passageQuiz(main, p);
+}
+function bindTokens(scope, p) {
+  $$(".tk", scope).forEach(s => s.onclick = () => {
     const [pi, ti] = s.dataset.k.split(":").map(Number);
     READ.looked.add(s.dataset.k); s.classList.add("looked");
-    openSheet(p, paras, pi, ti, s);
+    openSheet(p, READ.paras, pi, ti, s);
   });
-  $("#done").onclick = () => passageQuiz(main, p);
+}
+// once the full dictionary arrives, re-split the title with it
+function refreshTitle() {
+  const h = $("#ptitle"); if (!h || !READ || !READ.pid) return;
+  const p = PSG.get(READ.pid);
+  READ.paras[0] = segmentText(p.title, p.gl || {});
+  [...READ.looked].filter(k => k.startsWith("0:")).forEach(k => READ.looked.delete(k));
+  h.innerHTML = READ.paras[0].map((t, ti) => tokHtml(t, "0:" + ti, false)).join("");
+  bindTokens(h, p);
 }
 function sentenceAround(toks, ti) {
   const end = /^[。！？；!?]$|^\p{Extended_Pictographic}/u;
@@ -1255,17 +1305,22 @@ function removeFromBank(word) { delete S.bank[word]; delete S.items["B:" + word]
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet();
   const tok = paras[pi][ti], word = tok.replace(/\//g, "");
-  const L = lookup(tok, p.gl || {});
+  const A = lookupAll(tok, p.gl || {});
+  const L = A ? { py: A.readings[0].py, gl: A.readings[0].gl, tier: A.tier, lv: A.lv } : null;
   const parts = tok.includes("/") ? tok.split("/").map(x => ({ x, d: lookup(x, p.gl || {}) })) : [];
   const chars = charBreak(tok);
   const inBank = !!S.bank[word];
   const wide = window.innerWidth >= 900;
   const sh = document.createElement("div"); sh.className = "sheet" + (wide ? " pop" : ""); sh.id = "sheet";
-  const more = parts.length || chars.length > 1;
-  sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${L ? `<b>${esc(L.py)}</b>` : ""}${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
-    ${L ? `<p>${esc(L.gl)}${L.extra ? `<br><span class="muted">here: ${esc(L.extra)}</span>` : ""}</p>` : `<p class="muted">词库里没有这个整词 — see the parts.</p>`}
+  const more = parts.length || chars.length > 1 || (A && A.readings.length > 3);
+  const rds = A ? A.readings : [];
+  const multi = rds.length > 1;
+  const rdHtml = r => `<div class="rd"><b>${esc(r.py)}</b>${multi && r.here ? '<span class="rtag here">这里 here</span>' : ""}${multi && r.anki && !r.here ? '<span class="rtag">你学过 Anki</span>' : ""}<span>${esc(r.gl)}</span></div>`;
+  sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
+    ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? "词典里没有这个整词 — see the parts." : "完整词典加载中… Full dictionary still loading; see the parts."}</p>`}
     <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more ? `<button class="btn ghost" id="more">更多 More</button>` : ""}</div>
     <div id="moreb" hidden>
+    ${rds.length > 3 ? `<div class="rds">${rds.slice(3).map(rdHtml).join("")}</div>` : ""}
     ${parts.length ? `<div class="chars">${parts.map(o => `<div><span class="zh">${esc(o.x)}</span>${o.d ? esc(o.d.py) + " · " + esc(o.d.gl) : ""}</div>`).join("")}</div>` : ""}
     ${chars.length > 1 ? `<div class="chars" style="margin-top:6px">${chars.map(c => `<div><span class="zh">${esc(c.ch)}</span>${esc(c.py)} ${c.gl ? "· " + esc(c.gl) : ""}</div>`).join("")}</div>` : ""}</div></div>`;
   document.body.append(sh);
@@ -1288,7 +1343,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const mb = $("#more", sh); if (mb) mb.onclick = () => { $("#moreb", sh).hidden = !$("#moreb", sh).hidden; mb.textContent = $("#moreb", sh).hidden ? "更多 More" : "收起 Less"; place(); };
   $("#addb", sh).onclick = () => {
     if (S.bank[word]) { removeFromBank(word); toast("已移出复习 Removed"); closeSheet(); return; }
-    S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? (L.extra || L.gl) : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
+    S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? L.gl : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
     save(); closeSheet();
     toastAction("已加入复习 Added " + word, "撤销 Undo", () => { removeFromBank(word); toast("已撤销 Undone"); });
   };
@@ -1347,7 +1402,7 @@ Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | b
     const j = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("passage", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
     if (!j || !Array.isArray(j.paras) || !j.paras.length || !Array.isArray(j.qs) || j.qs.length < 2) throw { code: "invalid_json" };
     const p = { id: "G" + now().toString(36), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) })), gen: true };
-    S.gen.passages.push(p); PSG.set(p.id, p); save();
+    S.gen.passages.push(p); PSG.set(p.id, p); save(); loadCedict();
     genStatus("passage", `✓ 新短文已生成：<b>${esc(p.title)}</b>（在下面“没读过”里）`, false);
     toast("新短文已生成 · New passage ready");
     if (VIEW === "read" && !(READ && READ.pid)) render();
@@ -1378,6 +1433,7 @@ function renderMe(main) {
     ${Object.keys(S.bank).length ? `<div class="row">${Object.values(S.bank).sort((a, b) => b.t - a.t).map(b => `<span class="chip" style="font-size:14px;padding:5px 6px 5px 11px"><span class="zh">${esc(b.zh)}</span><button class="rmw" data-w="${esc(b.zh)}" aria-label="移出 ${esc(b.zh)}" style="padding:0 4px;color:var(--muted)">×</button></span>`).join("")}</div>` : `<p class="small muted">Tap words in 阅读 and choose 加入复习 to add them here.</p>`}</div>
   <div class="card"><span class="label">设置 · Settings</span>
     <label class="row small" style="gap:8px"><input type="checkbox" id="onetap" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
+  <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately.</p></div>
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>

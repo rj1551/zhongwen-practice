@@ -10,7 +10,7 @@ mkdir -p docs/data
   cat index.html
   printf '\n</body></html>\n'
 } > docs/index.html
-cp data/words.json data/content.json docs/data/
+cp data/words.json data/content.json data/cedict.txt data/CEDICT-LICENSE.txt docs/data/
 cp manifest.json sw.js icon-192.png icon-512.png icon-180.png docs/
 touch docs/.nojekyll
 echo built
