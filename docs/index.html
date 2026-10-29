@@ -57,6 +57,10 @@ p{margin:0}
 .top .date{font-size:13px;color:var(--muted)}
 /* time buttons */
 .times{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.btn.start{font-size:18px;min-height:56px}
+.goals{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.goal{padding:9px 4px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:13.5px;font-weight:600}
+.goal.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}
 .time{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 6px;display:flex;flex-direction:column;align-items:center;gap:2px}
 .time b{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
 .time span{font-size:12px;color:var(--muted)}
@@ -523,7 +527,7 @@ const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read
 function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
 function render() {
   const main = $("#main");
-  $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended && SESSION.i < SESSION.q.length + (SESSION.quick ? 1 : 0)) || VIEW === "place";
+  $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place";
   $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
   if (VIEW === "home") renderHome(main);
   else if (VIEW === "session") renderSession(main);
@@ -550,21 +554,21 @@ function renderHome(main) {
   ${syncWarn()}
   ${gradedCard()}
   ${backupNudge()}
-  <div class="card"><div class="spread"><h2>今天练多久？</h2><span class="small muted">${dueN ? dueN + " 题到期" : "没有积压"}</span></div>
-    <div class="times">
-      <button class="time hot" data-min="0.5"><b class="zh">随手</b><span>一张接一张</span></button>
-      <button class="time" data-min="5"><b>5</b><span>分钟</span></button>
-      <button class="time" data-min="15"><b>15</b><span>分钟</span></button>
-      <button class="time" data-min="30"><b>30</b><span>分钟</span></button>
-    </div>
+  <div class="card"><div class="spread"><h2>练习 · Practice</h2><span class="small muted">${dueN ? dueN + " 题到期" : "没有积压"}</span></div>
+    <button class="btn wide start" id="start">开始 Start</button>
+    <div class="stack" style="gap:8px"><span class="label">目标（可选）· Goal (optional)</span>
+      <div class="goals">${[[0, "不设 None"], [5, "5 分钟"], [15, "15 分钟"], [30, "30 分钟"]].map(([g, l]) => `<button class="goal ${((S.settings || {}).goal || 0) === g ? "on" : ""}" data-goal="${g}">${l}</button>`).join("")}</div>
+      <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="light" style="margin-top:3px;flex:none" ${(S.settings || {}).lightTyping ? "checked" : ""}> 少打字 · Fewer typing cards (1 in 8 instead of 1 in 4), for on the go</label></div>
     <div class="stack" style="gap:8px"><span class="label">今日重点 · Today's mix</span>
     <div class="mix">${Object.keys(w).map(k => `<i style="width:${w[k] * 100}%;background:${CAT_COLORS[k]}"></i>`).join("")}</div>
     <div class="legend">${Object.keys(w).map(k => `<span><b style="background:${CAT_COLORS[k]}"></b>${CAT_NAME[k]} ${pct(w[k])}</span>`).join("")}</div></div>
   </div>
-  <p class="small muted" style="margin-top:-6px">随手练 = quick play: one card at a time, stop whenever. Timed sessions include a writing card about every 4th card.</p>
+  <p class="small muted" style="margin-top:-6px">Cards keep coming until you tap ■. A goal just adds a progress bar and a finish point; you can keep going past it.</p>
   <div class="card"><span class="label">为什么这样排 · Why this mix</span>
     <p class="small">${S.placed ? mixReason() : "Until you take the test, the mix assumes your Anki pattern: strong recognition, weak production. Production gets the biggest share."}</p></div>`;
-  $$(".time", main).forEach(b => b.onclick = () => startSession(+b.dataset.min));
+  $("#start", main).onclick = () => startSession();
+  $$(".goal", main).forEach(b => b.onclick = () => { S.settings = Object.assign({}, S.settings, { goal: +b.dataset.goal }); save(); $$(".goal", main).forEach(x => x.classList.toggle("on", x === b)); });
+  $("#light", main).onchange = e => { S.settings = Object.assign({}, S.settings, { lightTyping: e.target.checked }); save(); };
   const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
   const bk = $("#backup-go", main); if (bk) bk.onclick = () => setView("me");
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
@@ -606,7 +610,10 @@ function mixReason() {
 }
 
 /* ---------- session ---------- */
-// Writing cards (rungs 4–5). Due ones first; otherwise drills you've already met get stretched up to writing.
+// Writing (rungs 4–5) needs a grader. The online version waits for Claude: no writing cards while offline.
+// The offline copy has no Claude at all, so it always self-grades.
+const writingAllowed = () => !(HOSTED && AI && !ONLINE);
+// Writing cards: due ones first; otherwise drills you've already met get stretched up to writing.
 function writingCandidates(exclude) {
   const t = now(), due = [], stretch = [];
   for (const [id] of LADDER) {
@@ -618,64 +625,62 @@ function writingCandidates(exclude) {
   due.sort((a, b) => a.due - b.due); stretch.sort((a, b) => a.due - b.due);
   return due.concat(stretch);
 }
-function buildSession(minutes) {
-  const total = { 5: 8, 15: 22, 30: 42 }[minutes] || 10;
+const isWriting = c => c && c.t === "lad" && c.r >= 4;
+// One block of n cards: the weighted mix, with a writing card every 4th slot (every 8th with 少打字).
+function buildBlock(n, used) {
+  const every = S.settings && S.settings.lightTyping ? 8 : 4;
+  const writing = writingAllowed() ? writingCandidates(used).slice(0, Math.max(1, Math.round(n / every))) : [];
+  writing.forEach(c => used.add(c.t + c.id));
+  const rest = n - writing.length;
   const w = weights();
-  const writing = writingCandidates(new Set()).slice(0, Math.round(total / 4));
-  const used = new Set(writing.map(c => c.t + c.id));
-  const rest = total - writing.length;
-  const pools = { lad: candidates("lad"), sen: candidates("sen"), seg: candidates("seg"), ctx: candidates("ctx") };
-  pools.lad = pools.lad.filter(c => !used.has(c.t + c.id)).map(c => c.r >= 4 ? Object.assign({}, c, { r: 3 }) : c);
-  const n = {};
-  for (const k in w) n[k] = Math.max(pools[k].length ? 1 : 0, Math.round(rest * w[k]));
+  const pools = {};
+  for (const k of ["lad", "sen", "seg", "ctx"]) pools[k] = candidates(k).filter(c => !used.has(c.t + c.id)).map(c => isWriting(c) ? Object.assign({}, c, { r: 3 }) : c);
+  const cnt = {};
+  for (const k in w) cnt[k] = Math.max(pools[k].length ? 1 : 0, Math.round(rest * w[k]));
   const picked = {};
-  for (const k in pools) picked[k] = pools[k].slice(0, n[k]);
-  // interleave reading between production; a writing card lands every 4th slot
+  for (const k in pools) picked[k] = pools[k].slice(0, cnt[k]);
   const out = [];
   const order = ["lad", "sen", "ctx", "lad", "seg", "sen"];
   let i = 0;
   while (Object.values(picked).some(a => a.length) || writing.length) {
-    if (writing.length && out.length % 4 === 2) { out.push(writing.shift()); continue; }
-    if (!Object.values(picked).some(a => a.length)) { out.push(writing.shift()); continue; }
+    if (writing.length && (out.length % every === 2 || !Object.values(picked).some(a => a.length))) { out.push(writing.shift()); continue; }
     const k = order[i++ % order.length];
     if (picked[k].length) out.push(picked[k].shift());
   }
+  out.forEach(c => used.add(c.t + c.id));
   return out;
 }
-// Quick play: one card at a time, endlessly; mostly fast cards, a writing card every 5th.
-function quickNext(s) {
-  const due = s.retry.findIndex(x => x.at <= s.q.length);
-  if (due >= 0) return s.retry.splice(due, 1)[0].card;
-  if (s.q.length % 5 === 4) { const wc = writingCandidates(s.used)[0]; if (wc) return wc; }
-  const w = weights();
-  const cats = Object.keys(w);
-  // weighted random category, then fall through the others
-  let r = Math.random(), pick = cats[0];
-  for (const k of cats) { r -= w[k]; if (r <= 0) { pick = k; break; } }
-  for (const cat of [pick, ...cats.filter(c => c !== pick)]) {
-    const c = candidates(cat).find(x => !s.used.has(x.t + x.id));
-    if (c) return c.t === "lad" && c.r >= 4 ? Object.assign({}, c, { r: 3 }) : c;
-  }
+// kept for tests and the spacing chat: a fixed-length plan
+function buildSession(minutes) { return buildBlock(GOAL_CARDS[minutes] || 10, new Set()); }
+const GOAL_CARDS = { 5: 8, 15: 22, 30: 42 };
+function readingSwap(s) {
+  for (const k of ["sen", "ctx", "seg"]) { const c = candidates(k).find(x => !s.used.has(x.t + x.id)); if (c) { s.used.add(c.t + c.id); return c; } }
   return null;
 }
-function startSession(minutes) {
-  const quick = minutes < 1;
-  SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, minutes, quick, t0: now(), used: new Set(), retry: [], requeued: new Set(), promoted: 0, mastered: 0, ended: false };
-  if (quick) { const c = quickNext(SESSION); if (c) SESSION.q.push(c); }
-  else SESSION.q = buildSession(minutes);
-  SESSION.q.forEach(c => SESSION.used.add(c.t + c.id));
+function startSession(goal) {
+  const g = goal === undefined ? ((S.settings && S.settings.goal) || 0) : goal;
+  SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), retry: [], requeued: new Set(), promoted: 0, mastered: 0, ended: false };
+  SESSION.q = buildBlock(8, SESSION.used);
   if (!SESSION.q.length) { SESSION = null; toast("暂时没有可练的题 — nothing to practice right now"); return; }
   setView("session");
 }
+function answered(s) { return s.res.filter(x => x != null).length; }
 function renderSession(main) {
   const s = SESSION;
-  if (s.quick && s.i >= s.q.length && !s.ended) { const c = quickNext(s); if (c) { s.q.push(c); s.used.add(c.t + c.id); } }
-  if (s.ended || s.i >= s.q.length) { s.ended = true; $("#tabs").hidden = false; return renderEnd(main); }
+  if (s.ended) { $("#tabs").hidden = false; return renderEnd(main); }
+  // goal reached: one pause to celebrate, then keep going if you like
+  if (s.goalN && !s.goalShown && answered(s) >= s.goalN) { s.goalShown = true; return renderGoal(main); }
+  const ri = s.retry.findIndex(x => x.at <= s.i);
+  if (ri >= 0) s.q.splice(s.i, 0, s.retry.splice(ri, 1)[0].card);
+  if (s.i >= s.q.length) s.q.push(...buildBlock(8, s.used));
+  if (s.i >= s.q.length) { s.ended = true; return render(); }
+  if (isWriting(s.q[s.i]) && !writingAllowed()) { const sw = readingSwap(s); s.q[s.i] = sw || Object.assign({}, s.q[s.i], { r: 3 }); }
   const card = s.q[s.i];
-  main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="结束">${s.quick ? "■" : "×"}</button>
-    ${s.quick ? `<div class="cells"><span class="small muted">随手练 · 第 ${s.i + 1} 张 · 点 ■ 结束</span></div>` : `<div class="cells">${s.q.map((_, j) => `<i class="${j < s.i ? (s.res[j] ? "ok" : "no") : j === s.i ? "now" : ""}"></i>`).join("")}</div>`}
+  const n = answered(s);
+  main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="结束">■</button>
+    <div class="cells">${s.goalN && !s.goalShown ? `<div class="mix" style="flex:1;background:var(--line)"><i style="width:${Math.min(100, n / s.goalN * 100)}%;background:var(--accent)"></i></div><span class="small muted" style="margin-left:8px">${n}/${s.goalN}</span>` : `<span class="small muted">第 ${n + 1} 张${s.goalShown ? " · 目标已达成 ✓" : ""} · 点 ■ 结束</span>`}</div>
     <span class="combo" id="combo">${s.combo >= 2 ? "连对 ×" + s.combo : ""}</span></div><div id="slot"></div>`;
-  $("#quit").onclick = () => { s.q = s.q.slice(0, s.i); s.ended = true; render(); };
+  $("#quit").onclick = () => { s.ended = true; render(); };
   const t0 = now();
   renderCard(card, $("#slot"), (r) => {
     logDay((now() - t0) / 1000, r.ok);
@@ -684,30 +689,39 @@ function renderSession(main) {
     else s.combo = 0;
     if (r.promoted) s.promoted++;
     if (r.mastered) s.mastered++;
-    // Only misses come back in the same session (once), as late as possible. Climbing happens across sessions.
+    // Same-session redo (current default, open to change): a missed reading card or drill step 1–3 comes back
+    // 5 cards later, once. Missed writing waits for the next session.
     const key = card.t + card.id;
-    if (!r.ok && !s.requeued.has(key)) {
+    if (!r.ok && !isWriting(card) && !s.requeued.has(key)) {
       const again = card.t === "lad" ? { t: "lad", id: card.id, r: Math.max(1, Math.min(card.r, (S.items[card.id] || {}).r || card.r)) } : Object.assign({}, card);
-      if (s.quick) s.retry.push({ card: again, at: s.q.length + 4 });
-      else if (s.minutes >= 5) s.q.push(again);
+      s.retry.push({ card: again, at: s.i + 5 });
       s.requeued.add(key);
     }
     if (s.best > (S.best.combo || 0)) { S.best.combo = s.best; save(); }
   }, () => { s.i++; render(); window.scrollTo(0, 0); });
 }
-function renderEnd(main) {
-  const s = SESSION;
-  const n = s.res.filter(x => x != null).length, ok = s.res.filter(Boolean).length;
+function sessionStats(s) {
+  const n = answered(s), ok = s.res.filter(Boolean).length;
   const mins = Math.max(1, Math.round((now() - s.t0) / 60000));
   const ready = [...LADDER.keys()].filter(id => S.items[id] && S.items[id].m).length;
-  main.innerHTML = `<div class="card end"><span class="label">${s.quick ? "随手练 · Quick play" : "练完了 · Done"}</span>
-    <div class="row" style="align-items:flex-end;gap:18px"><div class="big">${n ? pct(ok / n) : "—"}</div><p class="muted">${ok}/${n} 对 · ${mins} 分钟 · 最高连对 ${s.best}</p></div>
+  return `<div class="row" style="align-items:flex-end;gap:18px"><div class="big">${n ? pct(ok / n) : "—"}</div><p class="muted">${ok}/${n} 对 · ${mins} 分钟 · 最高连对 ${s.best}</p></div>
     ${s.promoted ? `<p>📈 ${s.promoted} 个句型升了一级 · ${s.promoted} drill(s) climbed a rung</p>` : ""}
     ${s.mastered ? `<p>✅ ${s.mastered} 个句型已经能写出来了 · newly production-ready</p>` : ""}
-    <p class="small muted">能写出来的句型 Production-ready: <b style="color:var(--ink)">${ready}</b> / ${LADDER.size}</p>
-    <div class="stack"><button class="btn wide" id="again">${s.quick ? "继续随手练 Keep going" : "再来 5 分钟 Five more minutes"}</button>
+    <p class="small muted">能写出来的句型 Production-ready: <b style="color:var(--ink)">${ready}</b> / ${LADDER.size}</p>`;
+}
+function renderGoal(main) {
+  const s = SESSION;
+  main.innerHTML = `<div class="card end"><span class="label">目标达成 · Goal reached</span><h2>${s.goal} 分钟的量练完了 🎯</h2>${sessionStats(s)}
+    <div class="stack"><button class="btn wide" id="more">接着练 Keep going</button><button class="btn ghost wide" id="stop">结束 Finish</button></div></div>`;
+  $("#more").onclick = () => render();
+  $("#stop").onclick = () => { s.ended = true; render(); };
+}
+function renderEnd(main) {
+  const s = SESSION;
+  main.innerHTML = `<div class="card end"><span class="label">练完了 · Done</span>${sessionStats(s)}
+    <div class="stack"><button class="btn wide" id="again">再练一会儿 Practice more</button>
     <button class="btn ghost wide" id="home">回首页 Home</button></div></div>`;
-  $("#again").onclick = () => startSession(s.quick ? 0.5 : 5);
+  $("#again").onclick = () => startSession();
   $("#home").onclick = () => setView("home");
 }
 
@@ -1432,7 +1446,7 @@ function renderMe(main) {
   <div class="card"><span class="label">阅读生词 · Words you saved (${Object.keys(S.bank).length})</span>
     ${Object.keys(S.bank).length ? `<div class="row">${Object.values(S.bank).sort((a, b) => b.t - a.t).map(b => `<span class="chip" style="font-size:14px;padding:5px 6px 5px 11px"><span class="zh">${esc(b.zh)}</span><button class="rmw" data-w="${esc(b.zh)}" aria-label="移出 ${esc(b.zh)}" style="padding:0 4px;color:var(--muted)">×</button></span>`).join("")}</div>` : `<p class="small muted">Tap words in 阅读 and choose 加入复习 to add them here.</p>`}</div>
   <div class="card"><span class="label">设置 · Settings</span>
-    <label class="row small" style="gap:8px"><input type="checkbox" id="onetap" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
+    <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="onetap" style="margin-top:3px;flex:none" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
   <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately.</p></div>
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
