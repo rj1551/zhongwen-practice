@@ -1474,37 +1474,77 @@ function ago(t) {
   if (d <= 0) return "今天 today";
   return d + " 天前 days ago";
 }
-async function exportCode() {
+async function makeCode() {
   const json = JSON.stringify(S);
-  let code;
   try {
     const cs = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
     const buf = new Uint8Array(await new Response(cs).arrayBuffer());
     let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-    code = "ZW1:" + btoa(bin);
-  } catch (e) { code = "ZW0:" + btoa(unescape(encodeURIComponent(json))); }
-  S.lastExport = now(); save();
-  const box = $("#xio");
-  box.innerHTML = `<textarea class="code" id="codebox" readonly>${esc(code)}</textarea><p class="small muted">${Math.round(code.length / 1024)} KB</p>`;
-  const ta = $("#codebox");
-  try { await navigator.clipboard.writeText(code); toast("已复制 Copied"); } catch (e) { ta.focus(); ta.select(); toast("请手动复制 Select and copy"); }
+    return "ZW1:" + btoa(bin);
+  } catch (e) { return "ZW0:" + btoa(unescape(encodeURIComponent(json))); }
+}
+function selectAllIn(ta) {
+  // iPhone ignores select() on read-only boxes; lift read-only for a moment and select by range
+  ta.readOnly = false; ta.focus({ preventScroll: true }); ta.setSelectionRange(0, ta.value.length); ta.readOnly = true;
+}
+function exportCode() {
+  // Start the clipboard write inside the tap itself. Phones (Safari especially) refuse a
+  // clipboard write that only starts after an await, which is what the old version did.
+  const codeP = makeCode();
+  let copied;
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write)
+      copied = navigator.clipboard.write([new ClipboardItem({ "text/plain": codeP.then(c => new Blob([c], { type: "text/plain" })) })]);
+    else throw 0;
+  } catch (e) { copied = codeP.then(c => navigator.clipboard.writeText(c)); }
+  codeP.then(async code => {
+    S.lastExport = now(); save();
+    const box = $("#xio");
+    box.innerHTML = `<textarea class="code" id="codebox" readonly>${esc(code)}</textarea>
+      <div class="row"><button class="btn ghost" id="selall">全选 Select all</button><span class="small muted" id="copyst">${Math.round(code.length / 1024)} KB · 以 ZW1: 开头 starts with ZW1:</span></div>`;
+    const ta = $("#codebox");
+    $("#selall").onclick = () => selectAllIn(ta);
+    try { await copied; toast("已复制 Copied"); $("#copyst").textContent += " · ✓ 已复制 copied"; }
+    catch (e) {
+      selectAllIn(ta);
+      $("#copyst").innerHTML = `<b>没能自动复制 Couldn't copy automatically.</b> 用 全选 再长按复制 · Tap Select all, then copy.`;
+      toast("请手动复制 Select and copy");
+    }
+  });
+}
+function readCode(text) {
+  // Accept the code even with spaces/line breaks inserted or other text around it.
+  const m = String(text).replace(/\s+/g, "").match(/ZW([01]):([A-Za-z0-9+/=]*)/);
+  if (!m) return { err: "这不是进度代码 · That doesn't look like a progress code (they start with ZW1:). Your clipboard may still hold something else — copy the code again." };
+  return { kind: m[1], b64: m[2] };
 }
 function importUI() {
   const box = $("#xio");
-  box.innerHTML = `<textarea class="code" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div><p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p>`;
+  box.innerHTML = `<textarea class="code" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div><p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p><div id="imperr"></div>`;
+  const fail = msg => { $("#imperr").innerHTML = `<div class="fb no"><span>${msg}</span></div>`; toast("代码无效 — that code didn't work"); };
   $("#doimp").onclick = async () => {
-    const code = $("#codein").value.trim();
+    $("#imperr").innerHTML = "";
+    const raw = $("#codein").value;
+    if (!raw.trim()) return fail("还没粘贴 · Nothing pasted yet.");
+    const c = readCode(raw);
+    if (c.err) return fail(c.err);
+    const kb = Math.round(c.b64.length / 1024 * 10) / 10;
+    const cut = `代码不完整 · The code looks cut off (pasted ${kb} KB). Copy it again — use the 导出 button, or 全选 Select all, rather than dragging to select.`;
+    let json;
     try {
-      let json;
-      if (code.startsWith("ZW1:")) {
-        const bin = atob(code.slice(4)); const buf = Uint8Array.from(bin, c => c.charCodeAt(0));
+      const bin = atob(c.b64);
+      if (c.kind === "1") {
+        const buf = Uint8Array.from(bin, ch => ch.charCodeAt(0));
         json = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-      } else if (code.startsWith("ZW0:")) json = decodeURIComponent(escape(atob(code.slice(4))));
-      else throw 0;
-      const data = JSON.parse(json);
-      if (!data || data.v !== 1) throw 0;
-      S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
-    } catch (e) { toast("代码无效 — that code didn't work"); }
+      } else json = decodeURIComponent(escape(bin));
+    } catch (e) {
+      if (c.kind === "1" && typeof DecompressionStream === "undefined") return fail("这个浏览器太旧，解不开压缩代码 · This browser can't unpack compressed codes; update it, or copy from this app into the other one instead.");
+      return fail(cut);
+    }
+    let data;
+    try { data = JSON.parse(json); } catch (e) { return fail(cut); }
+    if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
+    S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
   };
 }
 async function genSen() {
