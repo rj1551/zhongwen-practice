@@ -1499,7 +1499,7 @@ function exportCode() {
   codeP.then(async code => {
     S.lastExport = now(); save();
     const box = $("#xio");
-    box.innerHTML = `<textarea class="code" id="codebox" readonly>${esc(code)}</textarea>
+    box.innerHTML = `<textarea class="code" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="codebox" readonly>${esc(code)}</textarea>
       <div class="row"><button class="btn ghost" id="selall">全选 Select all</button><span class="small muted" id="copyst">${Math.round(code.length / 1024)} KB · 以 ZW1: 开头 starts with ZW1:</span></div>`;
     const ta = $("#codebox");
     $("#selall").onclick = () => selectAllIn(ta);
@@ -1513,13 +1513,13 @@ function exportCode() {
 }
 function readCode(text) {
   // Accept the code even with spaces/line breaks inserted or other text around it.
-  const m = String(text).replace(/\s+/g, "").match(/ZW([01]):([A-Za-z0-9+/=]*)/);
+  const m = String(text).replace(/\s+/g, "").match(/zw([01]):([A-Za-z0-9+/=]*)/i); // phones sometimes lowercase the start
   if (!m) return { err: "这不是进度代码 · That doesn't look like a progress code (they start with ZW1:). Your clipboard may still hold something else — copy the code again." };
   return { kind: m[1], b64: m[2] };
 }
 function importUI() {
   const box = $("#xio");
-  box.innerHTML = `<textarea class="code" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div><p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p><div id="imperr"></div>`;
+  box.innerHTML = `<textarea class="code" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div><p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p><div id="imperr"></div>`;
   const fail = msg => { $("#imperr").innerHTML = `<div class="fb no"><span>${msg}</span></div>`; toast("代码无效 — that code didn't work"); };
   $("#doimp").onclick = async () => {
     $("#imperr").innerHTML = "";
