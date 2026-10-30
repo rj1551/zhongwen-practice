@@ -202,7 +202,8 @@ const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { c
 const PUNCT_RE = /[\p{P}\p{S}\s]/u;
 const isPunct = ch => PUNCT_RE.test(ch) || /\p{Extended_Pictographic}/u.test(ch);
 const norm = s => Array.from(String(s || "")).filter(c => !isPunct(c)).join("").replace(/儿(?=[^一-鿿]|$)/g, "儿");
-const now = () => Date.now();
+let CLOCK_OFF = 0, SIM = false; // the stock-up forecast fast-forwards a copy of your progress
+const now = () => Date.now() + CLOCK_OFF;
 const DAY = 864e5, MIN = 6e4;
 const dayKey = (t = now()) => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
 function toast(msg, ms = 2200) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms); }
@@ -218,6 +219,7 @@ function placeToasts() {
   });
 }
 if (window.visualViewport) { visualViewport.addEventListener("resize", placeToasts); visualViewport.addEventListener("scroll", placeToasts); }
+const uid4 = () => Math.random().toString(36).slice(2, 6);
 const pct = x => Math.round((x || 0) * 100) + "%";
 
 /* ============ state & storage ============ */
@@ -230,32 +232,110 @@ let S = freshState();
 try { const raw = localStorage.getItem(LS_KEY); if (raw) S = Object.assign(freshState(), JSON.parse(raw)); } catch (e) {}
 
 let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer = null;
-let SYNC_BYTES = 0, SYNC_FULL = false;
+let SYNC_BYTES = 0, SYNC_FULL = false, LOCAL_FULL = false;
 const SYNC_LIMIT = 256 * 1024;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60 }; // generated content kept (all of it travels offline)
 function save() {
+  if (SIM) return;
   S.updatedAt = now();
   // trim
   for (const k in S.recent) if (S.recent[k].length > 40) S.recent[k] = S.recent[k].slice(-40);
   const days = Object.keys(S.log).sort(); while (days.length > 120) delete S.log[days.shift()];
-  if (S.gen.passages.length > 12) S.gen.passages = S.gen.passages.slice(-12);
-  if ((S.gen.sen || []).length > 120) S.gen.sen = S.gen.sen.slice(-120);
-  if (S.gen.ladder.length > 160) S.gen.ladder = S.gen.ladder.slice(-160);
+  for (const k in GEN_CAP) if ((S.gen[k] || []).length > GEN_CAP[k]) S.gen[k] = S.gen[k].slice(-GEN_CAP[k]);
   const json = JSON.stringify(S);
-  SYNC_BYTES = bytesOf(json);
-  try { localStorage.setItem(LS_KEY, json); } catch (e) {}
-  if (DB && UID) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); }
+  try { localStorage.setItem(LS_KEY, json); } catch (e) { LOCAL_FULL = true; }
+  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); }
 }
-async function pushRemote() {
-  if (!DB || !UID || remoteBusy || !remoteDirty) return;
-  remoteBusy = true; remoteDirty = false;
-  try { await DB.doc("data/users/" + UID + "/state").set(JSON.parse(JSON.stringify(S))); SYNC_FULL = false; }
-  catch (e) {
-    if (e && e.code === "unavailable") remoteDirty = true;
-    else if (e && (e.code === "invalid_argument" || e.code === "quota_exceeded")) { SYNC_FULL = true; if (VIEW === "home" || VIEW === "me") render(); }
+/* ---------- account sync: progress split across several documents ----------
+   Storage layout only. Your progress is still one state object in the app and merging still works on whole
+   states (mergeStates). Here it's cut into documents in your private collection data/users/<id>/:
+     state            everything except items and generated content (settings, skills, logs, saved words…)
+     items-0 … 7      practice records, spread by a hash of the item id
+     gen-<kind>-0 … 7 generated content of each kind (ladder, sen, passages, or any future kind)
+   Each stays far under the 256 KB document limit, and a save rewrites only the documents that changed. */
+const SHARDS = 8;
+const shardOf = id => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h) % SHARDS; };
+function splitState(st) {
+  const docs = {}, core = Object.assign({}, st);
+  delete core.items; delete core.gen; core.layout = 2;
+  docs.state = core;
+  for (let i = 0; i < SHARDS; i++) docs["items-" + i] = { items: {} };
+  for (const id in st.items || {}) docs["items-" + shardOf(id)].items[id] = st.items[id];
+  for (const kind in st.gen || {}) {
+    for (let i = 0; i < SHARDS; i++) docs["gen-" + kind + "-" + i] = { kind, list: [] };
+    for (const x of st.gen[kind] || []) docs["gen-" + kind + "-" + shardOf(x.id)].list.push(x);
   }
-  remoteBusy = false;
-  if (remoteDirty) remoteTimer = setTimeout(pushRemote, 4000);
+  return docs;
+}
+const newerItem = (x, y) => !y || (x.n || 0) > (y.n || 0) || ((x.n || 0) === (y.n || 0) && (x.due || 0) > (y.due || 0));
+function joinDocs(list) {
+  const core = list.find(d => d.id === "state");
+  if (!core && !list.length) return null;
+  const m = Object.assign(freshState(), core ? core.data : {});
+  delete m.layout;
+  m.items = Object.assign({}, m.items); m.gen = Object.assign({}, m.gen); // a pre-split record kept these inside "state"
+  for (const d of list) {
+    if (d.id.startsWith("items-")) for (const id in d.data.items || {}) { const x = d.data.items[id]; if (newerItem(x, m.items[id])) m.items[id] = x; }
+    else if (d.id.startsWith("gen-") && d.data.kind) {
+      const have = new Set((m.gen[d.data.kind] || []).map(x => x.id));
+      m.gen[d.data.kind] = (m.gen[d.data.kind] || []).concat((d.data.list || []).filter(x => !have.has(x.id)));
+    }
+  }
+  return m;
+}
+// key-order-independent comparison, so a document is rewritten only when its content changed
+const stable = v => Array.isArray(v) ? "[" + v.map(stable).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}" : JSON.stringify(v === undefined ? null : v);
+let PULLED = false, COL = null, REMOTE = {}, SYNCQ = Promise.resolve(), LAST_PULL = 0, SYNC_DOCS = 0;
+const queueSync = fn => (SYNCQ = SYNCQ.then(fn, fn).catch(() => {}));
+const emptyDoc = d => (d.items && !Object.keys(d.items).length) || (d.list && !d.list.length);
+function pushRemote() {
+  // never write before one successful read: writing blind could replace what another device saved
+  if (!COL || !PULLED || remoteBusy) return;
+  remoteBusy = true;
+  queueSync(async () => {
+    while (remoteDirty) {
+      remoteDirty = false;
+      const docs = splitState(S);
+      let full = false, biggest = 0, total = 0, n = 0;
+      for (const id in docs) {
+        const st = stable(docs[id]), b = bytesOf(st);
+        if (!emptyDoc(docs[id])) { biggest = Math.max(biggest, b); total += b; n++; }
+        if (REMOTE[id] === st) continue;
+        if (REMOTE[id] === undefined && emptyDoc(docs[id])) continue; // don't create empty documents
+        if (b > SYNC_LIMIT - 2048) { full = true; continue; }
+        try { await COL.doc(id).set(JSON.parse(JSON.stringify(docs[id]))); REMOTE[id] = st; }
+        catch (e) {
+          if (e && (e.code === "invalid_argument" || e.code === "quota_exceeded")) { full = true; continue; }
+          remoteDirty = true; break; // offline or busy: try again shortly
+        }
+      }
+      SYNC_BYTES = biggest; SYNC_TOTAL = total; SYNC_DOCS = n;
+      if (full !== SYNC_FULL) { SYNC_FULL = full; if (VIEW === "home" || VIEW === "me") render(); }
+      if (remoteDirty) { await new Promise(r => setTimeout(r, 4000)); if (!ONLINE) break; }
+    }
+  }).then(() => { remoteBusy = false; if (remoteDirty && ONLINE) { clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); } });
+}
+let SYNC_TOTAL = 0;
+// Read every document, merge them into what this device has, then write back whatever differs.
+function pullRemote() {
+  if (!COL) return SYNCQ;
+  return queueSync(async () => {
+    const snap = await COL.get();
+    const list = snap.docs.filter(d => d.exists).map(d => ({ id: d.id, data: JSON.parse(JSON.stringify(d.data())) }));
+    LAST_PULL = now(); PULLED = true;
+    const legacy = list.find(d => d.id === "state" && !d.data.layout && d.data.items);
+    if (legacy && !list.some(d => d.id === "state-v1-backup")) { try { await COL.doc("state-v1-backup").set(legacy.data); } catch (e) {} }
+    REMOTE = {};
+    for (const d of list) if (d.id !== "state-v1-backup") REMOTE[d.id] = stable(d.data);
+    const remote = joinDocs(list.filter(d => d.id !== "state-v1-backup"));
+    if (remote) {
+      const before = stable(S);
+      S = mergeStates(S, remote); indexGen(); if (C) rescoreLastPlacement();
+      try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
+      if (stable(S) !== before && !busyView()) render();
+    }
+  }).then(() => { remoteDirty = true; pushRemote(); });
 }
 async function connectRemote() {
   if (!window.claude || !window.claude.use) return;
@@ -263,21 +343,14 @@ async function connectRemote() {
     const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
     if (!db || !user) return;
     const id = await user.id(); if (!id) return;
-    DB = db; UID = id;
-    const snap = await DB.doc("data/users/" + UID + "/state").get();
-    if (snap.exists) {
-      const remote = JSON.parse(JSON.stringify(snap.data()));
-      if ((remote.updatedAt || 0) !== (S.updatedAt || 0)) {
-        S = mergeStates(S, remote); indexGen(); if (C) rescoreLastPlacement();
-        try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
-        remoteDirty = true; pushRemote();
-        if (!busyView()) render();
-      }
-    } else if (S.updatedAt) { remoteDirty = true; pushRemote(); }
+    DB = db; UID = id; COL = db.collection("data/users/" + id);
+    await pullRemote();
     syncNote = "进度已同步到你的 Claude 账号（手机和电脑通用）";
     if (VIEW === "me") render();
   } catch (e) {}
 }
+// Coming back to the app (other device may have practised meanwhile): fetch and merge, unless mid-card.
+document.addEventListener("visibilitychange", () => { if (!document.hidden && COL && ONLINE && !busyView() && now() - LAST_PULL > 20000) pullRemote(); });
 let syncNote = window.claude ? "正在连接同步…" : "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
 
 /* ============ merge two saved states (sync + import never lose work) ============ */
@@ -287,7 +360,7 @@ function mergeStates(a, b) {
   const o = JSON.parse(JSON.stringify(newerFirst ? b : a));
   for (const id in o.items || {}) {
     const x = o.items[id], y = m.items[id];
-    if (!y || (x.n || 0) > (y.n || 0) || ((x.n || 0) === (y.n || 0) && (x.due || 0) > (y.due || 0))) m.items[id] = x;
+    if (newerItem(x, y)) m.items[id] = x;
   }
   for (const k in o.bank || {}) if (!m.bank[k]) m.bank[k] = o.bank[k];
   for (const k in o.reads || {}) if (!m.reads[k] || (o.reads[k].t || 0) > (m.reads[k].t || 0)) m.reads[k] = o.reads[k];
@@ -296,7 +369,7 @@ function mergeStates(a, b) {
     m.log[d] = !y ? x : { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   }
   const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
-  m.gen = { ladder: byId(m.gen.ladder || [], (o.gen || {}).ladder || [], "id"), passages: byId(m.gen.passages || [], (o.gen || {}).passages || [], "id"), sen: byId(m.gen.sen || [], (o.gen || {}).sen || [], "id") };
+  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = byId(gm[k] || [], o.gen[k] || [], "id"); m.gen = Object.assign({ ladder: [], passages: [], sen: [] }, gm);
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
   m.graded = byId(m.graded || [], o.graded || [], "k").sort((p, q) => q.t - p.t).slice(0, 20);
@@ -323,7 +396,7 @@ function drawOffline() {
   if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
   b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
 }
-addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); if (DB && UID) { remoteDirty = true; pushRemote(); } });
+addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); if (COL) pullRemote(); });
 addEventListener("offline", () => { ONLINE = false; drawOffline(); });
 let PERSISTED = null;
 
@@ -614,10 +687,9 @@ function gradedCard() {
 }
 function syncWarn() {
   if (!HOSTED || !DB) return "";
-  SYNC_BYTES = bytesOf(JSON.stringify(S));
   if (!SYNC_FULL && SYNC_BYTES < 0.8 * SYNC_LIMIT) return "";
   return `<div class="card syncwarn"><span class="label">账号同步 · Account sync</span>
-    <p class="small">${SYNC_FULL ? "Your progress has outgrown the single sync record, so it's no longer reaching your other devices. It's still saved on this device." : `Your sync record is ${Math.round(SYNC_BYTES / 1024)} KB of 256 KB.`} Time to switch to split storage — ask Claude for the storage split update.</p></div>`;
+    <p class="small">${SYNC_FULL ? "One part of your progress is too big to sync, so that part isn't reaching your other devices. Everything is still saved on this device." : `The biggest part of your sync record is ${Math.round(SYNC_BYTES / 1024)} KB of 256 KB.`} Ask Claude to look at the sync layout.</p></div>`;
 }
 function backupNudge() {
   if (HOSTED) return "";
@@ -1541,7 +1613,8 @@ function targetWords(n) {
   for (const [w, d] of DICT) if ((d.tier === "l" || d.tier === "f" || d.tier === "k") && w.length >= 2) pool.push(w);
   return shuffle(pool).slice(0, n);
 }
-async function genPassage(kind) {
+async function genPassage(kind, quiet) {
+  const genStatus = quiet ? () => {} : window.genStatus;
   const targets = targetWords(10);
   const genre = { xhs: "a Xiaohongshu-style post (casual, internet slang, emoji allowed) about everyday life or travel in China", news: "a short news brief in formal written register (据…显示, 随着…, 有望 etc.), clearly fictional figures", book: "a short literary narrative excerpt, past tense, descriptive", travel: "a realistic dialogue between a traveller and a local in China (ordering, directions, tickets, hotels), each line prefixed 甲：or 乙：" }[kind];
   const prompt = `Write a short Chinese reading passage for an advanced learner (knows HSK 1–6 well; struggles to parse running text quickly). Genre: ${genre}. 140–220 characters, simplified Chinese.
@@ -1553,12 +1626,13 @@ Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | b
   try {
     const j = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("passage", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
     if (!j || !Array.isArray(j.paras) || !j.paras.length || !Array.isArray(j.qs) || j.qs.length < 2) throw { code: "invalid_json" };
-    const p = { id: "G" + now().toString(36), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) })), gen: true };
+    const p = { id: "G" + now().toString(36) + uid4(), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) })), gen: true };
     S.gen.passages.push(p); PSG.set(p.id, p); save(); loadCedict();
+    if (quiet) return 1;
     genStatus("passage", `✓ 新短文已生成：<b>${esc(p.title)}</b>（在下面“没读过”里）`, false);
     toast("新短文已生成 · New passage ready");
     if (VIEW === "read" && !(READ && READ.pid)) render();
-  } catch (e) { genStatus("passage", esc(aiErr(e)), false); }
+  } catch (e) { if (quiet) throw e; genStatus("passage", esc(aiErr(e)), false); }
 }
 
 /* ---------- progress ---------- */
@@ -1589,7 +1663,8 @@ function renderMe(main) {
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
-  ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span>${(SYNC_BYTES = bytesOf(JSON.stringify(S)), "")}<p class="small">同步记录 Sync record: <b>${Math.round(SYNC_BYTES / 1024)} KB</b> / 256 KB${SYNC_FULL ? ' · <b style="color:var(--bad)">full: not syncing</b>' : ""}</p><div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, SYNC_BYTES / SYNC_LIMIT * 100)}%;background:${SYNC_BYTES > 0.8 * SYNC_LIMIT ? "var(--bad)" : "var(--accent)"}"></i></div></div>` : ""}
+  ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><p class="small">同步记录 Sync record: <b>${Math.round(SYNC_TOTAL / 1024)} KB</b> in ${SYNC_DOCS} parts · biggest part ${Math.round(SYNC_BYTES / 1024)} KB / 256 KB${SYNC_FULL ? ' · <b style="color:var(--bad)">a part is full: not syncing</b>' : ""}</p><div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, SYNC_BYTES / SYNC_LIMIT * 100)}%;background:${SYNC_BYTES > 0.8 * SYNC_LIMIT ? "var(--bad)" : "var(--accent)"}"></i></div></div>` : ""}
+  ${stockCard()}
   ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
   ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad" data-genkey="lad" ${GEN.ladBusy ? "disabled" : ""}>生成 8 道新题 Generate</button><div id="st-lad" class="small muted">${GEN.lad || ""}</div></div>` : ""}
   <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
@@ -1603,8 +1678,9 @@ function renderMe(main) {
   $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
-  const gl = $("#genlad"); if (gl) gl.onclick = genLadder;
-  const gs = $("#gensen"); if (gs) gs.onclick = genSen;
+  const gl = $("#genlad"); if (gl) gl.onclick = () => genLadder();
+  const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
+  bindStock();
 }
 function ago(t) {
   if (!t) return "从未 never";
@@ -1685,7 +1761,8 @@ function importUI() {
     S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
   };
 }
-async function genSen() {
+async function genSen(quiet) {
+  const genStatus = quiet ? () => {} : window.genStatus;
 
   const missed = [...SEN.values()].filter(x => { const it = S.items[x.id]; return it && it.b === 0 && it.n; }).flatMap(x => (x.frames || []).map(f => f[0])).slice(0, 12);
   const prompt = `Create 10 sentence-parsing drills for an advanced Mandarin reader (HSK 6+ vocabulary) who understands formal written Chinese only slowly. Each item is ONE dense sentence in the style of news, official notices, reports or formal writing (simplified Chinese, 20–40 characters), with ONE English multiple-choice question about its precise meaning.
@@ -1701,14 +1778,16 @@ Reply with only a JSON array of 10 objects:
     S.gen.sen = S.gen.sen || [];
     arr.forEach((x, i) => {
       if (!x || typeof x.s !== "string" || !x.s.includes("|") || !Array.isArray(x.opts) || x.opts.length !== 4) return;
-      const item = { id: "GS" + now().toString(36) + i, s: x.s, q: String(x.q || "What does it say?"), opts: x.opts.map(String), frames: (Array.isArray(x.frames) ? x.frames : []).filter(f => Array.isArray(f) && f.length >= 2).map(f => [String(f[0]), String(f[1])]).slice(0, 5), gen: true };
+      const item = { id: "GS" + now().toString(36) + uid4() + i, s: x.s, q: String(x.q || "What does it say?"), opts: x.opts.map(String), frames: (Array.isArray(x.frames) ? x.frames : []).filter(f => Array.isArray(f) && f.length >= 2).map(f => [String(f[0]), String(f[1])]).slice(0, 5), gen: true };
       S.gen.sen.push(item); SEN.set(item.id, item); added++;
     });
     save();
+    if (quiet) return added;
     genStatus("sen", `✓ 加了 ${added} 句 — they'll show up in your next sessions.`, false); toast("新短句已生成 · New sentences ready");
-  } catch (e) { genStatus("sen", esc(aiErr(e)), false); }
+  } catch (e) { if (quiet) throw e; genStatus("sen", esc(aiErr(e)), false); }
 }
-async function genLadder() {
+async function genLadder(quiet) {
+  const genStatus = quiet ? () => {} : window.genStatus;
 
   const missed = [...LADDER.values()].filter(x => { const it = S.items[x.id]; return it && it.n > it.ok; }).slice(0, 10).map(x => ladParts(x).key + " (" + x.en + ")");
   const targets = targetWords(10);
@@ -1725,12 +1804,121 @@ Reply with only a JSON array of 8 objects:
     let added = 0;
     arr.forEach((x, i) => {
       if (!x || typeof x.zh !== "string" || (x.zh.match(/\[/g) || []).length !== 1 || !x.en || !Array.isArray(x.cx) || x.cx.length < 3 || !Array.isArray(x.bad) || x.bad.length < 2) return;
-      const item = { id: "G" + now().toString(36) + i, en: String(x.en), zh: x.zh, alt: (x.alt || []).map(String), cx: x.cx.slice(0, 3).map(String), bad: x.bad.slice(0, 2).map(String), why: String(x.why || ""), tag: String(x.tag || "ai"), gen: true };
+      const item = { id: "G" + now().toString(36) + uid4() + i, en: String(x.en), zh: x.zh, alt: (x.alt || []).map(String), cx: x.cx.slice(0, 3).map(String), bad: x.bad.slice(0, 2).map(String), why: String(x.why || ""), tag: String(x.tag || "ai"), gen: true };
       S.gen.ladder.push(item); LADDER.set(item.id, item); added++;
     });
     save();
+    if (quiet) return added;
     genStatus("lad", `✓ 加了 ${added} 道新题 — they'll show up in your next sessions.`, false); toast("新造句题已生成 · New drills ready");
-  } catch (e) { genStatus("lad", esc(aiErr(e)), false); }
+  } catch (e) { if (quiet) throw e; genStatus("lad", esc(aiErr(e)), false); }
+}
+
+/* ---------- stock up for offline (China) ----------
+   The offline copy can't ask Claude for new material. forecast() runs the app's real scheduler forward on a copy
+   of your progress (so it follows whatever scheduling and exercise types the app has) and counts how many days of
+   practice are left before nothing is due or new. Stocking up generates content until that covers the trip.
+   To add a new kind of generated content, add an entry to STOCKERS. */
+const STOCKERS = [
+  { key: "lad", name: "造句", cap: "ladder", run: () => genLadder(true) },
+  { key: "sen", name: "短句", cap: "sen", run: () => genSen(true) },
+];
+const PSG_KINDS = ["xhs", "news", "travel", "book"];
+const stockCfg = () => Object.assign({ mins: 60, days: 21 }, (S.settings || {}).stock);
+function secPerCard() {
+  let n = 0, sec = 0; for (const d in S.log) { n += S.log[d].n; sec += S.log[d].sec; }
+  return n >= 20 ? Math.max(20, Math.min(60, sec / n)) : 35;
+}
+const unreadPassages = () => [...PSG.keys()].filter(id => !S.reads[id]).length;
+let FORECAST = null;
+function forecast(days, mins) {
+  const keepS = S, keepOff = CLOCK_OFF;
+  SIM = true; S = JSON.parse(JSON.stringify(S));
+  try {
+    const per = secPerCard(), perDay = Math.max(1, Math.floor(mins * 60 / per));
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const w = weights(), cats = Object.keys(w);
+    let covered = 0, cards = 0;
+    for (let d = 1; d <= days; d++) {
+      CLOCK_OFF = keepOff + d * DAY;
+      const tally = {}, lists = {}; cats.forEach(k => { tally[k] = 0; lists[k] = candidates(k); });
+      let n = 0;
+      while (n < perDay) {
+        // the day's due + new cards per category (computed once a day: fast enough for a phone);
+        // pick the category furthest below its share; a miss goes to the back of its list (due again in 10 min)
+        const avail = cats.filter(k => lists[k].length); if (!avail.length) break;
+        const k = avail.sort((a, b) => (tally[a] / (n + 1) - w[a]) - (tally[b] / (n + 1) - w[b]))[0];
+        const c = lists[k].shift(), ok = rnd() < 0.85;
+        if (!ok) lists[k].push(Object.assign({}, c, { due: 1 }));
+        if (c.t === "lad") recordLadder(c.id, (S.items[c.id] || {}).r || c.r, ok ? 3 : 1);
+        else if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx");
+        else recordBox(c.id, c.t, ok, c.t === "sen" ? "news" : c.t);
+        tally[k]++; n++; cards++; CLOCK_OFF += per * 1000;
+      }
+      if (n < perDay * 0.9) break;
+      covered = d;
+    }
+    return { days: covered, target: days, per: Math.round(per), unread: unreadPassages(), needPsg: Math.ceil(days / 2), t: keepS.updatedAt };
+  } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; }
+}
+let STOCK = null;
+function stockStatus() {
+  const cfg = stockCfg(), f = FORECAST;
+  if (!f) return `<p class="small muted"><span class="spin"></span> 估算中… Estimating…</p>`;
+  const okCards = f.days >= f.target, okPsg = f.unread >= f.needPsg;
+  let h = `<p class="small">练习卡够用 Practice cards last: <b>${okCards ? `≥ ${f.target}` : f.days} 天 days</b> ${okCards ? "✓" : ""}<br>
+    没读过的短文 Unread passages: <b>${f.unread}</b> / ${f.needPsg} 篇 needed (one every 2 days) ${okPsg ? "✓" : ""}</p>
+    <p class="small muted">Assumes about ${f.per} s per card (your pace) and 85% right, counting only cards that are due or new.</p>`;
+  if (STOCK) {
+    const a = STOCK.added;
+    h += `<p class="small">${STOCK.running ? `<span class="spin"></span> 备货中 Stocking up…` : "这次 This run:"} +${a.lad} 造句 · +${a.sen} 短句 · +${a.psg} 短文${STOCK.msg ? `<br><span class="muted">${esc(STOCK.msg)}</span>` : ""}</p>`;
+    if (!STOCK.running && (a.lad || a.sen || a.psg)) h += `<p class="small"><b>下一步 Next:</b> 导出 Copy code below, then 合并 Merge in the offline copy on your phone.</p>`;
+  }
+  return h;
+}
+function stockCard() {
+  const cfg = stockCfg();
+  const sel = (id, opts, v, unit) => `<select id="${id}" style="font:inherit;font-size:16px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)">${opts.map(o => `<option value="${o}" ${o === v ? "selected" : ""}>${o} ${unit}</option>`).join("")}</select>`;
+  return `<div class="card"><span class="label">离线备货 · Stock up for offline</span>
+    <p class="small muted">${AI ? "The offline copy can't make new material. Stock up here before you go, then carry it over with a copy code." : "How long this copy's material lasts. New material can only be made in the online version."}</p>
+    <div class="row small">每天 Daily ${sel("st-mins", [15, 30, 60, 90], cfg.mins, "分钟")} × ${sel("st-days", [7, 14, 21, 28], cfg.days, "天")}</div>
+    <div id="st-body">${stockStatus()}</div>
+    ${AI ? `<div class="row"><button class="btn soft" id="st-go" ${STOCK && STOCK.running ? "hidden" : ""}>开始备货 Stock up</button><button class="btn ghost" id="st-stop" ${STOCK && STOCK.running ? "" : "hidden"}>停止 Stop</button></div>` : ""}</div>`;
+}
+function refreshStock() { const b = $("#st-body"); if (b) b.innerHTML = stockStatus(); const g = $("#st-go"), x = $("#st-stop"); if (g) g.hidden = !!(STOCK && STOCK.running); if (x) x.hidden = !(STOCK && STOCK.running); }
+function updateForecast() {
+  const cfg = stockCfg();
+  FORECAST = null; refreshStock();
+  setTimeout(() => { FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30);
+}
+function bindStock() {
+  const m = $("#st-mins"), d = $("#st-days"); if (!m) return;
+  const set = () => { S.settings = Object.assign({}, S.settings, { stock: { mins: +m.value, days: +d.value } }); save(); updateForecast(); };
+  m.onchange = set; d.onchange = set;
+  const go = $("#st-go"); if (go) go.onclick = stockUp;
+  const st = $("#st-stop"); if (st) st.onclick = () => { if (STOCK) { STOCK.stop = true; STOCK.msg = "停下来了 · Stopping after the current batch…"; refreshStock(); } };
+  const cfg = stockCfg();
+  if (!FORECAST || FORECAST.t !== S.updatedAt || FORECAST.target !== cfg.days) updateForecast();
+}
+async function stockUp() {
+  if (!AI || (STOCK && STOCK.running)) return;
+  const cfg = stockCfg();
+  STOCK = { running: true, stop: false, added: { lad: 0, sen: 0, psg: 0 }, msg: "" }; refreshStock();
+  for (let round = 0; round < 60 && !STOCK.stop; round++) {
+    FORECAST = forecast(cfg.days, cfg.mins); refreshStock();
+    const needCards = FORECAST.days < cfg.days, needPsg = FORECAST.unread < FORECAST.needPsg;
+    if (!needCards && !needPsg) { STOCK.msg = "够了 ✓ Enough for the whole trip."; break; }
+    const jobs = [];
+    if (needCards) for (const g of STOCKERS) if ((S.gen[g.cap] || []).length < GEN_CAP[g.cap]) jobs.push(g.run().then(n => { STOCK.added[g.key] += n || 0; refreshStock(); }));
+    if (needPsg && S.gen.passages.length < GEN_CAP.passages) jobs.push(genPassage(PSG_KINDS[round % PSG_KINDS.length], true).then(n => { STOCK.added.psg += n || 0; refreshStock(); }));
+    if (!jobs.length) { STOCK.msg = "生成的内容到上限了 · Reached the limit for generated content."; break; }
+    const res = await Promise.allSettled(jobs);
+    const bad = res.filter(r => r.status === "rejected");
+    if (bad.length === res.length) { STOCK.msg = aiErr(bad[0].reason) + " 可以稍后继续 · You can continue later; nothing made so far is lost."; break; }
+  }
+  if (STOCK.stop) STOCK.msg = "已停止 · Stopped. Everything made so far is kept.";
+  STOCK.running = false;
+  FORECAST = forecast(cfg.days, cfg.mins);
+  if (VIEW === "me") render(); else toast("备货完成 · Stock-up finished");
 }
 
 /* ============ one-time: rescore a placement taken before timing counted ============ */
