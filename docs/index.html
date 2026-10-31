@@ -1791,30 +1791,44 @@ const codePrint = c => { let h = 0; const t = String(c).replace(/\s+/g, ""); for
 const LAST_CODE_KEY = "zwlgf:lastcode";
 // Paste & merge: one tap reads the clipboard and merges (merging never deletes anything). If the browser won't
 // let the page read the clipboard, or it holds something else, an empty box appears for a manual paste.
+// After 2 failed clipboard reads in a row this browser stops trying automatically (saves the wait each time);
+// the 读取剪贴板 button can still try.
+const CLIP_FAIL_KEY = "zwlgf:clipfail";
+const clipFails = n => { try { if (n == null) return +(localStorage.getItem(CLIP_FAIL_KEY) || 0); localStorage.setItem(CLIP_FAIL_KEY, String(n)); } catch (e) {} return 0; };
 function importUI() {
   const box = $("#xio");
-  box.innerHTML = `<div id="impst" class="small"></div>
-    <div id="impman" class="stack" style="gap:10px"><textarea class="code" id="codein" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="把另一个版本导出的代码粘贴到这里 Paste the code from the other version here"></textarea>
-    <div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div></div>
-    <p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p><div id="imperr"></div>`;
+  const canTry = !HOSTED && !!(navigator.clipboard && navigator.clipboard.readText); // the Claude page never allows reads
+  box.innerHTML = `<div class="stack" style="gap:10px"><div id="impst" class="small"></div>
+    <textarea class="code" id="codein" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="把另一个版本导出的代码粘贴到这里 Paste the code from the other version here"></textarea>
+    <div class="row"><button class="btn" id="doimp">合并进度 Merge</button>${canTry ? `<button class="btn ghost" id="readclip">读取剪贴板 Read clipboard</button>` : ""}</div>
+    <div id="imperr"></div>
+    <p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p></div>`;
+  const ta = $("#codein");
+  const err = msg => { $("#imperr").innerHTML = msg ? `<div class="fb no"><span>${msg}</span></div>` : ""; };
+  const hint = msg => { $("#impst").innerHTML = msg ? `<span class="muted">${msg}</span>` : ""; };
   const show = () => box.scrollIntoView({ block: "center", behavior: "smooth" });
-  const manual = (msg, isErr) => {
-    $("#impst").innerHTML = msg ? (isErr ? `<div class="fb no"><span>${msg}</span></div>` : `<span class="muted">${msg}</span>`) : "";
-    const ta = $("#codein");
-    if (!ta.value) setTimeout(() => { show(); ta.focus({ preventScroll: true }); }, 50); // never wipe a manual paste
+  const PASTE = "长按下面的框选“粘贴”（电脑上 Ctrl/⌘+V），会自动合并。 Long-press the box and choose Paste (Ctrl/⌘+V on a computer); it merges by itself.";
+  const goManual = (msg, isErr) => { if (isErr) { err(msg); hint(PASTE); } else hint(msg); setTimeout(() => { show(); if (!ta.value) ta.focus({ preventScroll: true }); }, 50); };
+  let merging = false;
+  const merge = text => { if (merging) return; merging = true; err(""); mergeCode(text, m => { merging = false; err(m); toast("代码无效 — that code didn't work"); }); };
+  ta.onfocus = () => ta.select(); // a paste replaces anything already in the box
+  ta.oninput = () => { const c = readCode(ta.value); if (!c.err && c.b64.length > 60) merge(ta.value); }; // no extra tap after pasting
+  $("#doimp").onclick = () => merge(ta.value);
+  const tryClipboard = () => {
+    hint(`<span class="spin"></span> 读取剪贴板… Reading the clipboard: tap Paste if your phone or browser asks.`);
+    // Nothing on the page may move while the Paste prompt is up: scrolling can dismiss it, which was why reads failed.
+    navigator.clipboard.readText().then(text => {
+      clipFails(0);
+      const c = readCode(text);
+      if (c.err) return goManual("剪贴板里没有进度代码 · No progress code on the clipboard. Tap 导出 Copy code in the other version first.", true);
+      let mine = null; try { mine = localStorage.getItem(LAST_CODE_KEY); } catch (e) {}
+      if (mine && mine === codePrint(text.match(/zw[01]:[A-Za-z0-9+/=\s]*/i)[0])) return goManual("剪贴板里是你刚从这里导出的代码 · The clipboard holds the code you just copied <b>from this version</b>. Tap 导出 Copy code in the <b>other</b> version, then come back.", true);
+      hint(""); merge(text);
+    }, () => { clipFails(clipFails() + 1); goManual(PASTE); });
   };
-  const ta0 = $("#codein"); ta0.onfocus = () => ta0.select(); // a paste replaces anything already in the box
-  $("#doimp").onclick = () => mergeCode($("#codein").value, msg => { $("#imperr").innerHTML = `<div class="fb no"><span>${msg}</span></div>`; toast("代码无效 — that code didn't work"); });
-  show();
-  if (!(navigator.clipboard && navigator.clipboard.readText)) return manual("这个浏览器不让网页读剪贴板 · This browser doesn't let pages read the clipboard. Long-press the box below and choose Paste.", true);
-  $("#impst").innerHTML = `<span class="muted"><span class="spin"></span> 读取剪贴板… Reading the clipboard (tap Paste if your phone asks), or paste below.</span>`;
-  navigator.clipboard.readText().then(text => {
-    const c = readCode(text);
-    if (c.err) return manual("剪贴板里没有进度代码 · No progress code on the clipboard. Copy it in the other version first, or paste below.", true);
-    let mine = null; try { mine = localStorage.getItem(LAST_CODE_KEY); } catch (e) {}
-    if (mine && mine === codePrint(text.match(/zw[01]:[A-Za-z0-9+/=\s]*/i)[0])) return manual("剪贴板里是你刚从这里导出的代码 · The clipboard holds the code you just copied <b>from this version</b>. Tap 导出 Copy code in the <b>other</b> version, then come back.", true);
-    mergeCode(text, msg => manual(msg, true));
-  }, () => manual(HOSTED ? "这里不能自动读剪贴板（Claude 页面不允许）· The Claude page doesn't allow reading the clipboard. Long-press the box below and choose Paste." : "没能读剪贴板（可能没点“粘贴”）· Couldn't read the clipboard (the Paste prompt may have been dismissed). Long-press the box below and choose Paste.", true));
+  const rc = $("#readclip"); if (rc) rc.onclick = tryClipboard;
+  if (canTry && clipFails() < 2) tryClipboard();
+  else goManual(PASTE);
 }
 async function mergeCode(raw, fail) {
   if (!String(raw || "").trim()) return fail("还没粘贴 · Nothing pasted yet.");
