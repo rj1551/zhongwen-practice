@@ -1708,8 +1708,7 @@ function renderMe(main) {
   <div class="card"><span class="label">技能 · Skills</span>
     ${S.skills ? `<div class="bars">${Object.keys(names).map(k => `<div class="bar"><span>${names[k]}</span><span class="t"><i style="width:${pct(skillVal(k))}"></i></span><span class="v">${pct(skillVal(k))}</span></div>`).join("")}</div>` : `<p class="muted">还没测试 — take the placement test to fill these in.</p>`}
     <button class="btn ghost" id="replace">重新做水平测试 Retake placement test</button></div>
-  <div class="card"><span class="label">阅读生词 · Words you saved (${Object.keys(S.bank).length})</span>
-    ${Object.keys(S.bank).length ? `<div class="row">${Object.values(S.bank).sort((a, b) => b.t - a.t).map(b => `<span class="chip" style="font-size:14px;padding:5px 6px 5px 11px"><span class="zh">${esc(b.zh)}</span><button class="rmw" data-w="${esc(b.zh)}" aria-label="移出 ${esc(b.zh)}" style="padding:0 4px;color:var(--muted)">×</button></span>`).join("")}</div>` : `<p class="small muted">Tap words in 阅读 and choose 加入复习 to add them here.</p>`}</div>
+  <div class="card" id="bankcard">${bankCard()}</div>
   <div class="card"><span class="label">设置 · Settings</span>
     <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="onetap" style="margin-top:3px;flex:none" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
   <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately.</p></div>
@@ -1727,13 +1726,36 @@ function renderMe(main) {
     ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
     <p class="small muted"><b>iPhone / iPad:</b> add this page to your home screen and always open it from there. Paste codes inside the home-screen app, not a Safari tab: the two keep separate data, and Safari tabs lose their data after 7 days unused.</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
-  $$(".rmw", main).forEach(b => b.onclick = () => { const w = b.dataset.w; const saved = S.bank[w]; removeFromBank(w); render(); toastAction("已移出 " + w, "撤销 Undo", () => { S.bank[w] = saved; save(); render(); }); });
+  bindBank();
   $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
   const gl = $("#genlad"); if (gl) gl.onclick = () => genLadder();
   const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
   bindStock();
+}
+/* ---------- saved words: newest 20, the rest behind "show all" (with search) ---------- */
+const BANK_SHOW = 20;
+let BANK_ALL = false, BANK_Q = "";
+function bankCard() {
+  const all = Object.values(S.bank).sort((a, b) => b.t - a.t), n = all.length;
+  const head = `<span class="label">阅读生词 · Words you saved (${n})</span>`;
+  if (!n) return head + `<p class="small muted">Tap words in 阅读 and choose 加入复习 to add them here.</p>`;
+  const q = BANK_Q.trim();
+  const list = !BANK_ALL ? all.slice(0, BANK_SHOW) : q ? all.filter(b => b.zh.includes(q) || (b.py || "").toLowerCase().replace(/\s/g, "").includes(q.toLowerCase().replace(/\s/g, "")) || (b.gl || "").toLowerCase().includes(q.toLowerCase())) : all;
+  const chips = list.map(b => `<span class="chip" style="font-size:14px;padding:5px 6px 5px 11px"><span class="zh">${esc(b.zh)}</span><button class="rmw" data-w="${esc(b.zh)}" aria-label="移出 ${esc(b.zh)}" style="padding:0 4px;color:var(--muted)">×</button></span>`).join("");
+  return head + (BANK_ALL ? `<input id="bankq" type="search" value="${esc(BANK_Q)}" placeholder="搜索 Search: 汉字, pinyin or English" style="font:inherit;font-size:16px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%">` : "")
+    + `<div class="row" id="bankchips" style="${BANK_ALL ? "max-height:50vh;overflow:auto;align-content:flex-start" : ""}">${chips || `<span class="small muted">没有找到 · No match</span>`}</div>`
+    + (n > BANK_SHOW ? `<button class="btn ghost" id="bankmore">${BANK_ALL ? "收起 Show newest 20 only" : `显示全部 Show all ${n}`}</button>` : "")
+    + (BANK_ALL ? "" : n > BANK_SHOW ? `<p class="small muted" style="margin-top:-6px">Showing the newest ${BANK_SHOW}.</p>` : "");
+}
+function bindBank() {
+  const card = $("#bankcard"); if (!card) return;
+  const redraw = () => { card.innerHTML = bankCard(); bindBank(); };
+  $$(".rmw", card).forEach(b => b.onclick = () => { const w = b.dataset.w; const saved = S.bank[w]; removeFromBank(w); redraw(); toastAction("已移出 " + w, "撤销 Undo", () => { S.bank[w] = saved; save(); redraw(); }); });
+  const more = $("#bankmore", card); if (more) more.onclick = () => { BANK_ALL = !BANK_ALL; BANK_Q = ""; redraw(); if (!BANK_ALL) card.scrollIntoView({ block: "nearest" }); };
+  const q = $("#bankq", card);
+  if (q) q.oninput = () => { BANK_Q = q.value; const c = $("#bankchips", card); const tmp = document.createElement("div"); tmp.innerHTML = bankCard(); c.replaceWith($("#bankchips", tmp)); bindBank(); q.focus(); };
 }
 function ago(t) {
   if (!t) return "从未 never";
