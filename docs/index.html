@@ -27,6 +27,7 @@
   --grid:rgba(142,166,255,.12); color-scheme:dark}
 *,*::before,*::after{box-sizing:border-box}
 html,body{height:100%}
+html{touch-action:manipulation} /* no double-tap zoom when tapping answers quickly; pinch zoom still works */
 [hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.5;-webkit-tap-highlight-color:transparent}
 #app{max-width:600px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
@@ -311,12 +312,17 @@ function pushRemote() {
         }
       }
       SYNC_BYTES = biggest; SYNC_TOTAL = total; SYNC_DOCS = n;
+      const si = document.getElementById("syncinfo"); if (si) si.innerHTML = syncInfo();
       if (full !== SYNC_FULL) { SYNC_FULL = full; if (VIEW === "home" || VIEW === "me") render(); }
       if (remoteDirty) { await new Promise(r => setTimeout(r, 4000)); if (!ONLINE) break; }
     }
   }).then(() => { remoteBusy = false; if (remoteDirty && ONLINE) { clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); } });
 }
 let SYNC_TOTAL = 0;
+function syncInfo() {
+  if (!PULLED) return `<p class="small muted"><span class="spin"></span> 正在连接… Connecting…</p>`;
+  return `<p class="small">同步记录 Sync record: <b>${Math.round(SYNC_TOTAL / 1024)} KB</b> in ${SYNC_DOCS} parts · biggest part ${Math.round(SYNC_BYTES / 1024)} KB / 256 KB${SYNC_FULL ? ' · <b style="color:var(--bad)">a part is full: not syncing</b>' : ""}</p><div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, SYNC_BYTES / SYNC_LIMIT * 100)}%;background:${SYNC_BYTES > 0.8 * SYNC_LIMIT ? "var(--bad)" : "var(--accent)"}"></i></div>`;
+}
 // Read every document, merge them into what this device has, then write back whatever differs.
 function pullRemote() {
   if (!COL) return SYNCQ;
@@ -363,7 +369,13 @@ function mergeStates(a, b) {
     if (newerItem(x, y)) m.items[id] = x;
   }
   for (const k in o.bank || {}) if (!m.bank[k]) m.bank[k] = o.bank[k];
-  for (const k in o.reads || {}) if (!m.reads[k] || (o.reads[k].t || 0) > (m.reads[k].t || 0)) m.reads[k] = o.reads[k];
+  for (const k in o.reads || {}) {
+    const x = o.reads[k], y = m.reads[k];
+    if (!y) { m.reads[k] = x; continue; }
+    const first = (x.t || 0) <= (y.t || 0) ? x : y; // the first read is the baseline for speed
+    const seen = new Set(), rr = [...(y.rr || []), ...(x.rr || [])].filter(e => !seen.has(e[0]) && seen.add(e[0])).sort((a, b) => a[0] - b[0]).slice(-20);
+    m.reads[k] = Object.assign({}, first, { rr, re: Math.max(x.re || 0, y.re || 0, rr.length), lastT: Math.max(x.lastT || x.t || 0, y.lastT || y.t || 0), lastCpm: rr.length ? rr[rr.length - 1][1] : first.lastCpm });
+  }
   for (const d in o.log || {}) {
     const x = o.log[d], y = m.log[d];
     m.log[d] = !y ? x : { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
@@ -756,6 +768,7 @@ function startSession(goal) {
   const g = goal === undefined ? ((S.settings && S.settings.goal) || 0) : goal;
   SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), retry: [], requeued: new Set(), promoted: 0, mastered: 0, ended: false };
   SESSION.fbUsed = new Set();
+  (S.offfb || []).filter(f => !f.seen).forEach(f => SESSION.used.add("lad" + f.id)); // feedback first, then the drill (next session)
   SESSION.q = addFeedback(buildBlock(8, SESSION.used), SESSION);
   if (!SESSION.q.length) { SESSION = null; toast("暂时没有可练的题 — nothing to practice right now"); return; }
   setView("session");
@@ -930,7 +943,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     };
   } else {
     body.innerHTML = `${rung === 4 ? `<p class="hint">提示 Hint: 用 <b>${esc(p.key)}</b></p>` : `<p class="hint">用中文写出来 Write it in Chinese.</p>`}
-      <textarea class="paper" id="ans" rows="2" placeholder="在这里打字…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+      <textarea class="paper" id="ans" rows="2" placeholder="在这里打字…" lang="zh-CN" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
       <div class="row"><button class="btn" id="check">检查 Check</button><button class="btn ghost" id="giveup">不会 Show me</button></div>`;
     const ta = $("#ans", body);
     setTimeout(() => ta.focus({ preventScroll: true }), 30);
@@ -1016,7 +1029,11 @@ function offwCard() {
   const left = (S.offw || []).length, sum = S.offwSummary;
   if (!HOSTED || (!left && !sum && !OFFW_RUN)) return "";
   let h = `<div class="card"><span class="label">离线写的句子 · Answers you wrote offline</span>`;
-  if (sum && !OFFW_RUN) h += `<p class="small">检查了 ${sum.n} 句：<b>${sum.fine} 句没问题 ✓</b>${sum.cards ? ` · ${sum.cards} 张反馈卡会穿插在练习里 · ${sum.cards} feedback card${sum.cards > 1 ? "s" : ""} will turn up in practice` : ""}${sum.failed ? `<br><span class="muted">中途连不上 Claude，剩下的还在等。Lost Claude partway; the rest are still waiting.</span>` : ""}</p>
+  if (sum && !OFFW_RUN) h += `<div class="stack" style="gap:6px"><b>检查了 ${sum.n} 句 · Checked ${sum.n}</b>
+    <span class="small">✓ <b>${sum.fine}</b> 句没问题 · natural as written</span>
+    ${sum.cards ? `<span class="small">✎ <b>${sum.cards}</b> 张反馈卡 · feedback card${sum.cards > 1 ? "s" : ""}<br><span class="muted">会穿插在练习里 · they'll turn up in practice</span></span>` : ""}
+    ${sum.raised ? `<span class="small">↑ <b>${sum.raised}</b> 句你判了"不对"，其实意思对 · you marked ${sum.raised > 1 ? "these" : "this"} wrong but the meaning was right; level raised</span>` : ""}
+    ${sum.failed ? `<span class="small muted">中途连不上 Claude，剩下的还在等。Lost Claude partway; the rest are still waiting.</span>` : ""}</div>
     <button class="btn ghost" id="offw-ok">知道了 Got it</button>`;
   if (OFFW_RUN) h += `<p class="small"><span class="spin"></span> Claude 正在检查… ${OFFW_RUN.done}/${OFFW_RUN.n}</p>`;
   else if (left) {
@@ -1036,7 +1053,7 @@ async function checkOffline(n) {
   if (OFFW_RUN || !AI) return;
   const list = offwPriority().slice(0, n);
   OFFW_RUN = { n: list.length, done: 0 }; S.offwSummary = null;
-  let fine = 0, cards = 0, failed = false;
+  let fine = 0, cards = 0, failed = false, raised = 0;
   if (VIEW === "home") render();
   for (let i = 0; i < list.length; i += 5) {
     const batch = list.slice(i, i + 5);
@@ -1044,13 +1061,13 @@ async function checkOffline(n) {
     try {
       const res = known.length ? await gradeBatch(known) : [];
       batch.filter(e => !LADDER.has(e.id)).forEach(e => settleOffline(e, null));
-      known.forEach((e, j) => { if (!res[j]) return; if (settleOffline(e, res[j])) fine++; else cards++; });
+      known.forEach((e, j) => { if (!res[j]) return; if (e.self != null && e.self < 2 && (+res[j].score || 0) >= 2) raised++; if (settleOffline(e, res[j])) fine++; else cards++; });
     } catch (e) { failed = true; if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
     OFFW_RUN.done = Math.min(list.length, i + 5);
     if (VIEW === "home") render();
   }
   OFFW_RUN = null;
-  S.offwSummary = { n: fine + cards, fine, cards, failed };
+  S.offwSummary = { n: fine + cards, fine, cards, failed, raised };
   save();
   if (VIEW === "home") render(); else toast(`检查完了 · ${fine} 句没问题${cards ? `，${cards} 张反馈卡` : ""}`);
 }
@@ -1084,9 +1101,14 @@ Reply with only a JSON array, one object per answer in the same order: {"i": ans
   return entries.map((e, j) => arr.find(x => x && +x.i === j + 1) || null);
 }
 // one feedback card per block of practice, at the 4th slot
+// You see Claude's feedback on a drill before you're asked to write that drill again: drills with unseen feedback
+// are kept out of the session (startSession), and one feedback card goes into each block at slot 4.
+// 再写一次 still adds the drill on purpose, right after its feedback.
 function addFeedback(block, s) {
   const f = (S.offfb || []).filter(x => !x.seen && !s.fbUsed.has(x.k) && LADDER.has(x.id)).sort((a, b) => b.t - a.t)[0];
-  if (f && block.length >= 3) { s.fbUsed.add(f.k); block.splice(3, 0, { t: "ofb", k: f.k }); }
+  if (!f || block.length < 3) return block;
+  s.fbUsed.add(f.k); s.used.add("lad" + f.id);
+  block.splice(3, 0, { t: "ofb", k: f.k });
   return block;
 }
 function renderOfflineFb(k, el, done) {
@@ -1444,13 +1466,20 @@ function coverage(p) {
   }
   return total ? known / total : 0;
 }
+const REREAD_GAP = 2 * DAY; // re-reading sooner mostly measures memory
 function renderRead(main) {
   loadCedict();
   if (READ && READ.pid) return renderPassage(main);
   const all = [...PSG.values()];
   const REG = REG_NAME;
   const fresh = [...all.filter(p => p.gen).reverse(), ...all.filter(p => !p.gen)].filter(p => !S.reads[p.id]);
-  const done = all.filter(p => S.reads[p.id]).sort((a, b) => S.reads[b.id].t - S.reads[a.id].t);
+  const lastT = r => r.lastT || r.t;
+  const ready = all.filter(p => S.reads[p.id] && now() - lastT(S.reads[p.id]) >= REREAD_GAP).sort((a, b) => lastT(S.reads[a.id]) - lastT(S.reads[b.id]));
+  const done = all.filter(p => S.reads[p.id] && now() - lastT(S.reads[p.id]) < REREAD_GAP).sort((a, b) => lastT(S.reads[b.id]) - lastT(S.reads[a.id]));
+  const rItem = p => {
+    const r = S.reads[p.id], days = Math.floor((now() - lastT(r)) / DAY);
+    return `<button class="pitem" data-p="${esc(p.id)}" data-re="1"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span><span class="small muted">第一次 ${r.cpm} 字/分${r.rr && r.rr.length ? ` · 最快 ${Math.max(...r.rr.map(e => e[1]))}` : ""} · ${days} 天前读过</span></div><h3>${esc(p.title)}</h3></button>`;
+  };
   const item = p => {
     const r = S.reads[p.id];
     return `<button class="pitem ${r ? "done" : ""}" data-p="${esc(p.id)}"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span>${!r ? `<span class="chip new">新 New</span>` : ""}${p.gen ? `<span class="chip">AI</span>` : ""}<span class="small muted">已知词 ${pct(coverage(p))}</span>${r ? `<span class="small muted">· ✓ ${r.cpm} 字/分 · ${r.score}/3${r.re ? " · 重读 " + r.re : ""}</span>` : ""}</div><h3>${esc(p.title)}</h3></button>`;
@@ -1460,8 +1489,9 @@ function renderRead(main) {
       <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting. You can leave this tab while it works; it'll appear below as 新.</p>
       <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}" data-genkey="passage" ${GEN.passageBusy ? "disabled" : ""}>${v}</button>`).join("")}</div><div id="st-passage" class="small muted">${GEN.passage || ""}</div></div>` : ""}
     ${fresh.length ? `<span class="label">没读过 · New (${fresh.length})</span><div class="plist">${fresh.map(item).join("")}</div>` : ""}
-    ${done.length ? `<span class="label">读过 · Read (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
-  $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false }; render(); window.scrollTo(0, 0); });
+    ${ready.length ? `<span class="label">可以重读 · Ready to re-read (${ready.length})</span><p class="small muted" style="margin-top:-8px">读过两天以上了。再读一遍练速度，不答题。 It's been 2+ days: read it again for speed, no questions.</p><div class="plist">${ready.map(rItem).join("")}</div>` : ""}
+    ${done.length ? `<span class="label">最近读过 · Read recently (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
+  $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[b.dataset.p] }; render(); window.scrollTo(0, 0); });
   $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen));
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
@@ -1483,17 +1513,17 @@ const tokHtml = (t, k, looked) => {
 function renderPassage(main) {
   const p = PSG.get(READ.pid);
   const paras = [segmentText(p.title, p.gl || {})].concat(passageTokens(p)); // index 0 = title
-  main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>${READ.re ? `<span class="chip">重读 Re-read</span>` : ""}
     <label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></div>
     <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""}" id="rd">
       <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
       ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
-    <button class="btn wide" id="done">读完了，答题 Done → questions</button></div>`;
+    ${READ.re ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
   $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = null; render(); };
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
   READ.paras = paras;
   bindTokens(main, p);
-  $("#done").onclick = () => passageQuiz(main, p);
+  $("#done").onclick = () => READ.re ? finishReread(main, p) : passageQuiz(main, p);
 }
 function bindTokens(scope, p) {
   $$(".tk", scope).forEach(s => s.onclick = () => {
@@ -1592,7 +1622,7 @@ function passageQuiz(main, p) {
         <div class="stats3"><div class="stat"><b>${cpm}</b><span>字/分钟</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
         <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>
         <button class="btn wide" id="again">再读一遍（看看快了多少）Re-read</button><button class="btn ghost wide" id="list">回到列表 Back to list</button></div>`;
-      $("#again").onclick = () => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false }; render(); };
+      $("#again").onclick = () => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: true }; render(); window.scrollTo(0, 0); };
       $("#list").onclick = () => { READ = null; render(); };
       return;
     }
@@ -1607,6 +1637,29 @@ function passageQuiz(main, p) {
     });
   };
   ask();
+}
+// Re-read for speed (option A: speed only). Compared with your first read of the same passage; doesn't touch the
+// card schedule or the reading-speed skill (a re-read is faster partly because you know the text).
+function finishReread(main, p) {
+  closeSheet();
+  const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
+  const sec = READ.timer.stop() / 1000, cpm = Math.round(n / (sec / 60));
+  const r = S.reads[p.id], prevT = r.lastT || r.t, soon = now() - prevT < REREAD_GAP;
+  const paused = sec > 20 * 60;
+  const before = (r.rr || []).map(e => e[1]);
+  if (!paused) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; }
+  r.re = (r.re || 0) + 1; r.lastT = now();
+  logDay(Math.min(sec, 900), true); save();
+  const gain = r.cpm ? Math.round((cpm / r.cpm - 1) * 100) : 0;
+  const hist = [r.cpm, ...before, ...(paused ? [] : [cpm])];
+  main.innerHTML = `<div class="card"><span class="label">重读 · Re-read</span>
+    ${paused ? `<p>看起来中途停了，这次不算速度。 Looks like you paused partway, so this one isn't counted.</p>` : `
+    <div class="row" style="align-items:flex-end;gap:16px"><div class="big">${cpm}</div><p class="muted">字/分钟 characters a minute</p></div>
+    <p>第一次 First read <b>${r.cpm}</b> → 这次 This time <b>${cpm}</b> ${gain > 0 ? `<b style="color:var(--good)">+${gain}%</b>` : gain < 0 ? `<span class="muted">(${gain}%)</span>` : ""}</p>
+    ${hist.length > 2 ? `<p class="small muted">每次 Each read: ${hist.join(" → ")}</p>` : ""}
+    ${soon ? `<p class="small muted">离上次不到两天，有一部分是记忆。 Less than 2 days since last time, so part of this is memory.</p>` : ""}`}
+    <button class="btn wide" id="list">回到列表 Back to list</button></div>`;
+  $("#list").onclick = () => { READ = null; render(); window.scrollTo(0, 0); };
 }
 function targetWords(n) {
   const pool = [];
@@ -1663,7 +1716,7 @@ function renderMe(main) {
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
-  ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><p class="small">同步记录 Sync record: <b>${Math.round(SYNC_TOTAL / 1024)} KB</b> in ${SYNC_DOCS} parts · biggest part ${Math.round(SYNC_BYTES / 1024)} KB / 256 KB${SYNC_FULL ? ' · <b style="color:var(--bad)">a part is full: not syncing</b>' : ""}</p><div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, SYNC_BYTES / SYNC_LIMIT * 100)}%;background:${SYNC_BYTES > 0.8 * SYNC_LIMIT ? "var(--bad)" : "var(--accent)"}"></i></div></div>` : ""}
+  ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><div id="syncinfo">${syncInfo()}</div></div>` : ""}
   ${stockCard()}
   ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
   ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad" data-genkey="lad" ${GEN.ladBusy ? "disabled" : ""}>生成 8 道新题 Generate</button><div id="st-lad" class="small muted">${GEN.lad || ""}</div></div>` : ""}
@@ -1713,6 +1766,7 @@ function exportCode() {
   } catch (e) { copied = codeP.then(c => navigator.clipboard.writeText(c)); }
   codeP.then(async code => {
     S.lastExport = now(); save();
+    try { localStorage.setItem(LAST_CODE_KEY, codePrint(code)); } catch (e) {}
     const box = $("#xio");
     box.innerHTML = `<textarea class="code" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="codebox" readonly>${esc(code)}</textarea>
       <div class="row"><button class="btn ghost" id="selall">全选 Select all</button><span class="small muted" id="copyst">${Math.round(code.length / 1024)} KB · 以 ZW1: 开头 starts with ZW1:</span></div>`;
@@ -1732,34 +1786,57 @@ function readCode(text) {
   if (!m) return { err: "这不是进度代码 · That doesn't look like a progress code (they start with ZW1:). Your clipboard may still hold something else — copy the code again." };
   return { kind: m[1], b64: m[2] };
 }
+// Fingerprint of the last code this copy exported, so pasting your own code back gets a clear message.
+const codePrint = c => { let h = 0; const t = String(c).replace(/\s+/g, ""); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return t.length + ":" + h; };
+const LAST_CODE_KEY = "zwlgf:lastcode";
+// Paste & merge: one tap reads the clipboard and merges (merging never deletes anything). If the browser won't
+// let the page read the clipboard, or it holds something else, an empty box appears for a manual paste.
 function importUI() {
   const box = $("#xio");
-  box.innerHTML = `<textarea class="code" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" id="codein" placeholder="把导出的代码粘贴到这里 Paste the code here"></textarea><div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div><p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p><div id="imperr"></div>`;
-  const fail = msg => { $("#imperr").innerHTML = `<div class="fb no"><span>${msg}</span></div>`; toast("代码无效 — that code didn't work"); };
-  $("#doimp").onclick = async () => {
-    $("#imperr").innerHTML = "";
-    const raw = $("#codein").value;
-    if (!raw.trim()) return fail("还没粘贴 · Nothing pasted yet.");
-    const c = readCode(raw);
-    if (c.err) return fail(c.err);
-    const kb = Math.round(c.b64.length / 1024 * 10) / 10;
-    const cut = `代码不完整 · The code looks cut off (pasted ${kb} KB). Copy it again — use the 导出 button, or 全选 Select all, rather than dragging to select.`;
-    let json;
-    try {
-      const bin = atob(c.b64);
-      if (c.kind === "1") {
-        const buf = Uint8Array.from(bin, ch => ch.charCodeAt(0));
-        json = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-      } else json = decodeURIComponent(escape(bin));
-    } catch (e) {
-      if (c.kind === "1" && typeof DecompressionStream === "undefined") return fail("这个浏览器太旧，解不开压缩代码 · This browser can't unpack compressed codes; update it, or copy from this app into the other one instead.");
-      return fail(cut);
-    }
-    let data;
-    try { data = JSON.parse(json); } catch (e) { return fail(cut); }
-    if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
-    S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
+  box.innerHTML = `<div id="impst" class="small"></div>
+    <div id="impman" class="stack" style="gap:10px"><textarea class="code" id="codein" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="把另一个版本导出的代码粘贴到这里 Paste the code from the other version here"></textarea>
+    <div class="row"><button class="btn" id="doimp">合并进度 Merge</button></div></div>
+    <p class="small muted">Merging keeps, for every drill and word, whichever copy is further along. Nothing is lost.</p><div id="imperr"></div>`;
+  const show = () => box.scrollIntoView({ block: "center", behavior: "smooth" });
+  const manual = (msg, isErr) => {
+    $("#impst").innerHTML = msg ? (isErr ? `<div class="fb no"><span>${msg}</span></div>` : `<span class="muted">${msg}</span>`) : "";
+    const ta = $("#codein");
+    if (!ta.value) setTimeout(() => { show(); ta.focus({ preventScroll: true }); }, 50); // never wipe a manual paste
   };
+  const ta0 = $("#codein"); ta0.onfocus = () => ta0.select(); // a paste replaces anything already in the box
+  $("#doimp").onclick = () => mergeCode($("#codein").value, msg => { $("#imperr").innerHTML = `<div class="fb no"><span>${msg}</span></div>`; toast("代码无效 — that code didn't work"); });
+  show();
+  if (!(navigator.clipboard && navigator.clipboard.readText)) return manual("把代码粘贴到下面 · Paste the code below.");
+  $("#impst").innerHTML = `<span class="muted"><span class="spin"></span> 读取剪贴板… Reading the clipboard (tap Paste if your phone asks), or paste below.</span>`;
+  navigator.clipboard.readText().then(text => {
+    const c = readCode(text);
+    if (c.err) return manual("剪贴板里没有进度代码 · No progress code on the clipboard. Copy it in the other version first, or paste below.", true);
+    let mine = null; try { mine = localStorage.getItem(LAST_CODE_KEY); } catch (e) {}
+    if (mine && mine === codePrint(text.match(/zw[01]:[A-Za-z0-9+/=\s]*/i)[0])) return manual("剪贴板里是你刚从这里导出的代码 · The clipboard holds the code you just copied <b>from this version</b>. Tap 导出 Copy code in the <b>other</b> version, then come back.", true);
+    mergeCode(text, msg => manual(msg, true));
+  }, () => manual("把代码粘贴到下面 · Paste the code below."));
+}
+async function mergeCode(raw, fail) {
+  if (!String(raw || "").trim()) return fail("还没粘贴 · Nothing pasted yet.");
+  const c = readCode(raw);
+  if (c.err) return fail(c.err);
+  const kb = Math.round(c.b64.length / 1024 * 10) / 10;
+  const cut = `代码不完整 · The code looks cut off (${kb} KB). Copy it again with the 导出 button.`;
+  let json;
+  try {
+    const bin = atob(c.b64);
+    if (c.kind === "1") {
+      const buf = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+      json = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    } else json = decodeURIComponent(escape(bin));
+  } catch (e) {
+    if (c.kind === "1" && typeof DecompressionStream === "undefined") return fail("这个浏览器太旧，解不开压缩代码 · This browser can't unpack compressed codes; update it, or copy from this app into the other one instead.");
+    return fail(cut);
+  }
+  let data;
+  try { data = JSON.parse(json); } catch (e) { return fail(cut); }
+  if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
+  S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
 }
 async function genSen(quiet) {
   const genStatus = quiet ? () => {} : window.genStatus;
