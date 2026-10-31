@@ -154,6 +154,9 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .rtag{font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--accent-soft);margin-right:6px}
 .rtag.here{background:var(--accent);color:var(--accent-ink)}
 .sheet.pop{left:auto;right:auto;bottom:auto;display:block;padding:0}
+.sheet.popm{bottom:auto;padding:0 12px} .sheet.popm .in{border-radius:14px;border-bottom:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.tagc{font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)} .tagc.on{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.inp{font:inherit;font-size:16px;padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%}
 .sheet.pop .in{border-radius:14px;border-bottom:1px solid var(--line);max-height:60vh}
 .pitem.done{opacity:.62;background:transparent}
 .pitem.done:hover{opacity:.9}
@@ -227,7 +230,7 @@ const pct = x => Math.round((x || 0) * 100) + "%";
 const LS_KEY = "zwlgf:state:v1";
 const OFFW_MAX = 50; // offline copy keeps this many written answers for Claude to check later
 function freshState() {
-  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [] }, best: { combo: 0 } };
+  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [] }, best: { combo: 0 } };
 }
 let S = freshState();
 try { const raw = localStorage.getItem(LS_KEY); if (raw) S = Object.assign(freshState(), JSON.parse(raw)); } catch (e) {}
@@ -236,7 +239,7 @@ let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer 
 let SYNC_BYTES = 0, SYNC_FULL = false, LOCAL_FULL = false;
 const SYNC_LIMIT = 256 * 1024;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
-const GEN_CAP = { ladder: 600, sen: 600, passages: 60 }; // generated content kept (all of it travels offline)
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400 }; // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
   if (SIM) return;
   S.updatedAt = now();
@@ -341,7 +344,7 @@ function pullRemote() {
       try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
       if (stable(S) !== before && !busyView()) render();
     }
-  }).then(() => { remoteDirty = true; pushRemote(); });
+  }).then(() => { remoteDirty = true; pushRemote(); processSentences(); });
 }
 async function connectRemote() {
   if (!window.claude || !window.claude.use) return;
@@ -368,7 +371,13 @@ function mergeStates(a, b) {
     const x = o.items[id], y = m.items[id];
     if (newerItem(x, y)) m.items[id] = x;
   }
-  for (const k in o.bank || {}) if (!m.bank[k]) m.bank[k] = o.bank[k];
+  for (const k in o.bank || {}) {
+    const x = o.bank[k], y = m.bank[k];
+    if (!y) { m.bank[k] = x; continue; }
+    const hasS = b => !!b.s && !b.needS;
+    const keep = hasS(y) || !hasS(x) ? y : x, tags = [...new Set([...(y.tags || []), ...(x.tags || [])])];
+    m.bank[k] = Object.assign({}, keep, tags.length ? { tags } : {});
+  }
   for (const k in o.reads || {}) {
     const x = o.reads[k], y = m.reads[k];
     if (!y) { m.reads[k] = x; continue; }
@@ -381,7 +390,7 @@ function mergeStates(a, b) {
     m.log[d] = !y ? x : { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   }
   const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
-  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = byId(gm[k] || [], o.gen[k] || [], "id"); m.gen = Object.assign({ ladder: [], passages: [], sen: [] }, gm);
+  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = byId(gm[k] || [], o.gen[k] || [], "id"); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [] }, gm);
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
   m.graded = byId(m.graded || [], o.graded || [], "k").sort((p, q) => q.t - p.t).slice(0, 20);
@@ -408,13 +417,13 @@ function drawOffline() {
   if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
   b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
 }
-addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); if (COL) pullRemote(); });
+addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); if (COL) pullRemote(); });
 addEventListener("offline", () => { ONLINE = false; drawOffline(); });
 let PERSISTED = null;
 
 /* ============ AI (Claude-hosted only) ============ */
 let AI = null;
-if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); }).catch(() => {});
+if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); }).catch(() => {});
 function aiErr(e) {
   const c = e && e.code;
   if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
@@ -438,9 +447,11 @@ async function loadData() {
   indexGen();
 }
 function indexGen() {
+  S.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [] }, S.gen); // older saves lack newer kinds
   (S.gen.ladder || []).forEach(x => LADDER.set(x.id, x));
   (S.gen.passages || []).forEach(x => PSG.set(x.id, x));
   ((S.gen || {}).sen || []).forEach(x => SEN.set(x.id, x));
+  ((S.gen || {}).mine || []).forEach(x => PSG.set(x.id, x));
 }
 const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎" };
 const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "不在你的词库 Not in your Anki list" };
@@ -658,6 +669,7 @@ function renderHome(main) {
   ${syncWarn()}
   ${gradedCard()}
   ${offwCard()}
+  ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
   ${backupNudge()}
   <div class="card"><div class="spread"><h2>练习 · Practice</h2><span class="small muted">${dueN ? dueN + " 题到期" : "没有积压"}</span></div>
     <button class="btn wide start" id="start">开始 Start</button>
@@ -675,6 +687,7 @@ function renderHome(main) {
   $$(".goal", main).forEach(b => b.onclick = () => { S.settings = Object.assign({}, S.settings, { goal: +b.dataset.goal }); save(); $$(".goal", main).forEach(x => x.classList.toggle("on", x === b)); });
   $("#light", main).onchange = e => { S.settings = Object.assign({}, S.settings, { lightTyping: e.target.checked }); save(); };
   $$("[data-offw]", main).forEach(b => b.onclick = () => checkOffline(+b.dataset.offw));
+  const sn = $("#sentnow", main); if (sn) sn.onclick = () => processSentences(true);
   const os = $("#offw-skip", main); if (os) os.onclick = skipOffline;
   const oo = $("#offw-ok", main); if (oo) oo.onclick = () => { S.offwSummary = null; save(); render(); };
   const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
@@ -1396,7 +1409,7 @@ function renderPlace(main) {
 function pickPlacementPassage() {
   const used = new Set([...Object.keys(S.reads || {}), ...(S.placementLog || []).map(r => (r.answers || []).find(a => a.sec === "read")).filter(Boolean).map(a => a.id)]);
   const list = C.placement.read;
-  return list.find(id => !used.has(id) && PSG.has(id)) || [...PSG.keys()].find(id => !used.has(id) && !PSG.get(id).gen) || list[0];
+  return list.find(id => !used.has(id) && PSG.has(id)) || [...PSG.keys()].find(id => !used.has(id) && !PSG.get(id).gen && !PSG.get(id).mine) || list[0];
 }
 function placementRead(slot, pid, next) {
   const p = PSG.get(pid);
@@ -1470,7 +1483,9 @@ const REREAD_GAP = 2 * DAY; // re-reading sooner mostly measures memory
 function renderRead(main) {
   loadCedict();
   if (READ && READ.pid) return renderPassage(main);
-  const all = [...PSG.values()];
+  if (READ && READ.add) return renderMineAdd(main);
+  if (READ && READ.grp) return renderMineText(main);
+  const all = [...PSG.values()].filter(p => !p.mine);
   const REG = REG_NAME;
   const fresh = [...all.filter(p => p.gen).reverse(), ...all.filter(p => !p.gen)].filter(p => !S.reads[p.id]);
   const lastT = r => r.lastT || r.t;
@@ -1488,11 +1503,13 @@ function renderRead(main) {
     ${AI ? `<div class="card"><span class="label">生成新短文 · New passage for you</span>
       <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting. You can leave this tab while it works; it'll appear below as 新.</p>
       <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}" data-genkey="passage" ${GEN.passageBusy ? "disabled" : ""}>${v}</button>`).join("")}</div><div id="st-passage" class="small muted">${GEN.passage || ""}</div></div>` : ""}
+    ${mineSection()}
     ${fresh.length ? `<span class="label">没读过 · New (${fresh.length})</span><div class="plist">${fresh.map(item).join("")}</div>` : ""}
     ${ready.length ? `<span class="label">可以重读 · Ready to re-read (${ready.length})</span><p class="small muted" style="margin-top:-8px">读过两天以上了。再读一遍练速度，不答题。 It's been 2+ days: read it again for speed, no questions.</p><div class="plist">${ready.map(rItem).join("")}</div>` : ""}
     ${done.length ? `<span class="label">最近读过 · Read recently (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
   $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[b.dataset.p] }; render(); window.scrollTo(0, 0); });
   $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen));
+  bindMineSection(main);
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
 function segmentText(text, gl = {}) {
@@ -1512,18 +1529,18 @@ const tokHtml = (t, k, looked) => {
 };
 function renderPassage(main) {
   const p = PSG.get(READ.pid);
-  const paras = [segmentText(p.title, p.gl || {})].concat(passageTokens(p)); // index 0 = title
+  const paras = [segmentText(p.mine ? mineTitle(p) : p.title, p.gl || {})].concat(passageTokens(p)); // index 0 = title
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>${READ.re ? `<span class="chip">重读 Re-read</span>` : ""}
     <label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></div>
     <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""}" id="rd">
       <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
       ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
-    ${READ.re ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
-  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = null; render(); };
+    ${READ.re || (p.mine && !(p.qs && p.qs.length)) ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
+  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = p.mine ? { grp: p.grp } : null; render(); };
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
   READ.paras = paras;
   bindTokens(main, p);
-  $("#done").onclick = () => READ.re ? finishReread(main, p) : passageQuiz(main, p);
+  $("#done").onclick = () => READ.re ? finishReread(main, p) : (p.mine && !(p.qs && p.qs.length)) ? finishMine(main, p) : passageQuiz(main, p);
 }
 function bindTokens(scope, p) {
   $$(".tk", scope).forEach(s => s.onclick = () => {
@@ -1571,9 +1588,9 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const multi = rds.length > 1;
   const rdHtml = r => `<div class="rd"><b>${esc(r.py)}</b>${multi && r.here ? '<span class="rtag here">这里 here</span>' : ""}${multi && r.anki && !r.here ? '<span class="rtag">你学过 Anki</span>' : ""}<span>${esc(r.gl)}</span></div>`;
   sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
-    ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? "词典里没有这个整词 — see the parts." : "完整词典加载中… Full dictionary still loading; see the parts."}</p>`}
-    <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more ? `<button class="btn ghost" id="more">更多 More</button>` : ""}</div>
-    <div id="moreb" hidden>
+    ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? `词典里没有这个词 · This word isn't in the dictionary.${chars.length > 1 || parts.length ? "<br>下面是每个部分的意思 · Here's what each part means." : ""}` : "完整词典还在加载… The full dictionary is still loading."}</p>`}
+    <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more && rds.length ? `<button class="btn ghost" id="more">更多 More</button>` : ""}</div>
+    <div id="moreb" ${rds.length ? "hidden" : ""}>
     ${rds.length > 3 ? `<div class="rds">${rds.slice(3).map(rdHtml).join("")}</div>` : ""}
     ${parts.length ? `<div class="chars">${parts.map(o => `<div><span class="zh">${esc(o.x)}</span>${o.d ? esc(o.d.py) + " · " + esc(o.d.gl) : ""}</div>`).join("")}</div>` : ""}
     ${chars.length > 1 ? `<div class="chars" style="margin-top:6px">${chars.map(c => `<div><span class="zh">${esc(c.ch)}</span>${esc(c.py)} ${c.gl ? "· " + esc(c.gl) : ""}</div>`).join("")}</div>` : ""}</div></div>`;
@@ -1587,9 +1604,22 @@ function openSheet(p, paras, pi, ti, tokEl) {
       sh.style.left = Math.max(16, Math.min(r.left, window.innerWidth - w - 16)) + "px";
       sh.style.top = (r.bottom + h + 12 < window.innerHeight ? r.bottom + 8 : Math.max(8, r.top - h - 8)) + "px";
     } else {
-      // keep the tapped word visible above the sheet
-      document.body.style.paddingBottom = h + 24 + "px";
-      if (r && r.bottom > window.innerHeight - h - 16) window.scrollBy({ top: r.bottom - (window.innerHeight - h - 32), behavior: "smooth" });
+      // Phone: never cover the tapped word and never scroll the page. Word in the upper part → sheet at the
+      // bottom; word lower down → card just above the word. Either way it's capped to the free space and
+      // scrolls inside itself (e.g. after 更多).
+      const inner = sh.querySelector(".in"), vh = window.innerHeight;
+      const above = r ? r.top - 16 : 0, below = r ? vh - r.bottom - 16 : vh;
+      inner.style.maxHeight = "";
+      if (!r || below >= above) {
+        sh.classList.remove("popm"); sh.style.top = "";
+        inner.style.maxHeight = Math.max(140, Math.min(below, vh * 0.6)) + "px";
+        document.body.style.paddingBottom = inner.offsetHeight + 24 + "px";
+      } else {
+        sh.classList.add("popm");
+        inner.style.maxHeight = Math.max(140, Math.min(above, vh * 0.6)) + "px";
+        sh.style.top = Math.max(8, r.top - inner.offsetHeight - 8) + "px";
+        document.body.style.paddingBottom = "";
+      }
     }
   };
   place();
@@ -1598,6 +1628,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   $("#addb", sh).onclick = () => {
     if (S.bank[word]) { removeFromBank(word); toast("已移出复习 Removed"); closeSheet(); return; }
     S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? L.gl : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
+    if (p.tags && p.tags.length) S.bank[word].tags = p.tags.slice();
     save(); closeSheet();
     toastAction("已加入 " + word, "撤销 Undo", () => { removeFromBank(word); toast("已撤销 Undone"); });
   };
@@ -1615,15 +1646,16 @@ function passageQuiz(main, p) {
     if (qi >= p.qs.length) {
       if (first) {
         S.reads[p.id] = { cpm, score, t: now(), looked: READ.looked.size };
-        if (sec < 20 * 60) pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
+        if (sec < 20 * 60 && !p.mine) pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
       } else { const r = S.reads[p.id]; r.re = (r.re || 0) + 1; r.lastCpm = cpm; }
       logDay(Math.min(sec, 900), score >= 2); save();
-      main.innerHTML = `<div class="card"><span class="label">${first ? "读完 · Finished" : "重读 · Re-read (doesn't count toward reading speed)"}</span>
+      main.innerHTML = `<div class="card"><span class="label">${p.mine ? "读完 · Finished (your own texts don't count toward reading speed)" : first ? "读完 · Finished" : "重读 · Re-read (doesn't count toward reading speed)"}</span>
         <div class="stats3"><div class="stat"><b>${cpm}</b><span>字/分钟</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
         <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>
         <button class="btn wide" id="again">再读一遍（看看快了多少）Re-read</button><button class="btn ghost wide" id="list">回到列表 Back to list</button></div>`;
       $("#again").onclick = () => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: true }; render(); window.scrollTo(0, 0); };
-      $("#list").onclick = () => { READ = null; render(); };
+      $("#list").onclick = () => { READ = p.mine ? { grp: p.grp } : null; render(); };
+      if (p.mine) mineNextButton(main, p);
       return;
     }
     const q = p.qs[qi], right = q.opts[0], opts = shuffle(q.opts);
@@ -1659,7 +1691,352 @@ function finishReread(main, p) {
     ${hist.length > 2 ? `<p class="small muted">每次 Each read: ${hist.join(" → ")}</p>` : ""}
     ${soon ? `<p class="small muted">离上次不到两天，有一部分是记忆。 Less than 2 days since last time, so part of this is memory.</p>` : ""}`}
     <button class="btn wide" id="list">回到列表 Back to list</button></div>`;
-  $("#list").onclick = () => { READ = null; render(); window.scrollTo(0, 0); };
+  $("#list").onclick = () => { READ = p.mine ? { grp: p.grp } : null; render(); window.scrollTo(0, 0); };
+}
+/* ============ your own texts (我的文章) ============
+   Paste any text; it's split into parts of ~400 characters at paragraph/sentence breaks, up to ~10 parts
+   (~4,000 characters) per text; anything longer becomes further texts named "<base>（1/3）", "（2/3）"…
+   Each part is stored like a passage (S.gen.mine, synced and carried in copy codes) with mine:true, grp, part, np.
+   Offline: words are split with the on-device dictionary; read for speed only (never counted in the speed stat).
+   Online: 加问题和注释 asks Claude for comprehension questions, readings in context and a translation, per part. */
+const MINE_PART = 400, MINE_PARTS = 10, MINE_TEXT_MAX = 4200, MINE_MAX_CHARS = 100000;
+const charCount = t => Array.from(String(t || "")).filter(c => !/\s/.test(c)).length;
+function parseTags(str) {
+  return [...new Set(String(str || "").split(/[\s,，、;；#]+/).map(t => t.trim()).filter(Boolean).map(t => t.slice(0, 12)))].slice(0, 8);
+}
+function allTags() {
+  const n = {};
+  for (const p of (S.gen.mine || [])) if (p.part === 0) for (const t of p.tags || []) n[t] = (n[t] || 0) + 1;
+  for (const b of Object.values(S.bank)) for (const t of b.tags || []) n[t] = (n[t] || 0) + 1;
+  return Object.keys(n).sort((a, b) => n[b] - n[a]);
+}
+function tagInput(id, value) {
+  const sug = allTags();
+  return `<input class="inp" id="${id}" value="${esc(value || "")}" placeholder="标签 Tags (optional, separate with spaces), e.g. 上海 菜单" autocapitalize="off" autocorrect="off">
+    ${sug.length ? `<div class="row" style="gap:6px">${sug.slice(0, 12).map(t => `<button class="tagc" data-addtag="${esc(t)}" data-for="${id}">${esc(t)}</button>`).join("")}</div>` : ""}`;
+}
+function bindTagInput(scope) {
+  $$("[data-addtag]", scope).forEach(b => b.onclick = () => { const i = $("#" + b.dataset.for, scope); const tags = parseTags(i.value); if (!tags.includes(b.dataset.addtag)) tags.push(b.dataset.addtag); i.value = tags.join(" "); i.dispatchEvent(new Event("change")); });
+}
+// split pasted text → texts → parts → paragraphs (plain strings)
+function splitMine(raw) {
+  const paras = String(raw || "").replace(/\r/g, "").split(/\n+/).map(x => x.trim()).filter(Boolean);
+  // sentences, never longer than ~1.5 parts (very long sentences are cut at commas, then hard)
+  const units = [];
+  paras.forEach((para, pi) => {
+    const sents = para.match(/[^。！？!?；;…]+[。！？!?；;…」』”"）)]*|[。！？!?；;…]+/g) || [para];
+    for (let s of sents) {
+      while (charCount(s) > MINE_PART * 1.5) {
+        const arr = Array.from(s); let cut = -1, n = 0;
+        for (let i = 0; i < arr.length; i++) { if (!/\s/.test(arr[i])) n++; if (n >= MINE_PART && /[，,、：:]/.test(arr[i])) { cut = i + 1; break; } if (n >= MINE_PART * 1.4) { cut = i + 1; break; } }
+        if (cut < 0) break;
+        units.push({ pi, s: arr.slice(0, cut).join("") }); s = arr.slice(cut).join("");
+      }
+      if (s.trim()) units.push({ pi, s });
+    }
+  });
+  // parts: fill to ~400 characters
+  const parts = []; let cur = [], curN = 0, lastPi = -1;
+  const flush = () => { if (cur.length) parts.push(cur); cur = []; curN = 0; lastPi = -1; };
+  for (const u of units) {
+    const n = charCount(u.s);
+    if (curN && curN + n > MINE_PART * 1.15) flush();
+    if (u.pi === lastPi && cur.length) cur[cur.length - 1] += u.s; else cur.push(u.s);
+    lastPi = u.pi; curN += n;
+  }
+  flush();
+  // texts: up to 10 parts / ~4,000 characters each
+  const texts = []; let tx = [], txN = 0;
+  for (const part of parts) {
+    const n = charCount(part.join(""));
+    if (tx.length && (tx.length >= MINE_PARTS || txN + n > MINE_TEXT_MAX)) { texts.push(tx); tx = []; txN = 0; }
+    tx.push(part); txN += n;
+  }
+  if (tx.length) texts.push(tx);
+  return texts;
+}
+function mineBaseName(raw) {
+  const t = Array.from(String(raw).replace(/\s+/g, "")).slice(0, 10).join("");
+  return t + (charCount(raw) > 10 ? "…" : "");
+}
+function mineTitle(p) { return p.title + (p.np > 1 ? ` · 第${p.part + 1}／${p.np}部分` : ""); }
+const mineChars = () => (S.gen.mine || []).reduce((a, p) => a + charCount(p.paras.join("").replace(/[|\/]/g, "")), 0);
+async function saveMine(raw, title, tags) {
+  const n = charCount(raw);
+  if (!n) return { err: "还没有文字 · Nothing pasted yet." };
+  if (mineChars() + n > MINE_MAX_CHARS) return { err: `放不下了 · That would go over the ${MINE_MAX_CHARS.toLocaleString()}-character limit for your own texts (now ${mineChars().toLocaleString()}). Delete some old texts first.` };
+  await loadCedict(); // better word splitting when the full dictionary is there
+  const texts = splitMine(raw), base = (title || "").trim() || mineBaseName(raw), stamp = now().toString(36) + uid4();
+  const added = [];
+  texts.forEach((parts, ti) => {
+    const grp = "M" + stamp + ti, name = texts.length > 1 ? `${base}（${ti + 1}／${texts.length}）` : base;
+    parts.forEach((paras, pi) => {
+      const p = { id: grp + "p" + pi, grp, part: pi, np: parts.length, title: name, tags: tags.slice(), mine: true, reg: "mine", t: now() + ti,
+        paras: paras.map(x => segmentText(x).join("|")), gl: {}, en: "" };
+      S.gen.mine.push(p); PSG.set(p.id, p);
+    });
+    added.push(grp);
+  });
+  save();
+  return { added, texts: texts.length, parts: texts.reduce((a, t) => a + t.length, 0) };
+}
+function mineGroups() {
+  const g = {};
+  for (const p of (S.gen.mine || [])) (g[p.grp] = g[p.grp] || []).push(p);
+  return Object.values(g).map(parts => parts.sort((a, b) => a.part - b.part)).sort((a, b) => b[0].t - a[0].t);
+}
+let MINE_TAG = "";
+function mineSection() {
+  const groups = mineGroups(), tags = [...new Set(groups.flatMap(g => g[0].tags || []))];
+  const shown = MINE_TAG ? groups.filter(g => (g[0].tags || []).includes(MINE_TAG)) : groups;
+  return `<div class="spread"><span class="label">我的文章 · Your texts (${groups.length})</span><button class="btn soft" id="mineadd" style="min-height:38px;padding:8px 14px">+ 添加 Add</button></div>
+    ${!groups.length ? `<p class="small muted" style="margin-top:-8px">Paste anything you want to read: a WeChat post, a menu, an article. On iPhone you can copy text out of a photo too (press and hold the text in the photo).</p>` : ""}
+    ${tags.length ? `<div class="row" style="gap:6px;margin-top:-6px"><button class="tagc ${!MINE_TAG ? "on" : ""}" data-mtag="">全部 All</button>${tags.map(t => `<button class="tagc ${MINE_TAG === t ? "on" : ""}" data-mtag="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
+    ${shown.length ? `<div class="plist">${shown.map(g => {
+      const read = g.filter(p => S.reads[p.id]).length, p0 = g[0];
+      return `<button class="pitem ${read === g.length ? "done" : ""}" data-grp="${esc(p0.grp)}"><div class="row"><span class="chip">我的</span>${!read ? `<span class="chip new">新 New</span>` : ""}${(p0.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}<span class="small muted">${g.length > 1 ? `${read}/${g.length} 部分已读` : read ? "✓ 读过" : ""} · ${charCount(g.map(p => p.paras.join("")).join("").replace(/[|\/]/g, ""))} 字</span></div><h3>${esc(p0.title)}</h3></button>`;
+    }).join("")}</div>` : ""}`;
+}
+function bindMineSection(main) {
+  const a = $("#mineadd", main); if (a) a.onclick = () => { READ = { add: true }; render(); window.scrollTo(0, 0); };
+  $$("[data-mtag]", main).forEach(b => b.onclick = () => { MINE_TAG = b.dataset.mtag; render(); });
+  $$("[data-grp]", main).forEach(b => b.onclick = () => { READ = { grp: b.dataset.grp }; render(); window.scrollTo(0, 0); });
+}
+function renderMineAdd(main) {
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button></div>
+    <div class="card"><span class="label">添加我的文章 · Add your own text</span>
+      <textarea class="inp" id="mtext" rows="9" lang="zh-CN" placeholder="把文字粘贴到这里 Paste the text here" autocapitalize="off" autocorrect="off" spellcheck="false" style="font-family:var(--f-zh);line-height:1.7"></textarea>
+      <p class="small muted" id="mcount">0 字</p>
+      <input class="inp" id="mtitle" placeholder="标题 Title (optional)">
+      ${tagInput("mtags", "")}
+      <button class="btn" id="msave">保存 Save</button><div id="merr"></div>
+      <p class="small muted">Long texts are read in parts of about ${MINE_PART} characters, up to ${MINE_PARTS} parts per text; anything longer becomes further texts. ${AI ? "You can add comprehension questions afterwards (加问题)." : "Comprehension questions can be added in the online version."}</p></div>`;
+  $("#back").onclick = () => { READ = null; render(); };
+  bindTagInput(main);
+  const t = $("#mtext");
+  t.oninput = () => {
+    const n = charCount(t.value), texts = n ? splitMine(t.value) : [];
+    const parts = texts.reduce((a, x) => a + x.length, 0);
+    $("#mcount").textContent = !n ? "0 字" : `${n} 字 → ${texts.length > 1 ? `${texts.length} 篇 texts, ` : ""}${parts} 部分 part${parts > 1 ? "s" : ""}`;
+  };
+  $("#msave").onclick = async () => {
+    $("#msave").disabled = true;
+    const r = await saveMine(t.value, $("#mtitle").value, parseTags($("#mtags").value));
+    if (r.err) { $("#merr").innerHTML = `<div class="fb no"><span>${r.err}</span></div>`; $("#msave").disabled = false; return; }
+    toast(r.texts > 1 ? `已保存 ${r.texts} 篇 · Saved as ${r.texts} texts` : "已保存 Saved");
+    READ = { grp: r.added[0] }; render(); window.scrollTo(0, 0);
+  };
+}
+let MINE_Q = null; // {grp, done, n}
+function renderMineText(main) {
+  const g = mineGroups().find(x => x[0].grp === READ.grp);
+  if (!g) { READ = null; return render(); }
+  const p0 = g[0], next = g.find(p => !S.reads[p.id]) || null, needQ = g.filter(p => !(p.qs && p.qs.length));
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button></div>
+    <div class="card"><span class="label">我的文章 · Your text</span><h2 class="zh">${esc(p0.title)}</h2>
+      ${tagInput("ttags", (p0.tags || []).join(" "))}
+      <button class="btn" id="go">${next ? (S.reads[g[0].id] ? `继续读 Continue: 第${next.part + 1}部分` : g.length > 1 ? "开始读 Start: 第1部分" : "开始读 Start") : "全部读过 ✓ Read again from part 1"}</button>
+      ${g.length > 1 ? `<div class="stack" style="gap:6px">${g.map(p => { const r = S.reads[p.id]; return `<button class="pitem ${r ? "done" : ""}" data-part="${esc(p.id)}" style="padding:10px 14px"><div class="row"><b>第${p.part + 1}部分</b><span class="small muted">${charCount(p.paras.join("").replace(/[|\/]/g, ""))} 字${r ? ` · ✓ ${r.cpm} 字/分` : ""}${p.qs && p.qs.length ? " · 有问题" : ""}</span></div><span class="small muted zh">${esc(p.paras.join("").replace(/[|\/]/g, "").slice(0, 24))}…</span></button>`; }).join("")}</div>` : ""}
+      ${AI ? `<div class="stack" style="gap:6px"><button class="btn soft" id="addq" ${MINE_Q || !needQ.length ? "disabled" : ""}>${needQ.length ? `加问题和注释 Add questions & notes (${needQ.length} part${needQ.length > 1 ? "s" : ""} = ${needQ.length} Claude request${needQ.length > 1 ? "s" : ""})` : "问题和注释都有了 ✓ Questions added"}</button><div id="qst" class="small muted">${MINE_Q && MINE_Q.grp === p0.grp ? `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…` : ""}</div>
+        <p class="small muted">Claude writes 3 comprehension questions, a translation, and the right reading of words used in an unusual way. Without it the text still works: tap words for the dictionary.</p></div>` : ""}
+      <button class="btn ghost" id="del">删除这篇 Delete this text</button></div>`;
+  $("#back").onclick = () => { READ = null; render(); };
+  bindTagInput(main);
+  $("#ttags").onchange = () => { const tags = parseTags($("#ttags").value); g.forEach(p => p.tags = tags); save(); };
+  const open = (p, re) => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!re }; render(); window.scrollTo(0, 0); };
+  $("#go").onclick = () => next ? open(next) : open(g[0], true);
+  $$("[data-part]", main).forEach(b => b.onclick = () => { const p = PSG.get(b.dataset.part); open(p, !!S.reads[p.id]); });
+  const aq = $("#addq"); if (aq) aq.onclick = () => mineQuestions(g);
+  $("#del").onclick = () => {
+    const ids = new Set(g.map(p => p.id)), saved = g.slice();
+    S.gen.mine = S.gen.mine.filter(p => !ids.has(p.id)); ids.forEach(id => PSG.delete(id)); save();
+    READ = null; render();
+    toastAction("已删除 Deleted", "撤销 Undo", () => { S.gen.mine.push(...saved); saved.forEach(p => PSG.set(p.id, p)); save(); render(); }, 5000);
+  };
+}
+// finishing a part with no questions: speed shown, not counted in the reading-speed stat
+function finishMine(main, p) {
+  closeSheet();
+  const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
+  const sec = READ.timer.stop() / 1000, cpm = Math.round(n / (sec / 60));
+  if (!S.reads[p.id]) S.reads[p.id] = { cpm, score: null, t: now(), looked: READ.looked.size, mine: true };
+  logDay(Math.min(sec, 900), true); save();
+  main.innerHTML = `<div class="card"><span class="label">读完 · Finished</span>
+    <div class="stats3"><div class="stat"><b>${sec > 20 * 60 ? "—" : cpm}</b><span>字/分钟</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div><div class="stat"><b>${p.np > 1 ? `${p.part + 1}／${p.np}` : "✓"}</b><span>${p.np > 1 ? "部分" : "读完"}</span></div></div>
+    <p class="small muted">Your own texts don't count toward your reading-speed stat.</p>
+    <button class="btn ghost wide" id="list">回到文章 Back to the text</button></div>`;
+  $("#list").onclick = () => { READ = { grp: p.grp }; render(); window.scrollTo(0, 0); };
+  mineNextButton(main, p);
+}
+function mineNextButton(main, p) {
+  const nx = (S.gen.mine || []).find(x => x.grp === p.grp && x.part === p.part + 1);
+  if (!nx) return;
+  const b = document.createElement("button"); b.className = "btn wide"; b.textContent = `下一部分 Next: 第${nx.part + 1}部分`;
+  b.onclick = () => { READ = { pid: nx.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[nx.id] }; render(); window.scrollTo(0, 0); };
+  const card = $(".card", main); card.insertBefore(b, $("#list", card));
+}
+async function mineQuestions(g) {
+  if (MINE_Q || !AI) return;
+  const todo = g.filter(p => !(p.qs && p.qs.length));
+  MINE_Q = { grp: g[0].grp, done: 0, n: todo.length }; render();
+  let failed = null;
+  for (const p of todo) {
+    const plain = p.paras.map(x => x.replace(/[|\/]/g, ""));
+    const prompt = `Here is part of a Chinese text an advanced learner (knows HSK 1–6 well; reads slowly) wants to read. Do NOT change the text.
+${plain.map((x, i) => `Paragraph ${i + 1}: ${x}`).join("\n")}
+Reply with only JSON:
+{"paras":["the same paragraphs, split into words/chunks with | between EVERY token (punctuation is its own token)"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"]}]}
+Rules: keep every character exactly as given; gl covers slang, names, HSK7+ words, and every word whose pronunciation or meaning here differs from its most common one (pinyin and meaning used in THIS context); exactly 3 questions about the content, correct answer first, wrong options that fit the topic.`;
+    try {
+      const j = await AI.json(prompt, { modelTier: "default", cache: false });
+      if (!j || !Array.isArray(j.qs)) throw { code: "invalid_json" };
+      const same = Array.isArray(j.paras) && j.paras.length === plain.length && j.paras.every((x, i) => String(x).replace(/[|\/\s]/g, "") === plain[i].replace(/\s/g, ""));
+      if (same) p.paras = j.paras.map(String); // Claude's word splitting, only if the text is unchanged
+      p.gl = j.gl && typeof j.gl === "object" ? j.gl : {};
+      p.en = String(j.en || "");
+      p.qs = j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) }));
+      save();
+    } catch (e) { failed = e; break; }
+    MINE_Q.done++; if (VIEW === "read" && READ && READ.grp === g[0].grp) { const q = $("#qst"); if (q) q.innerHTML = `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…`; }
+  }
+  MINE_Q = null;
+  toast(failed ? aiErr(failed) : "问题和注释加好了 · Questions added");
+  if (VIEW === "read") render();
+}
+
+/* ============ adding words yourself (加生词) ============
+   Words with a sentence need no Claude: the card is your word highlighted in your sentence, pinyin and meanings
+   from the dictionary on the device. Words without one get an example sentence from Claude automatically when
+   online (20 words per request, at most 200 a day; the rest wait on the home screen). */
+const SENT_DAY_MAX = 200, SENT_BATCH = 20;
+let BANK_ADD = null; // {step:"form"|"pick", rows, sentence, tags}
+function splitWords(str) { return [...new Set(String(str || "").split(/[\s,，、;；\/]+/).map(w => w.trim()).filter(w => w && !Array.from(w).every(isPunct)))].slice(0, 100); }
+function bankAddHtml() {
+  if (!BANK_ADD) return "";
+  if (BANK_ADD.step === "form") return `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px">
+      <textarea class="inp" id="aw" rows="3" lang="zh-CN" placeholder="生词 Words: one or more, separated by spaces or new lines" autocapitalize="off" autocorrect="off" spellcheck="false" style="font-family:var(--f-zh)">${esc(BANK_ADD.words || "")}</textarea>
+      <textarea class="inp" id="as" rows="2" lang="zh-CN" placeholder="在哪儿看到的句子 The sentence you saw it in (optional)" autocapitalize="off" autocorrect="off" spellcheck="false" style="font-family:var(--f-zh)">${esc(BANK_ADD.sentence || "")}</textarea>
+      ${tagInput("at", BANK_ADD.tags || "")}
+      <div class="row"><button class="btn" id="anext">下一步 Next</button><button class="btn ghost" id="acancel">取消 Cancel</button></div></div>`;
+  const rows = BANK_ADD.rows;
+  return `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px">
+    ${rows.map((r, i) => `<div class="stack" style="gap:4px;padding:8px 10px;border:1px solid var(--line);border-radius:10px">
+      <div class="row" style="gap:8px"><span class="zh" style="font-size:20px">${esc(r.w)}</span>${r.dup ? `<span class="small muted">已经在复习里 · already saved (will be updated)</span>` : ""}</div>
+      ${r.rds.length > 1 ? `<select class="inp" data-ri="${i}" style="padding:6px 8px">${r.rds.map((x, k) => `<option value="${k}" ${k === r.pick ? "selected" : ""}>${esc(x.py)} · ${esc(x.gl.slice(0, 60))}</option>`).join("")}</select>` : r.rds.length ? `<span class="small">${esc(r.rds[0].py)} · ${esc(r.rds[0].gl.slice(0, 80))}</span>` : `<span class="small muted">词典里没有 · Not in the dictionary${AI ? "; Claude will add pinyin and a meaning" : "; Claude can add pinyin and a meaning once you're online"}</span>`}
+      <span class="small muted">${r.inSent ? "例句：你的句子 · uses your sentence" : BANK_ADD.sentence ? "你的句子里没有这个词 · not in your sentence: Claude will write one" : "Claude 会写一个例句 · Claude will write an example sentence"}${!r.inSent && !AI ? " (when you're online)" : ""}</span></div>`).join("")}
+    <div class="row"><button class="btn" id="aok">加入 Add ${rows.length} 个</button><button class="btn ghost" id="aback">← 改一改 Edit</button></div></div>`;
+}
+function bindBankAdd(card, redraw) {
+  const btn = $("#bankadd", card); if (btn) btn.onclick = () => { BANK_ADD = BANK_ADD ? null : { step: "form" }; redraw(); };
+  if (!BANK_ADD) return;
+  if (BANK_ADD.step === "form") {
+    bindTagInput(card);
+    $("#acancel", card).onclick = () => { BANK_ADD = null; redraw(); };
+    $("#anext", card).onclick = async () => {
+      const words = splitWords($("#aw", card).value), sentence = $("#as", card).value.trim();
+      Object.assign(BANK_ADD, { words: $("#aw", card).value, sentence, tags: $("#at", card).value });
+      if (!words.length) { $("#aw", card).focus(); return; }
+      await loadCedict();
+      BANK_ADD.rows = words.map(w => { const A = lookupAll(w); const rds = A ? A.readings : []; return { w, rds, pick: 0, inSent: !!sentence && sentence.includes(w), dup: !!S.bank[w] }; });
+      BANK_ADD.step = "pick"; redraw();
+    };
+    return;
+  }
+  $$("[data-ri]", card).forEach(sel => sel.onchange = () => { BANK_ADD.rows[+sel.dataset.ri].pick = +sel.value; });
+  $("#aback", card).onclick = () => { BANK_ADD.step = "form"; redraw(); };
+  $("#aok", card).onclick = () => {
+    const tags = parseTags(BANK_ADD.tags);
+    for (const r of BANK_ADD.rows) {
+      const rd = r.rds[r.pick] || null, old = S.bank[r.w] || {};
+      S.bank[r.w] = Object.assign({}, old, { zh: r.w, py: rd ? rd.py : old.py || "", gl: rd ? rd.gl : old.gl || "", s: r.inSent ? BANK_ADD.sentence : old.s && old.s !== r.w ? old.s : "", t: now(), src: old.src || "manual",
+        tags: [...new Set([...(old.tags || []), ...tags])] });
+      S.bank[r.w].needS = !S.bank[r.w].s;
+      if (!S.bank[r.w].tags.length) delete S.bank[r.w].tags;
+    }
+    const n = BANK_ADD.rows.length; BANK_ADD = null; save(); redraw();
+    toast(`已加入 ${n} 个 · Added ${n}`);
+    processSentences();
+  };
+}
+let SENT_RUN = null;
+const wordsNeedingSentence = () => Object.values(S.bank).filter(b => b.needS || !b.s);
+function sentLeftToday() { const d = S.sentDay && S.sentDay.d === dayKey() ? S.sentDay.n : 0; return Math.max(0, SENT_DAY_MAX - d); }
+async function processSentences(force) {
+  if (SENT_RUN || !AI || !ONLINE) return;
+  let list = wordsNeedingSentence().sort((a, b) => b.t - a.t);
+  if (!list.length) return;
+  if (!force) list = list.slice(0, sentLeftToday());
+  if (!list.length) return;
+  SENT_RUN = { n: list.length, done: 0 };
+  if (VIEW === "home") render();
+  for (let i = 0; i < list.length; i += SENT_BATCH) {
+    const batch = list.slice(i, i + SENT_BATCH);
+    const prompt = `For each Chinese word below, write ONE natural example sentence (simplified Chinese, 10–25 characters) that uses the word exactly as written, in the given meaning if one is given, in the register the word normally belongs to (everyday for colloquial words, formal for written-register words). The learner is advanced (HSK 6 recognition), so the rest of the sentence can use normal vocabulary. If pinyin or meaning is missing, supply them.
+${batch.map((b, k) => `${k + 1}. ${b.zh}${b.py ? ` (${b.py})` : ""}${b.gl ? ` — ${b.gl.slice(0, 80)}` : ""}`).join("\n")}
+Reply with only a JSON array: [{"i": number, "s": "sentence", "py": "pinyin with tone marks", "gl": "short English meaning"}]`;
+    try {
+      const arr = await AI.json(prompt, { modelTier: "default", effort: "low" });
+      if (!Array.isArray(arr)) throw { code: "invalid_json" };
+      batch.forEach((b, k) => {
+        const x = arr.find(y => y && +y.i === k + 1); const cur = S.bank[b.zh];
+        if (!x || !cur || typeof x.s !== "string" || !x.s.includes(b.zh)) return;
+        cur.s = x.s; cur.needS = false; cur.sAI = true;
+        if (!cur.py && x.py) cur.py = String(x.py);
+        if (!cur.gl && x.gl) cur.gl = String(x.gl);
+      });
+      const d = dayKey(); S.sentDay = { d, n: (S.sentDay && S.sentDay.d === d ? S.sentDay.n : 0) + batch.length };
+      save();
+    } catch (e) { if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
+    SENT_RUN.done = Math.min(list.length, i + SENT_BATCH);
+    if (VIEW === "home") render();
+  }
+  SENT_RUN = null;
+  if (VIEW === "home" || VIEW === "me") render();
+}
+function sentWaitHtml() {
+  const left = wordsNeedingSentence().length;
+  if (!HOSTED || (!left && !SENT_RUN)) return "";
+  if (SENT_RUN) return `<p class="small"><span class="spin"></span> 🔤 Claude 在写例句… Writing example sentences ${SENT_RUN.done}/${SENT_RUN.n}</p>`;
+  const req = Math.ceil(left / SENT_BATCH);
+  return `<div class="stack" style="gap:6px"><span class="small">🔤 <b>${left}</b> 个生词还没有例句 · word${left > 1 ? "s" : ""} without an example sentence</span>
+    ${!AI || !ONLINE ? `<span class="small muted">需要 Claude，联网后会自动写 · Needs Claude; written automatically once you're online.</span>` : `<span class="small muted">今天自动写的已经到 ${SENT_DAY_MAX} 个 · Today's automatic ${SENT_DAY_MAX} are done. They still work as plain word cards meanwhile.</span><button class="btn soft" id="sentnow">现在写 Write them now (about ${req} request${req > 1 ? "s" : ""})</button>`}</div>`;
+}
+
+/* ============ export saved words for Anki / Pleco ============ */
+function exportWords(format, scope) {
+  let list = Object.values(S.bank).sort((a, b) => a.t - b.t);
+  if (scope === "new") list = list.filter(b => b.t > (S.lastWordExport || 0));
+  else if (scope && scope.startsWith("tag:")) list = list.filter(b => (b.tags || []).includes(scope.slice(4)));
+  if (!list.length) { toast("没有可导出的词 · No words to export"); return; }
+  const clean = x => String(x || "").replace(/[\t\r\n]+/g, " ").trim();
+  let text, name;
+  if (format === "anki") {
+    text = "#separator:tab\n#html:false\n#tags column:5\n" + list.map(b => [b.zh, b.py, b.gl, b.s && b.s !== b.zh ? b.s : "", (b.tags || []).map(t => t.replace(/\s/g, "_")).join(" ")].map(clean).join("\t")).join("\n") + "\n";
+    name = `zhongwen-words-anki-${dayKey()}.txt`;
+  } else {
+    const groups = {}; for (const b of list) (groups[(b.tags || [])[0] || ""] = groups[(b.tags || [])[0] || ""] || []).push(b);
+    text = Object.entries(groups).map(([t, bs]) => `//中文练功房${t ? "/" + t : ""}\n` + bs.map(b => [b.zh, b.py, b.gl + (b.s && b.s !== b.zh ? ` · 例：${b.s}` : "")].map(clean).join("\t")).join("\n")).join("\n") + "\n";
+    name = `zhongwen-words-pleco-${dayKey()}.txt`;
+  }
+  const done = () => { S.lastWordExport = now(); save(); toast(`已导出 ${list.length} 个 · Exported ${list.length}`); };
+  saveTextFile(name, text).then(ok => { if (ok) done(); });
+}
+async function saveTextFile(name, text) {
+  try {
+    if (HOSTED) {
+      const dl = await claude.use("downloads");
+      if (!dl) { toast("这里不能保存文件 · Saving files isn't available here"); return false; }
+      await dl.save({ filename: name, data: text });
+      return true;
+    }
+    const file = new File([text], name, { type: "text/plain" });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && /iP(hone|ad|od)|Android/.test(navigator.userAgent)) { await navigator.share({ files: [file] }); return true; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    return true;
+  } catch (e) {
+    if (e && (e.code === "declined" || e.name === "AbortError")) return false;
+    toast("没能保存文件 · Couldn't save the file"); return false;
+  }
 }
 function targetWords(n) {
   const pool = [];
@@ -1734,26 +2111,40 @@ function renderMe(main) {
   const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
   bindStock();
 }
-/* ---------- saved words: newest 20, the rest behind "show all" (with search) ---------- */
+/* ---------- saved words: newest 20, the rest behind "show all" (with search); add words; tags; export ---------- */
 const BANK_SHOW = 20;
-let BANK_ALL = false, BANK_Q = "";
+let BANK_ALL = false, BANK_Q = "", BANK_TAG = "", BANK_EXP = false;
 function bankCard() {
-  const all = Object.values(S.bank).sort((a, b) => b.t - a.t), n = all.length;
-  const head = `<span class="label">阅读生词 · Words you saved (${n})</span>`;
-  if (!n) return head + `<p class="small muted">Tap words in 阅读 and choose 加入复习 to add them here.</p>`;
+  const every = Object.values(S.bank).sort((a, b) => b.t - a.t);
+  const tags = [...new Set(every.flatMap(b => b.tags || []))];
+  if (BANK_TAG && !tags.includes(BANK_TAG)) BANK_TAG = "";
+  const all = BANK_TAG ? every.filter(b => (b.tags || []).includes(BANK_TAG)) : every, n = all.length;
+  const head = `<div class="spread"><span class="label">阅读生词 · Words you saved (${every.length})</span><button class="btn soft" id="bankadd" style="min-height:38px;padding:8px 14px">${BANK_ADD ? "收起 Close" : "+ 加生词 Add"}</button></div>` + bankAddHtml();
+  if (!every.length) return head + `<p class="small muted">Tap words in 阅读 and choose 加入复习, or add words you met anywhere with + 加生词.</p>`;
   const q = BANK_Q.trim();
   const list = !BANK_ALL ? all.slice(0, BANK_SHOW) : q ? all.filter(b => b.zh.includes(q) || (b.py || "").toLowerCase().replace(/\s/g, "").includes(q.toLowerCase().replace(/\s/g, "")) || (b.gl || "").toLowerCase().includes(q.toLowerCase())) : all;
-  const chips = list.map(b => `<span class="chip" style="font-size:14px;padding:5px 6px 5px 11px"><span class="zh">${esc(b.zh)}</span><button class="rmw" data-w="${esc(b.zh)}" aria-label="移出 ${esc(b.zh)}" style="padding:0 4px;color:var(--muted)">×</button></span>`).join("");
-  return head + (BANK_ALL ? `<input id="bankq" type="search" value="${esc(BANK_Q)}" placeholder="搜索 Search: 汉字, pinyin or English" style="font:inherit;font-size:16px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%">` : "")
+  const chips = list.map(b => `<span class="chip" style="font-size:14px;padding:5px 6px 5px 11px"><span class="zh">${esc(b.zh)}</span>${b.needS || !b.s ? `<span title="no example sentence yet" style="color:var(--muted);font-size:11px">·</span>` : ""}<button class="rmw" data-w="${esc(b.zh)}" aria-label="移出 ${esc(b.zh)}" style="padding:0 4px;color:var(--muted)">×</button></span>`).join("");
+  const exp = BANK_EXP ? `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px"><span class="small"><b>导出 Export</b> a file you can import into Anki or Pleco: word, pinyin, meaning, example sentence, tags.</span>
+      <select class="inp" id="expscope"><option value="all">全部 All ${every.length}</option><option value="new">上次导出后新加的 Added since last export (${every.filter(b => b.t > (S.lastWordExport || 0)).length})</option>${tags.map(t => `<option value="tag:${esc(t)}">标签 Tag: ${esc(t)} (${every.filter(b => (b.tags || []).includes(t)).length})</option>`).join("")}</select>
+      <div class="row"><button class="btn soft" data-exp="anki">Anki 文件</button><button class="btn soft" data-exp="pleco">Pleco 文件</button></div>
+      <p class="small muted">Anki: File → Import, choose the file (fields are word, pinyin, meaning, sentence; the 5th column is tags). Pleco: Import Cards, choose the file; cards go into the 中文练功房 category.</p></div>` : "";
+  return head
+    + (tags.length ? `<div class="row" style="gap:6px"><button class="tagc ${!BANK_TAG ? "on" : ""}" data-btag="">全部 All</button>${tags.map(t => `<button class="tagc ${BANK_TAG === t ? "on" : ""}" data-btag="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : "")
+    + (BANK_ALL ? `<input id="bankq" type="search" value="${esc(BANK_Q)}" placeholder="搜索 Search: 汉字, pinyin or English" class="inp">` : "")
     + `<div class="row" id="bankchips" style="${BANK_ALL ? "max-height:50vh;overflow:auto;align-content:flex-start" : ""}">${chips || `<span class="small muted">没有找到 · No match</span>`}</div>`
-    + (n > BANK_SHOW ? `<button class="btn ghost" id="bankmore">${BANK_ALL ? "收起 Show newest 20 only" : `显示全部 Show all ${n}`}</button>` : "")
-    + (BANK_ALL ? "" : n > BANK_SHOW ? `<p class="small muted" style="margin-top:-6px">Showing the newest ${BANK_SHOW}.</p>` : "");
+    + `<div class="row">${n > BANK_SHOW ? `<button class="btn ghost" id="bankmore">${BANK_ALL ? "收起 Show newest 20 only" : `显示全部 Show all ${n}`}</button>` : ""}<button class="btn ghost" id="bankexp">${BANK_EXP ? "收起导出 Close export" : "导出 Export…"}</button></div>`
+    + (BANK_ALL || n <= BANK_SHOW ? "" : `<p class="small muted" style="margin-top:-6px">Showing the newest ${BANK_SHOW}.</p>`)
+    + exp;
 }
 function bindBank() {
   const card = $("#bankcard"); if (!card) return;
   const redraw = () => { card.innerHTML = bankCard(); bindBank(); };
+  bindBankAdd(card, redraw);
   $$(".rmw", card).forEach(b => b.onclick = () => { const w = b.dataset.w; const saved = S.bank[w]; removeFromBank(w); redraw(); toastAction("已移出 " + w, "撤销 Undo", () => { S.bank[w] = saved; save(); redraw(); }); });
+  $$("[data-btag]", card).forEach(b => b.onclick = () => { BANK_TAG = b.dataset.btag; redraw(); });
   const more = $("#bankmore", card); if (more) more.onclick = () => { BANK_ALL = !BANK_ALL; BANK_Q = ""; redraw(); if (!BANK_ALL) card.scrollIntoView({ block: "nearest" }); };
+  const ex = $("#bankexp", card); if (ex) ex.onclick = () => { BANK_EXP = !BANK_EXP; redraw(); };
+  $$("[data-exp]", card).forEach(b => b.onclick = () => exportWords(b.dataset.exp, $("#expscope", card).value));
   const q = $("#bankq", card);
   if (q) q.oninput = () => { BANK_Q = q.value; const c = $("#bankchips", card); const tmp = document.createElement("div"); tmp.innerHTML = bankCard(); c.replaceWith($("#bankchips", tmp)); bindBank(); q.focus(); };
 }
@@ -1875,7 +2266,7 @@ async function mergeCode(raw, fail) {
   let data;
   try { data = JSON.parse(json); } catch (e) { return fail(cut); }
   if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
-  S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render();
+  S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
 }
 async function genSen(quiet) {
   const genStatus = quiet ? () => {} : window.genStatus;
