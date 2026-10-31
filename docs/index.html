@@ -1907,8 +1907,8 @@ Rules: keep every character exactly as given; gl covers slang, names, HSK7+ word
 /* ============ adding words yourself (加生词) ============
    Words with a sentence need no Claude: the card is your word highlighted in your sentence, pinyin and meanings
    from the dictionary on the device. Words without one get an example sentence from Claude automatically when
-   online (20 words per request, at most 200 a day; the rest wait on the home screen). */
-const SENT_DAY_MAX = 200, SENT_BATCH = 20;
+   online (20 words per request, at most 100 a day; the rest wait on the home screen). */
+const SENT_DAY_MAX = 100, SENT_BATCH = 20;
 let BANK_ADD = null; // {step:"form"|"pick", rows, sentence, tags}
 function splitWords(str) { return [...new Set(String(str || "").split(/[\s,，、;；\/]+/).map(w => w.trim()).filter(w => w && !Array.from(w).every(isPunct)))].slice(0, 100); }
 function bankAddHtml() {
