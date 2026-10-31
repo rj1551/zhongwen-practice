@@ -1806,9 +1806,11 @@ function importUI() {
   const ta = $("#codein");
   const err = msg => { $("#imperr").innerHTML = msg ? `<div class="fb no"><span>${msg}</span></div>` : ""; };
   const hint = msg => { $("#impst").innerHTML = msg ? `<span class="muted">${msg}</span>` : ""; };
-  const show = () => box.scrollIntoView({ block: "center", behavior: "smooth" });
+  // Scroll only if the box is off screen, and instantly: any movement while a Paste menu is open closes it.
+  const show = () => { const r = box.getBoundingClientRect(); if (r.top < 0 || r.bottom > innerHeight) box.scrollIntoView({ block: "center", behavior: "auto" }); };
   const PASTE = "长按下面的框选“粘贴”（电脑上 Ctrl/⌘+V），会自动合并。 Long-press the box and choose Paste (Ctrl/⌘+V on a computer); it merges by itself.";
-  const goManual = (msg, isErr) => { if (isErr) { err(msg); hint(PASTE); } else hint(msg); setTimeout(() => { show(); if (!ta.value) ta.focus({ preventScroll: true }); }, 50); };
+  // after a clipboard attempt nothing moves and nothing takes focus (that also closed the phone's Paste menu)
+  const goManual = (msg, isErr) => { if (isErr) { err(msg); hint(PASTE); } else hint(msg); };
   let merging = false;
   const merge = text => { if (merging) return; merging = true; err(""); mergeCode(text, m => { merging = false; err(m); toast("代码无效 — that code didn't work"); }); };
   ta.onfocus = () => ta.select(); // a paste replaces anything already in the box
@@ -1827,6 +1829,7 @@ function importUI() {
     }, () => { clipFails(clipFails() + 1); goManual(PASTE); });
   };
   const rc = $("#readclip"); if (rc) rc.onclick = tryClipboard;
+  show(); // before any Paste prompt opens
   if (canTry && clipFails() < 2) tryClipboard();
   else goManual(PASTE);
 }
