@@ -26,7 +26,7 @@
   --grid:rgba(142,166,255,.12); color-scheme:dark}
 *,*::before,*::after{box-sizing:border-box}
 html,body{height:100%}
-html{touch-action:manipulation} /* no double-tap zoom when tapping answers quickly; pinch zoom still works */
+*,*::before,*::after{touch-action:manipulation} /* no double-tap zoom when tapping answers quickly; pinch zoom still works */
 [hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.5;-webkit-tap-highlight-color:transparent}
 #app{max-width:600px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
@@ -1805,7 +1805,7 @@ function importUI() {
   const ta0 = $("#codein"); ta0.onfocus = () => ta0.select(); // a paste replaces anything already in the box
   $("#doimp").onclick = () => mergeCode($("#codein").value, msg => { $("#imperr").innerHTML = `<div class="fb no"><span>${msg}</span></div>`; toast("代码无效 — that code didn't work"); });
   show();
-  if (!(navigator.clipboard && navigator.clipboard.readText)) return manual("把代码粘贴到下面 · Paste the code below.");
+  if (!(navigator.clipboard && navigator.clipboard.readText)) return manual("这个浏览器不让网页读剪贴板 · This browser doesn't let pages read the clipboard. Long-press the box below and choose Paste.", true);
   $("#impst").innerHTML = `<span class="muted"><span class="spin"></span> 读取剪贴板… Reading the clipboard (tap Paste if your phone asks), or paste below.</span>`;
   navigator.clipboard.readText().then(text => {
     const c = readCode(text);
@@ -1813,7 +1813,7 @@ function importUI() {
     let mine = null; try { mine = localStorage.getItem(LAST_CODE_KEY); } catch (e) {}
     if (mine && mine === codePrint(text.match(/zw[01]:[A-Za-z0-9+/=\s]*/i)[0])) return manual("剪贴板里是你刚从这里导出的代码 · The clipboard holds the code you just copied <b>from this version</b>. Tap 导出 Copy code in the <b>other</b> version, then come back.", true);
     mergeCode(text, msg => manual(msg, true));
-  }, () => manual("把代码粘贴到下面 · Paste the code below."));
+  }, () => manual(HOSTED ? "这里不能自动读剪贴板（Claude 页面不允许）· The Claude page doesn't allow reading the clipboard. Long-press the box below and choose Paste." : "没能读剪贴板（可能没点“粘贴”）· Couldn't read the clipboard (the Paste prompt may have been dismissed). Long-press the box below and choose Paste.", true));
 }
 async function mergeCode(raw, fail) {
   if (!String(raw || "").trim()) return fail("还没粘贴 · Nothing pasted yet.");
