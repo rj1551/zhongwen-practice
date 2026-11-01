@@ -419,7 +419,7 @@ function mergeStates(a, b) {
     if (!y) { m.reads[k] = x; continue; }
     const first = (x.t || 0) <= (y.t || 0) ? x : y; // the first read is the baseline for speed
     const seen = new Set(), rr = [...(y.rr || []), ...(x.rr || [])].filter(e => !seen.has(e[0]) && seen.add(e[0])).sort((a, b) => a[0] - b[0]).slice(-20);
-    m.reads[k] = Object.assign({}, first, { rr, re: Math.max(x.re || 0, y.re || 0, rr.length), lastT: Math.max(x.lastT || x.t || 0, y.lastT || y.t || 0), lastCpm: rr.length ? rr[rr.length - 1][1] : first.lastCpm });
+    m.reads[k] = Object.assign({}, first, { fluent: !!(x.fluent || y.fluent) || undefined, rr, re: Math.max(x.re || 0, y.re || 0, rr.length), lastT: Math.max(x.lastT || x.t || 0, y.lastT || y.t || 0), lastCpm: rr.length ? rr[rr.length - 1][1] : first.lastCpm });
   }
   for (const d in o.log || {}) {
     const x = o.log[d], y = m.log[d];
@@ -437,6 +437,7 @@ function mergeStates(a, b) {
   const fbSeen = new Set([...(m.offfb || []), ...(o.offfb || [])].filter(x => x.seen).map(x => x.k));
   m.offfb = byId(m.offfb || [], o.offfb || [], "k").map(x => fbSeen.has(x.k) ? Object.assign(x, { seen: true }) : x).sort((p, q) => q.t - p.t).slice(0, 60);
   m.best = { combo: Math.max((m.best || {}).combo || 0, (o.best || {}).combo || 0) };
+  for (const g of ["lad", "word"]) { const x = (o.fsrs || {})[g], y = (m.fsrs || {})[g]; if (x && (!y || (x.at || 0) > (y.at || 0))) m.fsrs = Object.assign({}, m.fsrs, { [g]: x }); }
   m.placed = !!(m.placed || o.placed);
   if (!m.skills && o.skills) { m.skills = o.skills; m.recent = o.recent || {}; }
   for (const k of ["segSeen", "lastExport", "lastImport", "mig"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
@@ -735,6 +736,115 @@ function migrateSen() {
   if ((S.mig || 0) >= 1) return;
   for (const id in S.items) { const it = S.items[id]; if (it.t !== "sen") continue; if (it.ok >= it.n) { it.b = 5; it.due = now() + SEN_REUSE; } else { it.b = Math.min(it.b, 1); it.due = now() + SEN_AGAIN; } }
   S.mig = 1; save();
+}
+/* ---------- refit FSRS to your own answers (v25) ----------
+   Progress → 记忆模型. Per group (drills / words), once there are REFIT_MIN reviews that count (an answer on a later
+   day than the previous one, so there was something to forget), the 21 parameters are fitted to your own answers:
+   minimise the log loss between predicted recall R and what happened (right / wrong), by Adam with numeric gradients
+   on parameters scaled to the reference implementations' bounds, lightly pulled toward the defaults. The fit uses
+   the older 80% of reviews; the newer 20% only judges old vs new parameters. New ones are applied only if they
+   predict that held-out part at least 1% better; one tap undoes. Runs in the page, offline too. */
+const REFIT_MIN = 1000;
+const FSRS_BOUNDS = [[0.001, 100], [0.001, 100], [0.001, 100], [0.001, 100], [1, 10], [0.001, 4], [0.001, 4], [0.001, 0.75], [0, 4.5], [0, 0.8], [0.001, 3.5], [0.001, 5], [0.001, 0.25], [0.001, 0.9], [0, 4], [0, 1], [1, 6], [0, 2], [0, 2], [0, 0.8], [0.1, 0.8]];
+// the answer histories of one group: [[seed, [[t ms, grade], …]], …]
+function refitData(grp) {
+  const out = [];
+  for (const id in S.items) { const it = S.items[id]; if (!FSRS_KINDS.has(it.t) || fsrsGroup(it.t) !== grp || !(it.h || []).length) continue;
+    out.push([it.z || null, it.h.slice().sort((a, b) => a[0] - b[0]).map(e => [e[0] * 1000, gradeOf(it.t, e)])]); }
+  return out;
+}
+function refitCount(grp) {
+  let n = 0;
+  for (const [z, rev] of refitData(grp)) { let last = z ? z[2] : null; for (const [t] of rev) { if (last != null && midnight(t) > midnight(last)) n++; last = t; } }
+  return n;
+}
+// mean log loss over reviews before (part 0) or after (part 1) the time split
+function refitLoss(w, data, split, part) {
+  let sum = 0, n = 0;
+  for (const [z, rev] of data) {
+    let st = z ? { s: z[0], d: z[1], lr: z[2] } : null;
+    for (const [t, g] of rev) {
+      if (st && midnight(t) > midnight(st.lr) && (part ? t >= split : t < split)) {
+        const days = Math.round((midnight(t) - midnight(st.lr)) / DAY), r = Math.min(0.9999, Math.max(0.0001, fsrsR(w, days, st.s)));
+        sum -= g > 1 ? Math.log(r) : Math.log(1 - r); n++;
+      }
+      st = fsrsStep(w, st, g, t);
+    }
+  }
+  return n ? sum / n : 0;
+}
+let REFIT = null; // { grp, i, n } while running
+async function refitGroup(grp, opts = {}) {
+  const data = refitData(grp), times = data.flatMap(([, rev]) => rev.map(r => r[0])).sort((a, b) => a - b);
+  if (!times.length) return null;
+  const split = times[Math.floor(times.length * 0.8)];
+  const lo = FSRS_BOUNDS.map(b => b[0]), hi = FSRS_BOUNDS.map(b => b[1]);
+  const toW = u => u.map((x, i) => lo[i] + Math.min(1, Math.max(0, x)) * (hi[i] - lo[i]));
+  const u0 = FSRS_W.map((x, i) => (x - lo[i]) / (hi[i] - lo[i]));
+  const cur = fsrsW(grp), oldTest = refitLoss(cur, data, split, 1);
+  let u = cur.map((x, i) => (x - lo[i]) / (hi[i] - lo[i]));
+  const reg = x => 0.002 * x.reduce((a, v, i) => a + (v - u0[i]) ** 2, 0);
+  const f = x => refitLoss(toW(x), data, split, 0) + reg(x);
+  const iters = opts.iters || 120, lr = 0.01, eps = 1e-4, m = u.map(() => 0), v = u.map(() => 0);
+  REFIT = { grp, i: 0, n: iters };
+  for (let k = 1; k <= iters; k++) {
+    const f0 = f(u), g = u.map((x, i) => { const y = u.slice(); y[i] += eps; return (f(y) - f0) / eps; });
+    for (let i = 0; i < u.length; i++) {
+      m[i] = 0.9 * m[i] + 0.1 * g[i]; v[i] = 0.999 * v[i] + 0.001 * g[i] * g[i];
+      u[i] = Math.min(1, Math.max(0, u[i] - lr * (m[i] / (1 - 0.9 ** k)) / (Math.sqrt(v[i] / (1 - 0.999 ** k)) + 1e-8)));
+    }
+    REFIT.i = k;
+    if (k % 5 === 0) { if (opts.onProgress) opts.onProgress(k, iters); await new Promise(r => setTimeout(r, 0)); }
+  }
+  const w = toW(u).map(x => +x.toFixed(4)), newTest = refitLoss(w, data, split, 1);
+  REFIT = null;
+  const better = newTest < oldTest * 0.99;
+  const res = { grp, oldTest: +oldTest.toFixed(4), newTest: +newTest.toFixed(4), better, n: refitCount(grp), at: now() };
+  if (better && !opts.dry) applyFsrsParams(grp, w, res);
+  S.refitLast = Object.assign({}, S.refitLast, { [grp]: res }); save();
+  return res;
+}
+function applyFsrsParams(grp, w, info) {
+  const prev = (S.fsrs && S.fsrs[grp]) || null;
+  S.fsrs = Object.assign({}, S.fsrs, { [grp]: { w, at: now(), prev: prev ? prev.w : null, info } });
+  for (const id in S.items) { const it = S.items[id]; if (FSRS_KINDS.has(it.t) && fsrsGroup(it.t) === grp && (it.h || []).length) fsrsReplay(it); }
+  save();
+}
+function undoFsrsParams(grp) {
+  const cur = S.fsrs && S.fsrs[grp]; if (!cur) return;
+  const fs = Object.assign({}, S.fsrs);
+  if (cur.prev) fs[grp] = { w: cur.prev, at: now(), prev: null }; else delete fs[grp];
+  S.fsrs = fs;
+  for (const id in S.items) { const it = S.items[id]; if (FSRS_KINDS.has(it.t) && fsrsGroup(it.t) === grp && (it.h || []).length) fsrsReplay(it); }
+  save();
+}
+const REFIT_NAME = { lad: "造句 Drills (typed)", word: "词 Words & structures" };
+function refitCard() {
+  const row = grp => {
+    const n = refitCount(grp), cur = S.fsrs && S.fsrs[grp], last = (S.refitLast || {})[grp], running = REFIT && REFIT.grp === grp;
+    return `<div class="stack" style="gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:10px">
+      <div class="spread"><b class="small">${REFIT_NAME[grp]}</b><span class="small muted">${Math.min(n, REFIT_MIN)} / ${REFIT_MIN}</span></div>
+      <div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, n / REFIT_MIN * 100)}%;background:var(--accent)"></i></div>
+      <span class="small muted">${cur ? `用的是你自己的参数 · Using parameters fitted to you (${new Date(cur.at).getMonth() + 1}月${new Date(cur.at).getDate()}日)` : "用的是默认参数 · Using the default parameters"}</span>
+      ${last ? `<span class="small">上次 Last refit: 预测误差 prediction error ${last.oldTest} → ${last.newTest} · ${last.better ? "更准，已采用 better, applied" : "没有更准，保持原样 not better, kept as is"}</span>` : ""}
+      <div class="row">${running ? `<span class="small"><span class="spin"></span> 拟合中… Fitting ${REFIT.i}/${REFIT.n}</span>` :
+        `<button class="btn soft" data-refit="${grp}" ${n < REFIT_MIN || REFIT ? "disabled" : ""}>重新拟合 Refit</button>${cur ? `<button class="btn ghost" data-unfit="${grp}">撤销 Undo</button>` : ""}`}
+        ${n < REFIT_MIN ? `<span class="small muted">还差 ${REFIT_MIN - n} 次复习 · ${REFIT_MIN - n} more reviews</span>` : ""}</div></div>`;
+  };
+  return `<span class="label">记忆模型 · Memory model</span>
+    <p class="small muted">The schedule predicts when you'd forget each card. Once a card type has ${REFIT_MIN} reviews, you can fit that prediction to your own memory. It only switches if the new fit predicts your recent answers better.</p>
+    ${row("lad")}${row("word")}`;
+}
+function bindRefit() {
+  const card = $("#refitcard"); if (!card) return;
+  const redraw = () => { const c = $("#refitcard"); if (c) { c.innerHTML = refitCard(); bindRefit(); } };
+  $$("[data-refit]", card).forEach(b => b.onclick = async () => {
+    const grp = b.dataset.refit;
+    const p = refitGroup(grp, { onProgress: redraw }); redraw();
+    const res = await p; redraw();
+    if (res) toast(res.better ? "已采用新的参数 · New parameters applied" : "新参数没有更准，保持原样 · Not better, kept the current ones", 3500);
+  });
+  $$("[data-unfit]", card).forEach(b => b.onclick = () => { undoFsrsParams(b.dataset.unfit); toast("已恢复 · Restored the previous parameters"); redraw(); });
 }
 /* ---------- once a day per item (v22) ----------
    An item answered today isn't offered again today, and neither is anything sharing its key chunk or word
@@ -1709,15 +1819,16 @@ function renderFrag(id, el, onResult, onNext) {
    tap 读完了, see chars/min against your first read. No questions; doesn't touch the reading-speed stat or any
    schedule. The gap before a passage is offered again doubles each time: 2, 4, 8, 16, then 32 days. */
 const rereadGap = r => 2 * Math.pow(2, Math.min(4, r.re || 0)) * DAY;
+const NATIVE_CPM = 250; // ≈ fluent reading speed (the quiet timing's target): a passage re-read this fast stops coming back
 function rereadable(used) {
   const t = now();
-  return [...PSG.values()].filter(p => { const r = S.reads[p.id]; return r && !used.has("rr" + p.id) && t - (r.lastT || r.t) >= rereadGap(r); })
+  return [...PSG.values()].filter(p => { const r = S.reads[p.id]; return r && !r.fluent && !used.has("rr" + p.id) && t - (r.lastT || r.t) >= rereadGap(r); })
     .sort((a, b) => (S.reads[a.id].lastT || S.reads[a.id].t) - (S.reads[b.id].lastT || S.reads[b.id].t));
 }
 const psgChars = p => Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
 function recordReread(pid, cpm) {
   const r = S.reads[pid]; if (!r) return;
-  if (cpm) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; }
+  if (cpm) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; if (cpm >= NATIVE_CPM) r.fluent = true; }
   r.re = (r.re || 0) + 1; r.lastT = now(); save();
 }
 function renderReread(pid, el, onResult, onNext) {
@@ -1736,7 +1847,7 @@ function renderReread(pid, el, onResult, onNext) {
     recordReread(pid, paused ? null : cpm);
     const gain = r.cpm ? Math.round((cpm / r.cpm - 1) * 100) : 0;
     $("#fb", el).innerHTML = `<div class="fb ok">${paused ? `<span>看起来中途停了，这次不算速度 · Looks like you paused, so speed isn't counted.</span>` :
-      `<span><b style="font-size:20px">${cpm}</b> 字/分钟 · 第一次 first read ${r.cpm} ${gain > 0 ? `<b style="color:var(--good)">+${gain}%</b>` : gain < 0 ? `(${gain}%)` : ""}</span>`}</div>`;
+      `<span><b style="font-size:20px">${cpm}</b> 字/分钟 · 第一次 first read ${r.cpm} ${gain > 0 ? `<b style="color:var(--good)">+${gain}%</b>` : gain < 0 ? `(${gain}%)` : ""}</span>${r.fluent ? `<span>🎉 母语者的速度了，这篇不会再出现在练习里 · Native-level speed: this passage won't come up in practice again.</span>` : ""}`}</div>`;
     onResult({ ok: true, rr: true, ms: sec * 1000 });
     nextButton(cc, onNext);
   };
@@ -2543,6 +2654,7 @@ function renderMe(main) {
     ${S.skills ? `<div class="bars">${Object.keys(names).map(k => `<div class="bar"><span>${names[k]}</span><span class="t"><i style="width:${pct(skillVal(k))}"></i></span><span class="v">${pct(skillVal(k))}</span></div>`).join("")}</div>` : `<p class="muted">还没测试 — take the placement test to fill these in.</p>`}
     <button class="btn ghost" id="replace">重新做水平测试 Retake placement test</button></div>
   <div class="card" id="bankcard">${bankCard()}</div>
+  <div class="card" id="refitcard">${refitCard()}</div>
   <div class="card"><span class="label">设置 · Settings</span>
     <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="onetap" style="margin-top:3px;flex:none" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
   <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately.</p></div>
@@ -2567,6 +2679,7 @@ function renderMe(main) {
   const gl = $("#genlad"); if (gl) gl.onclick = () => genLadder();
   const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
   bindStock();
+  bindRefit();
 }
 /* ---------- saved words: newest 20, the rest behind "show all" (with search); add words; tags; export ---------- */
 const BANK_SHOW = 20;
