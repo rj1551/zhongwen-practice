@@ -427,7 +427,7 @@ if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s;
 function aiErr(e) {
   const c = e && e.code;
   if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
-  if (c === "rate_limited") return "AI 调用太频繁，稍后再试。";
+  if (c === "rate_limited") return "Claude 暂时用不了（请求太多，或到了用量上限），稍后再试 · Claude isn't available right now (too many requests or your usage limit). Try again later.";
   if (c === "invalid_json") return "AI 返回格式有误，再试一次。";
   return "AI 暂时不可用。";
 }
@@ -994,7 +994,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
       fb.innerHTML = `<div class="fb mid"><span>你的：<span class="zh" style="font-size:18px">${esc(raw)}</span></span>
         <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span>
         ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 3).map(esc).join(" ／ ")}</span>` : ""}
-        ${entry ? `<span class="small">${waiting ? "Claude 的批改到了会放在首页。Claude's feedback will appear on the home screen when it arrives." : "现在连不上 Claude。先自己判断；联网后 Claude 会补批改，结果放在首页。Can't reach Claude right now, so grade yourself; Claude's feedback will appear on the home screen once you're back online."}</span>` : ""}
+        ${entry ? `<span class="small">${waiting ? "Claude 的批改到了会放在首页。Claude's feedback will appear on the home screen when it arrives." : "现在用不了 Claude（离线或到了用量上限）。先自己判断；Claude 能用了会补批改，结果放在首页。Can't reach Claude right now (offline or usage limit), so grade yourself; Claude's feedback will appear on the home screen once it's available again."}</span>` : ""}
         <span class="small">自己判断 How did you do?</span>
         <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
       $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } else if (!HOSTED && !placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`); });
@@ -1911,6 +1911,9 @@ Rules: keep every character exactly as given; gl covers slang, names, HSK7+ word
 const SENT_DAY_MAX = 100, SENT_BATCH = 20;
 let BANK_ADD = null; // {step:"form"|"pick", rows, sentence, tags}
 function splitWords(str) { return [...new Set(String(str || "").split(/[\s,，、;；\/]+/).map(w => w.trim()).filter(w => w && !Array.from(w).every(isPunct)))].slice(0, 100); }
+// The sentence box may hold several sentences: split at 。！？!?… (keeping closing quotes/brackets) and line breaks.
+function splitSentences(t) { return String(t || "").split(/\n+/).flatMap(line => line.match(/[^。！？!?…]+(?:[。！？!?…]+[”’"'」』）)]*)?|[。！？!?…]+/g) || []).map(x => x.trim()).filter(x => x && !Array.from(x).every(isPunct)); }
+const markWord = (sent, w) => esc(sent).split(esc(w)).join(`<mark>${esc(w)}</mark>`);
 function bankAddHtml() {
   if (!BANK_ADD) return "";
   if (BANK_ADD.step === "form") return `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px">
@@ -1923,7 +1926,7 @@ function bankAddHtml() {
     ${rows.map((r, i) => `<div class="stack" style="gap:4px;padding:8px 10px;border:1px solid var(--line);border-radius:10px">
       <div class="row" style="gap:8px"><span class="zh" style="font-size:20px">${esc(r.w)}</span>${r.dup ? `<span class="small muted">已经在复习里 · already saved (will be updated)</span>` : ""}</div>
       ${r.rds.length > 1 ? `<select class="inp" data-ri="${i}" style="padding:6px 8px">${r.rds.map((x, k) => `<option value="${k}" ${k === r.pick ? "selected" : ""}>${esc(x.py)} · ${esc(x.gl.slice(0, 60))}</option>`).join("")}</select>` : r.rds.length ? `<span class="small">${esc(r.rds[0].py)} · ${esc(r.rds[0].gl.slice(0, 80))}</span>` : `<span class="small muted">词典里没有 · Not in the dictionary${AI ? "; Claude will add pinyin and a meaning" : "; Claude can add pinyin and a meaning once you're online"}</span>`}
-      <span class="small muted">${r.inSent ? "例句：你的句子 · uses your sentence" : BANK_ADD.sentence ? "你的句子里没有这个词 · not in your sentence: Claude will write one" : "Claude 会写一个例句 · Claude will write an example sentence"}${!r.inSent && !AI ? " (when you're online)" : ""}</span></div>`).join("")}
+      ${r.s ? `<span class="small">例句 · Your sentence: <span class="zh sent" style="font-size:15px;line-height:1.6">${markWord(r.s, r.w)}</span></span>` : `<span class="small muted">${BANK_ADD.sentence ? "你的句子里没有这个词 · not in your sentences: Claude will write one" : "Claude 会写一个例句 · Claude will write an example sentence"}${!AI ? " (when you're online)" : ""}</span>`}</div>`).join("")}
     <div class="row"><button class="btn" id="aok">加入 Add ${rows.length} 个</button><button class="btn ghost" id="aback">← 改一改 Edit</button></div></div>`;
 }
 function bindBankAdd(card, redraw) {
@@ -1937,7 +1940,8 @@ function bindBankAdd(card, redraw) {
       Object.assign(BANK_ADD, { words: $("#aw", card).value, sentence, tags: $("#at", card).value });
       if (!words.length) { $("#aw", card).focus(); return; }
       await loadCedict();
-      BANK_ADD.rows = words.map(w => { const A = lookupAll(w); const rds = A ? A.readings : []; return { w, rds, pick: 0, inSent: !!sentence && sentence.includes(w), dup: !!S.bank[w] }; });
+      const sents = splitSentences(sentence);
+      BANK_ADD.rows = words.map(w => { const A = lookupAll(w); const rds = A ? A.readings : []; return { w, rds, pick: 0, s: sents.find(x => x.includes(w)) || "", dup: !!S.bank[w] }; });
       BANK_ADD.step = "pick"; redraw();
     };
     return;
@@ -1948,7 +1952,7 @@ function bindBankAdd(card, redraw) {
     const tags = parseTags(BANK_ADD.tags);
     for (const r of BANK_ADD.rows) {
       const rd = r.rds[r.pick] || null, old = S.bank[r.w] || {};
-      S.bank[r.w] = Object.assign({}, old, { zh: r.w, py: rd ? rd.py : old.py || "", gl: rd ? rd.gl : old.gl || "", s: r.inSent ? BANK_ADD.sentence : old.s && old.s !== r.w ? old.s : "", t: now(), src: old.src || "manual",
+      S.bank[r.w] = Object.assign({}, old, { zh: r.w, py: rd ? rd.py : old.py || "", gl: rd ? rd.gl : old.gl || "", s: r.s ? r.s : old.s && old.s !== r.w ? old.s : "", t: now(), src: old.src || "manual",
         tags: [...new Set([...(old.tags || []), ...tags])] });
       S.bank[r.w].needS = !S.bank[r.w].s;
       if (!S.bank[r.w].tags.length) delete S.bank[r.w].tags;
@@ -1958,7 +1962,7 @@ function bindBankAdd(card, redraw) {
     processSentences();
   };
 }
-let SENT_RUN = null;
+let SENT_RUN = null, SENT_FAIL = null;
 const wordsNeedingSentence = () => Object.values(S.bank).filter(b => b.needS || !b.s);
 function sentLeftToday() { const d = S.sentDay && S.sentDay.d === dayKey() ? S.sentDay.n : 0; return Math.max(0, SENT_DAY_MAX - d); }
 async function processSentences(force) {
@@ -1967,7 +1971,8 @@ async function processSentences(force) {
   if (!list.length) return;
   if (!force) list = list.slice(0, sentLeftToday());
   if (!list.length) return;
-  SENT_RUN = { n: list.length, done: 0 };
+  SENT_RUN = { n: list.length, done: 0 }; SENT_FAIL = null;
+  let wrote = 0, reqs = 0;
   if (VIEW === "home") render();
   for (let i = 0; i < list.length; i += SENT_BATCH) {
     const batch = list.slice(i, i + SENT_BATCH);
@@ -1975,22 +1980,25 @@ async function processSentences(force) {
 ${batch.map((b, k) => `${k + 1}. ${b.zh}${b.py ? ` (${b.py})` : ""}${b.gl ? ` — ${b.gl.slice(0, 80)}` : ""}`).join("\n")}
 Reply with only a JSON array: [{"i": number, "s": "sentence", "py": "pinyin with tone marks", "gl": "short English meaning"}]`;
     try {
+      reqs++;
       const arr = await AI.json(prompt, { modelTier: "default", effort: "low" });
       if (!Array.isArray(arr)) throw { code: "invalid_json" };
       batch.forEach((b, k) => {
         const x = arr.find(y => y && +y.i === k + 1); const cur = S.bank[b.zh];
         if (!x || !cur || typeof x.s !== "string" || !x.s.includes(b.zh)) return;
-        cur.s = x.s; cur.needS = false; cur.sAI = true;
+        cur.s = x.s; cur.needS = false; cur.sAI = true; wrote++;
         if (!cur.py && x.py) cur.py = String(x.py);
         if (!cur.gl && x.gl) cur.gl = String(x.gl);
       });
       const d = dayKey(); S.sentDay = { d, n: (S.sentDay && S.sentDay.d === d ? S.sentDay.n : 0) + batch.length };
       save();
-    } catch (e) { if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
+    } catch (e) { SENT_FAIL = e && e.code === "rate_limited" ? "limit" : "other"; if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
     SENT_RUN.done = Math.min(list.length, i + SENT_BATCH);
     if (VIEW === "home") render();
   }
   SENT_RUN = null;
+  if (wrote) toast(`已为 ${wrote} 个生词写好例句（用了 ${reqs} 次请求）· Example sentences for ${wrote} word${wrote > 1 ? "s" : ""} (${reqs} request${reqs > 1 ? "s" : ""})`, 4000);
+  else if (SENT_FAIL) toast(SENT_FAIL === "limit" ? "Claude 暂时用不了，例句以后再写 · Claude isn't available right now (maybe your usage limit); sentences will be written later" : "例句没写成，以后再试 · Couldn't write example sentences; will try again later", 4000);
   if (VIEW === "home" || VIEW === "me") render();
 }
 function sentWaitHtml() {
@@ -1999,7 +2007,7 @@ function sentWaitHtml() {
   if (SENT_RUN) return `<p class="small"><span class="spin"></span> 🔤 Claude 在写例句… Writing example sentences ${SENT_RUN.done}/${SENT_RUN.n}</p>`;
   const req = Math.ceil(left / SENT_BATCH);
   return `<div class="stack" style="gap:6px"><span class="small">🔤 <b>${left}</b> 个生词还没有例句 · word${left > 1 ? "s" : ""} without an example sentence</span>
-    ${!AI || !ONLINE ? `<span class="small muted">需要 Claude，联网后会自动写 · Needs Claude; written automatically once you're online.</span>` : `<span class="small muted">今天自动写的已经到 ${SENT_DAY_MAX} 个 · Today's automatic ${SENT_DAY_MAX} are done. They still work as plain word cards meanwhile.</span><button class="btn soft" id="sentnow">现在写 Write them now (about ${req} request${req > 1 ? "s" : ""})</button>`}</div>`;
+    ${!AI || !ONLINE ? `<span class="small muted">需要 Claude，联网后会自动写 · Needs Claude; written automatically once you're online.</span>` : `<span class="small muted">${SENT_FAIL === "limit" ? "Claude 暂时用不了（可能到了用量上限），以后会再试 · Claude isn't available right now (maybe your usage limit); it'll try again later." : SENT_FAIL ? "上次没写成，以后会再试 · The last try didn't work; it'll try again later." : `今天自动写的已经到 ${SENT_DAY_MAX} 个 · Today's automatic ${SENT_DAY_MAX} are done.`} They still work as plain word cards meanwhile.</span><button class="btn soft" id="sentnow">现在写 Write them now (about ${req} request${req > 1 ? "s" : ""})</button>`}</div>`;
 }
 
 /* ============ export saved words for Anki / Pleco ============ */
