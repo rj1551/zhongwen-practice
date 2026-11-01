@@ -272,6 +272,33 @@ function splitState(st) {
   return docs;
 }
 const newerItem = (x, y) => !y || (x.n || 0) > (y.n || 0) || ((x.n || 0) === (y.n || 0) && (x.due || 0) > (y.due || 0));
+/* ---------- answer log (v19) ----------
+   Each item keeps its last H_MAX answers in it.h: [time in s, rung (0 = not a drill), value, source?, Claude's later score?]
+   value: drills = score 0–3; reading cards = 0 if wrong, else time credit × 100; bank words 100 / 0.
+   source: "s" self-graded, "a" graded by Claude, "p" looked back at the sentence; absent = checked by the app.
+   Merging takes the union of both logs, so no answer is lost. The schedule fields still come from newerItem for
+   now; a future scheduler (FSRS) can replay the merged log instead. */
+const H_MAX = 30;
+function logAnswer(it, rung, v, src) {
+  const e = [Math.round(now() / 1000), rung, v]; if (src) e.push(src);
+  (it.h = it.h || []).push(e); if (it.h.length > H_MAX) it.h = it.h.slice(-H_MAX);
+}
+// Claude graded a self-graded answer later: note its score on that answer (the nearest self-graded one after t)
+function regradeLog(id, t, score) {
+  const it = S.items[id]; if (!it || !it.h) return;
+  const ts = (t || 0) / 1000; let best = null;
+  for (const e of it.h) if (e[3] === "s" && e.length < 5 && e[0] >= ts - 5 && e[0] <= ts + 3600 && (!best || e[0] < best[0])) best = e;
+  if (best) best[4] = score;
+}
+const lastAnswerT = it => it && it.h && it.h.length ? it.h[it.h.length - 1][0] * 1000 : 0;
+function mergeItem(x, y) {
+  if (!y) return x; if (!x) return y;
+  const keep = newerItem(x, y) ? x : y, other = keep === x ? y : x;
+  if (!x.h && !y.h) return keep;
+  const seen = new Map();
+  for (const e of [...(other.h || []), ...(keep.h || [])]) { const k = e[0] + ":" + e[1]; const p = seen.get(k); if (!p || e.length > p.length) seen.set(k, e); }
+  return Object.assign({}, keep, { h: [...seen.values()].sort((a, b) => a[0] - b[0]).slice(-H_MAX) });
+}
 function joinDocs(list) {
   const core = list.find(d => d.id === "state");
   if (!core && !list.length) return null;
@@ -279,7 +306,7 @@ function joinDocs(list) {
   delete m.layout;
   m.items = Object.assign({}, m.items); m.gen = Object.assign({}, m.gen); // a pre-split record kept these inside "state"
   for (const d of list) {
-    if (d.id.startsWith("items-")) for (const id in d.data.items || {}) { const x = d.data.items[id]; if (newerItem(x, m.items[id])) m.items[id] = x; }
+    if (d.id.startsWith("items-")) for (const id in d.data.items || {}) m.items[id] = mergeItem(d.data.items[id], m.items[id]);
     else if (d.id.startsWith("gen-") && d.data.kind) {
       const have = new Set((m.gen[d.data.kind] || []).map(x => x.id));
       m.gen[d.data.kind] = (m.gen[d.data.kind] || []).concat((d.data.list || []).filter(x => !have.has(x.id)));
@@ -367,8 +394,7 @@ function mergeStates(a, b) {
   const m = Object.assign(freshState(), JSON.parse(JSON.stringify(newerFirst ? a : b)));
   const o = JSON.parse(JSON.stringify(newerFirst ? b : a));
   for (const id in o.items || {}) {
-    const x = o.items[id], y = m.items[id];
-    if (newerItem(x, y)) m.items[id] = x;
+    m.items[id] = mergeItem(o.items[id], m.items[id]);
   }
   for (const k in o.bank || {}) {
     const x = o.bank[k], y = m.bank[k];
@@ -402,7 +428,7 @@ function mergeStates(a, b) {
   m.best = { combo: Math.max((m.best || {}).combo || 0, (o.best || {}).combo || 0) };
   m.placed = !!(m.placed || o.placed);
   if (!m.skills && o.skills) { m.skills = o.skills; m.recent = o.recent || {}; }
-  for (const k of ["segSeen", "lastExport", "lastImport"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
+  for (const k of ["segSeen", "lastExport", "lastImport", "mig"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
   m.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
   return m;
 }
@@ -544,10 +570,11 @@ function skillVal(k) {
 function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
 function logDay(sec, ok) { const k = dayKey(); const d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; d.n++; d.ok += ok ? 1 : 0; d.sec += Math.min(sec, 240); }
 function startRung() { return skillVal("pick") >= 0.6 ? 2 : 1; }
-function recordLadder(id, rung, score) {
-  // score: 0..3 (3 = natural, 2 = acceptable)
+function recordLadder(id, rung, score, src) {
+  // score: 0..3 (3 = natural, 2 = acceptable); src: "a" Claude, "s" self-graded, absent = checked by the app
   const it = S.items[id] = S.items[id] || { t: "lad", r: rung, due: 0, ivl: 0, n: 0, ok: 0, m: false };
   it.n++;
+  logAnswer(it, rung, score, src);
   const pass = score >= 2;
   if (pass) {
     it.ok++;
@@ -562,11 +589,51 @@ function recordLadder(id, rung, score) {
 function recordBox(id, t, ok, cat, credit = 1) {
   const it = S.items[id] = S.items[id] || { t, b: 0, due: 0, n: 0, ok: 0 };
   it.n++;
+  logAnswer(it, 0, ok ? Math.round(credit * 100) : 0);
   if (ok && credit >= 0.75) { it.ok++; it.b = Math.min(5, it.b + 1); it.due = now() + BOX_IVL[it.b]; }
   else if (ok) { it.ok++; it.b = Math.max(1, it.b); it.due = now() + BOX_IVL[it.b] / 2; }
   else { it.b = 0; it.due = now() + 10 * MIN; }
   if (cat) pushRecent(cat, ok ? credit : 0);
   save();
+}
+// Sentence parsing trains a skill, not a memory (v19). A sentence you read well isn't shown again until new ones
+// run out (and then only after ~2 months, once the answer is forgotten); a miss, a slow read or looking back at
+// the sentence brings it back in about 2 weeks.
+const SEN_AGAIN = 14 * DAY, SEN_REUSE = 60 * DAY;
+function recordSen(id, ok, credit = 1, peek = false) {
+  const it = S.items[id] = S.items[id] || { t: "sen", b: 0, due: 0, n: 0, ok: 0 };
+  it.n++; if (ok) it.ok++;
+  const solid = ok && credit >= 0.75 && !peek;
+  it.b = solid ? 5 : ok ? 1 : 0;
+  it.due = now() + (solid ? SEN_REUSE : SEN_AGAIN);
+  logAnswer(it, 0, ok ? Math.round(credit * 100) : 0, peek ? "p" : "");
+  pushRecent("news", ok ? credit : 0);
+  save();
+  return it;
+}
+// One-time: sentence-parsing records from the old box schedule. Never missed → treated as read well.
+function migrateSen() {
+  if ((S.mig || 0) >= 1) return;
+  for (const id in S.items) { const it = S.items[id]; if (it.t !== "sen") continue; if (it.ok >= it.n) { it.b = 5; it.due = now() + SEN_REUSE; } else { it.b = Math.min(it.b, 1); it.due = now() + SEN_AGAIN; } }
+  S.mig = 1; save();
+}
+/* ---------- once a day per item (v19) ----------
+   An item answered today isn't offered again today, and neither is anything sharing its key chunk or word
+   (a drill on 前往, the word card 前往, a saved word 前往). sibKey gives that shared key. */
+const SIB_CACHE = new Map();
+function sibKey(id) {
+  if (SIB_CACHE.has(id)) return SIB_CACHE.get(id);
+  let k = null;
+  if (id.startsWith("B:")) k = id.slice(2);
+  else if (LADDER.has(id)) { const m = /\[([^\]]+)\]/.exec(LADDER.get(id).zh || ""); k = m ? m[1].replace(/[|\/]/g, "") : null; }
+  else if (CTX.has(id)) k = CTX.get(id).w;
+  if (LADDER.has(id) || CTX.has(id) || id.startsWith("B:")) SIB_CACHE.set(id, k);
+  return k;
+}
+function doneToday() {
+  const d = dayKey(), ids = new Set(), keys = new Set();
+  for (const id in S.items) { const t = lastAnswerT(S.items[id]); if (t && dayKey(t) === d) { ids.add(id); const k = sibKey(id); if (k) keys.add(k); } }
+  return id => ids.has(id) || (keys.size > 0 && keys.has(sibKey(id)));
 }
 
 /* ============ quiet timing ============ */
@@ -582,6 +649,7 @@ const zhLen = s => Array.from(String(s || "")).filter(c => /[\u4e00-\u9fff]/.tes
 const TARGET_MS_PER_CHAR = 240; // ≈250 characters a minute: a fluent-learner reading pace
 function expectedMs(kind, text) {
   const n = zhLen(text);
+  if (kind === "senread") return n * TARGET_MS_PER_CHAR + 1500; // reading only: the options come after
   if (kind === "seg") return n * (TARGET_MS_PER_CHAR + 700) + 3000;
   if (kind === "news") return n * TARGET_MS_PER_CHAR + 7000;
   return n * TARGET_MS_PER_CHAR + 5000; // ctx
@@ -613,20 +681,23 @@ function weights() {
   for (const k in w) w[k] /= sum;
   return w;
 }
-function candidates(cat) {
-  const t = now(), due = [], fresh = [];
+// Due cards (most overdue first), then new ones. Cards with a `due` field count as reviews; new cards and
+// sentences being reused (`re`) don't. Nothing answered today (or sharing its key chunk) is offered again today.
+function candidates(cat, done = doneToday()) {
+  const t = now(), due = [], fresh = [], reuse = [];
   if (cat === "lad") {
-    for (const [id] of LADDER) { const it = S.items[id]; if (!it) fresh.push({ t: "lad", id, r: startRung() }); else if (it.due <= t) due.push({ t: "lad", id, r: it.r, due: it.due }); }
+    for (const [id] of LADDER) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "lad", id, r: startRung() }); else if (it.due <= t) due.push({ t: "lad", id, r: it.r, due: it.due }); }
   } else if (cat === "sen") {
-    for (const [id] of SEN) { const it = S.items[id]; if (!it) fresh.push({ t: "sen", id }); else if (it.due <= t) due.push({ t: "sen", id, due: it.due }); }
+    for (const [id] of SEN) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "sen", id }); else if (it.due <= t) (it.b >= 5 ? reuse : due).push(it.b >= 5 ? { t: "sen", id, re: it.due } : { t: "sen", id, due: it.due }); }
+    reuse.sort((a, b) => a.re - b.re);
   } else if (cat === "seg") {
-    for (const [id] of SEG) { const it = S.items[id]; if (!it) fresh.push({ t: "seg", id }); else if (it.due <= t) due.push({ t: "seg", id, due: it.due }); }
+    for (const [id] of SEG) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "seg", id }); else if (it.due <= t) due.push({ t: "seg", id, due: it.due }); }
   } else {
-    for (const [id] of CTX) { const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due }); }
-    for (const id in S.bank) { const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due }); }
+    for (const [id] of CTX) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due }); }
+    for (const id in S.bank) { if (done("B:" + id)) continue; const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due }); }
   }
   due.sort((a, b) => a.due - b.due);
-  return due.concat(fresh);
+  return due.concat(fresh, reuse);
 }
 /* ============ views ============ */
 let VIEW = "home";
@@ -657,8 +728,7 @@ const CAT_NAME = { lad: "造句 Production", sen: "短句精读 Sentence parsing
 function renderHome(main) {
   const w = weights();
   const today = S.log[dayKey()] || { n: 0, sec: 0 };
-  const dueN = ["lad", "sen", "seg", "ctx"].reduce((a, k) => a + candidates(k).filter(x => x.due).length, 0);
-  const d = new Date();
+  const d = new Date(); // no due count anywhere: a backlog number only makes you want to give up
   main.innerHTML = `
   <div class="top"><div><h1>中文练功房</h1><p class="date">${d.getMonth() + 1}月${d.getDate()}日 · 星期${"日一二三四五六"[d.getDay()]}</p></div>
   <p class="small muted" style="text-align:right">今天 ${Math.round(today.sec / 60)} 分钟<br>${today.n} 题</p></div>
@@ -670,7 +740,7 @@ function renderHome(main) {
   ${offwCard()}
   ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
   ${backupNudge()}
-  <div class="card"><div class="spread"><h2>练习 · Practice</h2><span class="small muted">${dueN ? dueN + " 题到期" : "没有积压"}</span></div>
+  <div class="card"><div class="spread"><h2>练习 · Practice</h2></div>
     <button class="btn wide start" id="start">开始 Start</button>
     <div class="stack" style="gap:8px"><span class="label">目标（可选）· Goal (optional)</span>
       <div class="goals">${[[0, "不设 None"], [5, "5 分钟"], [15, "15 分钟"], [30, "30 分钟"]].map(([g, l]) => `<button class="goal ${((S.settings || {}).goal || 0) === g ? "on" : ""}" data-goal="${g}">${l}</button>`).join("")}</div>
@@ -732,41 +802,66 @@ function mixReason() {
 // Writing (rungs 4–5) needs a grader. The online version waits for Claude: no writing cards while offline.
 // The offline copy has no Claude at all, so it always self-grades.
 const writingAllowed = () => !(HOSTED && AI && !ONLINE);
-// Writing cards: due ones first; otherwise drills you've already met get stretched up to writing.
-function writingCandidates(exclude) {
-  const t = now(), due = [], stretch = [];
+// Writing cards: drills at rung 4–5 that are due. (Until v18, drills that weren't due were "stretched" up to
+// writing whenever nothing was due; that reviewed the same drills too early and too often, so it's gone.)
+function writingCandidates(exclude, done = doneToday()) {
+  const t = now(), due = [];
   for (const [id] of LADDER) {
-    if (exclude.has("lad" + id)) continue;
+    if (exclude.has("lad" + id) || done(id)) continue;
     const it = S.items[id]; if (!it) continue;
     if (it.r >= 4 && it.due <= t) due.push({ t: "lad", id, r: it.r, due: it.due });
-    else if (it.r >= 3) stretch.push({ t: "lad", id, r: Math.max(4, it.r), due: it.due, stretch: true });
   }
-  due.sort((a, b) => a.due - b.due); stretch.sort((a, b) => a.due - b.due);
-  return due.concat(stretch);
+  return due.sort((a, b) => a.due - b.due);
 }
 const isWriting = c => c && c.t === "lad" && c.r >= 4;
-// One block of n cards: the weighted mix, with a writing card every 4th slot (every 8th with 少打字).
+// One block of up to n cards (v19). Reviews (due cards) come first, in the weighted mix, with a due writing card
+// in every 4th slot (8th with 少打字). When no reviews are left, a divider card ("reviews done") goes in once per
+// session, then new material follows in the same mix. A card already queued this session, answered today, or
+// sharing a key chunk with one of those is skipped. Returns [] when there's nothing at all left.
 function buildBlock(n, used) {
   const every = S.settings && S.settings.lightTyping ? 8 : 4;
-  const writing = writingAllowed() ? writingCandidates(used).slice(0, Math.max(1, Math.round(n / every))) : [];
-  writing.forEach(c => used.add(c.t + c.id));
-  const rest = n - writing.length;
-  const w = weights();
-  const pools = {};
-  for (const k of ["lad", "sen", "seg", "ctx"]) pools[k] = candidates(k).filter(c => !used.has(c.t + c.id)).map(c => isWriting(c) ? Object.assign({}, c, { r: 3 }) : c);
-  const cnt = {};
-  for (const k in w) cnt[k] = Math.max(pools[k].length ? 1 : 0, Math.round(rest * w[k]));
-  const picked = {};
-  for (const k in pools) picked[k] = pools[k].slice(0, cnt[k]);
+  const done = doneToday();
+  const tag = c => Object.assign(c, { k: sibKey(c.t === "bank" ? "B:" + c.id : c.id) });
+  const free = c => !used.has(c.t + c.id) && !(c.k && used.has("k:" + c.k));
+  // writing slots per block as before; due writing beyond that is shown at rung 3 in the drill slots
+  const writing = writingAllowed() ? writingCandidates(used, done).map(tag).filter(free).slice(0, Math.max(1, Math.round(n / every))) : [];
+  const wIds = new Set(writing.map(c => c.id));
+  const w = weights(), pools = {}, tally = {};
+  for (const k of ["lad", "sen", "seg", "ctx"]) { pools[k] = candidates(k, done).filter(c => !(c.t === "lad" && wIds.has(c.id))).map(tag).map(c => isWriting(c) ? Object.assign({}, c, { r: 3 }) : c); tally[k] = 0; }
   const out = [];
-  const order = ["lad", "sen", "ctx", "lad", "seg", "sen"];
-  let i = 0;
-  while (Object.values(picked).some(a => a.length) || writing.length) {
-    if (writing.length && (out.length % every === 2 || !Object.values(picked).some(a => a.length))) { out.push(writing.shift()); continue; }
-    const k = order[i++ % order.length];
-    if (picked[k].length) out.push(picked[k].shift());
+  const take = c => { out.push(c); used.add(c.t + c.id); if (c.k) used.add("k:" + c.k); };
+  const dueLeft = () => Object.keys(pools).some(k => pools[k].some(c => c.due && free(c)));
+  // the category furthest below its share of the mix, among those that still have a card of the wanted kind
+  const next = isDue => {
+    const ks = Object.keys(pools).filter(k => pools[k].some(c => !!c.due === isDue && free(c)));
+    if (!ks.length) return null;
+    const tot = out.length + 1;
+    ks.sort((a, b) => (tally[a] / tot - w[a]) - (tally[b] / tot - w[b]));
+    const k = ks[0], i = pools[k].findIndex(c => !!c.due === isDue && free(c));
+    tally[k]++;
+    return pools[k].splice(i, 1)[0];
+  };
+  while (out.length < n) {
+    if (!used.has("div")) {
+      const ws = () => { while (writing.length && !free(writing[0])) writing.shift(); return writing.length ? writing.shift() : null; };
+      let c = null;
+      if (out.length % every === 2 || !dueLeft()) c = ws();
+      if (!c) c = next(true);
+      if (!c) c = ws();
+      if (c) { take(c); continue; }
+      // reviews done: divider, then new material (no divider if nothing new is left either)
+      used.add("div");
+      const first = next(false);
+      if (!first) break;
+      out.push({ t: "div", id: "div", none: !used.has("rev") && !out.some(c => c.due) });
+      take(first);
+      continue;
+    }
+    const c = next(false);
+    if (!c) break;
+    take(c);
   }
-  out.forEach(c => used.add(c.t + c.id));
+  if (out.some(c => c.due)) used.add("rev");
   return out;
 }
 // kept for tests and the spacing chat: a fixed-length plan
@@ -782,7 +877,7 @@ function startSession(goal) {
   SESSION.fbUsed = new Set();
   (S.offfb || []).filter(f => !f.seen).forEach(f => SESSION.used.add("lad" + f.id)); // feedback first, then the drill (next session)
   SESSION.q = addFeedback(buildBlock(8, SESSION.used), SESSION);
-  if (!SESSION.q.length) { SESSION = null; toast("暂时没有可练的题 — nothing to practice right now"); return; }
+  if (!SESSION.q.length) { SESSION = null; toast("今天的都练完了，也没有新题了 · All done for today, and no new cards left. 阅读 has passages to read or re-read."); return; }
   setView("session");
 }
 function answered(s) { return s.res.filter(x => x != null).length; }
@@ -806,6 +901,13 @@ function renderSession(main) {
     if (again) { s.used.add("lad" + again.id); s.q.splice(s.i + 1, 0, again); }
     s.i++; render(); window.scrollTo(0, 0);
   });
+  if (card.t === "div") {
+    $("#slot").innerHTML = `<div class="card" id="cc"><span class="label">${card.none ? "今天没有要复习的 · Nothing due today" : "复习完了 · Reviews done"}</span>
+      <h2>${card.none ? "今天没有要复习的" : "今天该复习的都完成了 ✓"}</h2>
+      <p class="muted">${card.none ? "Nothing is due for review today." : "That's everything due for review today."} From here on it's new material: new sentences and drills. Keep going as long as you like; tap ■ whenever.</p></div>`;
+    nextButton($("#cc"), () => { s.i++; render(); window.scrollTo(0, 0); });
+    return;
+  }
   const t0 = now();
   renderCard(card, $("#slot"), (r) => {
     logDay((now() - t0) / 1000, r.ok);
@@ -814,14 +916,8 @@ function renderSession(main) {
     else s.combo = 0;
     if (r.promoted) s.promoted++;
     if (r.mastered) s.mastered++;
-    // Same-session redo (current default, open to change): a missed reading card or drill step 1–3 comes back
-    // 5 cards later, once. Missed writing waits for the next session.
-    const key = card.t + card.id;
-    if (!r.ok && !isWriting(card) && !s.requeued.has(key)) {
-      const again = card.t === "lad" ? { t: "lad", id: card.id, r: Math.max(1, Math.min(card.r, (S.items[card.id] || {}).r || card.r)) } : Object.assign({}, card);
-      s.retry.push({ card: again, at: s.i + 5 });
-      s.requeued.add(key);
-    }
+    // v19: no same-session redo. One appearance per item a day; a miss comes back on a later day.
+    // (Until v18 a missed reading card or drill step 1–3 came back 5 cards later.)
     if (s.best > (S.best.combo || 0)) { S.best.combo = s.best; save(); }
   }, () => { s.i++; render(); window.scrollTo(0, 0); });
 }
@@ -845,8 +941,10 @@ function renderEnd(main) {
   const s = SESSION;
   main.innerHTML = `<div class="card end"><span class="label">练完了 · Done</span>${sessionStats(s)}
     <div class="stack"><button class="btn wide" id="again">再练一会儿 Practice more</button>
+    <button class="btn ghost wide" id="toread">读文章 Read or re-read a passage</button>
     <button class="btn ghost wide" id="home">回首页 Home</button></div></div>`;
   $("#again").onclick = () => startSession();
+  $("#toread").onclick = () => { READ = null; setView("read"); };
   $("#home").onclick = () => setView("home");
 }
 
@@ -908,10 +1006,10 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
   el.innerHTML = `<div class="card" id="cc">${head}<div id="body" class="stack"></div><div id="fb"></div></div>`;
   const body = $("#body", el), fb = $("#fb", el), cc = $("#cc", el);
   let answered = false, given = "";
-  const finish = (score, html) => {
+  const finish = (score, html, src) => {
     if (answered) return; answered = true;
     let promoted = false, mastered = false;
-    if (!placement) { const before = S.items[item.id] ? { ...S.items[item.id] } : null; const it = recordLadder(item.id, rung, score); promoted = score >= 2 && (!before || it.r > before.r); mastered = it.m && !(before && before.m); }
+    if (!placement) { const before = S.items[item.id] ? { ...S.items[item.id] } : null; const it = recordLadder(item.id, rung, score, src); promoted = score >= 2 && (!before || it.r > before.r); mastered = it.m && !(before && before.m); }
     const cls = score >= 3 ? "ok" : score === 2 ? "mid" : "no";
     const verdict = score >= 3 ? "对了 ✓" : score === 2 ? "意思对，可以更地道" : "还不对";
     fb.innerHTML = `<div class="fb ${cls}"><span class="verdict">${verdict}</span>${html || ""}
@@ -979,7 +1077,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
           finish(sc, `<span>你的：<span class="zh">${esc(raw)}</span></span>
             ${g.fixed && norm(g.fixed) !== norm(raw) ? `<span>改一改：<span class="zh" style="font-size:17px">${esc(g.fixed)}</span></span>` : ""}
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
-            ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`);
+            ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a");
         } catch (e) {
           if (cancelled || answered) return;
           const transient = !ONLINE || !e || !e.code || e.code === "upstream_error" || e.code === "rate_limited";
@@ -996,7 +1094,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
         ${entry ? `<span class="small">${waiting ? "Claude 的批改到了会放在首页。Claude's feedback will appear on the home screen when it arrives." : "现在用不了 Claude（离线或到了用量上限）。先自己判断；Claude 能用了会补批改，结果放在首页。Can't reach Claude right now (offline or usage limit), so grade yourself; Claude's feedback will appear on the home screen once it's available again."}</span>` : ""}
         <span class="small">自己判断 How did you do?</span>
         <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
-      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } else if (!HOSTED && !placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`); });
+      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } else if (!HOSTED && !placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`, "s"); });
     }
   }
 }
@@ -1017,6 +1115,7 @@ function settleGrade(entry, g) {
   S.graded = S.graded.slice(0, 20);
   // if Claude disagrees with the self-grade, correct the drill's level
   const it = S.items[entry.id];
+  if (!entry.pl) regradeLog(entry.id, entry.t, score);
   if (it && !entry.pl && entry.self != null) {
     const selfPass = entry.self >= 2, aiPass = score >= 2;
     if (selfPass && !aiPass) { it.r = Math.max(1, it.r - 2); it.m = false; it.due = now(); }
@@ -1090,6 +1189,7 @@ function settleOffline(e, g) {
   if (!g) return true;
   const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
   const it = S.items[e.id];
+  regradeLog(e.id, e.t, score);
   if (it && e.self != null) {
     const selfPass = e.self >= 2, aiPass = score >= 2;
     if (selfPass && !aiPass) { it.r = Math.max(1, it.r - 2); it.m = false; it.due = now(); }
@@ -1270,25 +1370,47 @@ function renderNews(item, el, onResult, onNext) {
 function renderSen(item, el, onResult, onNext) {
   const plain = item.s.replace(/[|\/]/g, "");
   const right = item.opts[0], opts = shuffle(item.opts);
+  // v19: read first, then answer. The sentence is shown alone; 读懂了 stops the (invisible) reading timer and
+  // swaps the sentence for the question, so the options can't be checked against it. 再看一眼 brings the
+  // sentence back but counts as a slow read (it returns in ~2 weeks instead of being retired).
   const timer = makeTimer();
+  let readMs = null, peek = false;
   el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">短句精读 · Sentence parsing</span>${item.gen ? `<span class="chip">AI</span>` : ""}</div>
-    <p class="sent" style="font-size:21px">${esc(plain)}</p><p class="prompt-en" style="font-size:16px">${esc(item.q || "What does it say?")}</p>
-    <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div><div id="fb"></div></div>`;
-  const cc = $("#cc", el);
-  bindOpts(el, b => {
-    const ok = opts[+b.dataset.i] === right;
-    const tr = timedResult("news", ok, timer.stop(), plain);
-    $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
-    if (!ok) b.classList.add("wrong");
-    recordBox(item.id, "sen", ok, "news", tr.credit);
-    const chunks = item.s.split("|").filter(t => !Array.from(t).every(isPunct));
-    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span class="small muted">怎么读 · How it parses</span>
-      <div class="chunks">${chunks.map(c => `<span>${c.split("/").map(esc).join('<i class="may"></i>')}</span>`).join("")}</div>
-      <div class="frames">${(item.frames || []).map(([z, g]) => `<div><b>${esc(z)}</b>${esc(g)}</div>`).join("")}</div>
-      ${ok && tr.credit < 0.75 ? SLOW_NOTE : ""}</div>`;
-    onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i], credit: tr.credit, ms: tr.ms, interrupted: tr.interrupted });
-    nextButton(cc, onNext);
-  });
+    <p class="sent" id="sent" style="font-size:21px">${esc(plain)}</p>
+    <div id="readq"><button class="btn wide" id="gotit">读懂了 · Got it</button>
+      <p class="small muted">${(S.senIntro || 0) < 3 ? "先读懂，选项在后面，到时候句子会先藏起来。Read until you've understood it. The options come next, without the sentence." : ""}</p></div>
+    <div id="ask" hidden><button class="btn ghost" id="peek" style="min-height:38px;padding:8px 14px;margin-bottom:12px">再看一眼 · Look again</button>
+      <p class="prompt-en" style="font-size:16px">${esc(item.q || "What does it say?")}</p>
+      <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div><div id="fb"></div></div>`;
+  const cc = $("#cc", el), sent = $("#sent", el);
+  const kd = e => { if (!cc.isConnected) { document.removeEventListener("keydown", kd); return; } if ((e.key === "Enter" || e.key === " ") && !e.isComposing) { e.preventDefault(); reveal(); } };
+  document.addEventListener("keydown", kd);
+  function reveal() {
+    if (readMs != null) return;
+    document.removeEventListener("keydown", kd);
+    readMs = timer.stop();
+    S.senIntro = (S.senIntro || 0) + 1;
+    sent.hidden = true; $("#readq", el).hidden = true; $("#ask", el).hidden = false;
+    $("#peek", el).onclick = () => { peek = true; sent.hidden = false; $("#peek", el).hidden = true; };
+    bindOpts($("#ask", el), b => {
+      const ok = opts[+b.dataset.i] === right;
+      const tr = timedResult("senread", ok, readMs, plain);
+      const credit = ok ? (peek ? Math.min(tr.credit, 0.6) : tr.credit) : 0;
+      $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
+      if (!ok) b.classList.add("wrong");
+      recordSen(item.id, ok, credit, peek);
+      sent.hidden = false; $("#peek", el).hidden = true;
+      const chunks = item.s.split("|").filter(t => !Array.from(t).every(isPunct));
+      const solid = ok && credit >= 0.75;
+      $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span class="small muted">怎么读 · How it parses</span>
+        <div class="chunks">${chunks.map(c => `<span>${c.split("/").map(esc).join('<i class="may"></i>')}</span>`).join("")}</div>
+        <div class="frames">${(item.frames || []).map(([z, g]) => `<div><b>${esc(z)}</b>${esc(g)}</div>`).join("")}</div>
+        ${solid ? "" : `<span class="small muted">${ok ? (peek ? "对了，看了一眼 · Right, with a look back." : "对了，就是慢了点 · Right, just not quick yet.") : ""} 这句两周左右再来 · This sentence comes back in about two weeks.</span>`}</div>`;
+      onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i], credit, ms: readMs, interrupted: tr.interrupted });
+      nextButton(cc, onNext);
+    });
+  }
+  $("#gotit", el).onclick = reveal;
 }
 function renderPick(item, el, onResult, onNext) {
   const right = item.opts[0], opts = shuffle(item.opts);
@@ -2354,18 +2476,18 @@ function forecast(days, mins) {
     let covered = 0, cards = 0;
     for (let d = 1; d <= days; d++) {
       CLOCK_OFF = keepOff + d * DAY;
-      const tally = {}, lists = {}; cats.forEach(k => { tally[k] = 0; lists[k] = candidates(k); });
+      const tally = {}, lists = {}; cats.forEach(k => { tally[k] = 0; lists[k] = candidates(k).filter(c => !c.re); }); // reused old sentences don't count
       let n = 0;
       while (n < perDay) {
         // the day's due + new cards per category (computed once a day: fast enough for a phone);
-        // pick the category furthest below its share; a miss goes to the back of its list (due again in 10 min)
+        // pick the category furthest below its share; each card once a day (a miss comes back on a later day)
         const avail = cats.filter(k => lists[k].length); if (!avail.length) break;
         const k = avail.sort((a, b) => (tally[a] / (n + 1) - w[a]) - (tally[b] / (n + 1) - w[b]))[0];
         const c = lists[k].shift(), ok = rnd() < 0.85;
-        if (!ok) lists[k].push(Object.assign({}, c, { due: 1 }));
         if (c.t === "lad") recordLadder(c.id, (S.items[c.id] || {}).r || c.r, ok ? 3 : 1);
         else if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx");
-        else recordBox(c.id, c.t, ok, c.t === "sen" ? "news" : c.t);
+        else if (c.t === "sen") recordSen(c.id, ok, 1);
+        else recordBox(c.id, c.t, ok, c.t);
         tally[k]++; n++; cards++; CLOCK_OFF += per * 1000;
       }
       if (n < perDay * 0.9) break;
@@ -2461,6 +2583,7 @@ function rescoreLastPlacement() {
   catch (e) { $("#main").innerHTML = `<div class="card"><h2>加载失败</h2><p class="muted">Couldn't load the word data. Check your connection and reload.</p></div>`; return; }
   $("#tabs").hidden = false;
   rescoreLastPlacement();
+  migrateSen();
   render();
   drawOffline();
   connectRemote();
