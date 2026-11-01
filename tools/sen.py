@@ -2,8 +2,10 @@
 # s uses the chunk markup (| chunk break, / word break inside a chunk). opts[0] is correct.
 # Wrong options fit the topic and differ only in what the structure decides.
 N = []
-def sen(s, opts, frames, q="What does it say?"):
-    N.append(dict(id="N%02d" % (len(N) + 1), s=s, q=q, opts=opts, frames=frames))
+def sen(s, opts, frames, q="What does it say?", ft=None):
+    d = dict(id="N%02d" % (len(N) + 1), s=s, q=q, opts=opts, frames=frames)
+    if ft: d["ft"] = ft
+    N.append(d)
 
 sen("据|海关/总署|统计|，|今年|前|十个/月|，|我国|进出口/总值|同比|增长|4.2%|，|其中|出口|增长|6.1%|。",
     ["Total trade rose 4.2% year on year in the first ten months, with exports up 6.1%", "Total trade rose 6.1% year on year in the first ten months, with exports up 4.2%", "In October, total trade rose 4.2% year on year, with exports up 6.1%", "Total trade rose 4.2% in the first ten months, and exports made up 6.1% of it"],
@@ -95,3 +97,33 @@ sen("他|宁可|多|花|点|钱|，|也|不|愿意|排|两个/小时|的|队|。
 sen("直到|看到|新闻|，|我|才|知道|那/条/路|已经|封|了|三天|了|。",
     ["Only when I saw the news did I learn the road had already been closed for three days", "When I saw the news, I learned the road would close in three days", "I knew the road had been closed for three days before the news came out", "The news said the road will be closed for three days"],
     [["直到…才…", "not until … did …"], ["封了三天了", "has been closed for three days (and still is)"]])
+
+# v24: which frame each wrong option tests (index into frames, None = no single frame). A wrong pick turns that
+# frame into a fragment the learner reviews later in another sentence. opts[0] (correct) is always None.
+FT = {
+ "N01": [2, 1, 2], "N02": [1, 3, 2], "N03": [1, 3, 2], "N04": [1, 2, 2], "N05": [1, 2, None],
+ "N06": [0, 2, 2], "N07": [0, 2, 2], "N08": [0, 1, 1], "N09": [1, 2, None], "N10": [1, 1, 0],
+ "N11": [2, 3, 1], "N12": [1, 0, 2], "N13": [3, 3, 1], "N14": [1, 0, 2], "N15": [0, 2, 1],
+ "N16": [1, 0, 2], "N17": [2, 0, 2], "N18": [0, 1, 2], "N19": [1, 2, 0], "N20": [0, 0, 1],
+ "N21": [1, 2, 1], "N22": [0, 1, 0], "N23": [0, 1, None], "N24": [None, 1, 0], "N25": [0, 0, 0],
+ "N26": [2, 1, 3], "N27": [0, 0, None], "N28": [2, 0, 1], "N29": [0, 0, 0], "N30": [1, 0, 1],
+}
+for x in N:
+    if x["id"] in FT: x["ft"] = [None] + FT[x["id"]]
+
+# v24: the chunking drill's trap sentences, as parsing items (a wrong word split changes the meaning)
+sen("解放碑|附近|那家|小面|真的|绝|。",
+    ["The Chongqing-noodle shop near Jiefangbei is seriously amazing", "The small noodle shop near Jiefangbei has really closed for good", "The noodles near Jiefangbei are really cheap", "Jiefangbei is right next to a famous noodle street"],
+    [["小面", "Chongqing spicy noodles (one word)"], ["绝", "amazing, unbeatable (slang)"], ["附近", "near"]], ft=[None, 1, 1, 2])
+sen("南京/市|长江/大桥|今天|封闭/维修|。",
+    ["Nanjing's Yangtze River Bridge is closed for repairs today", "Nanjing's mayor, Jiang Daqiao, is closing for repairs today", "Nanjing is repairing several bridges over the Yangtze today", "Nanjing's Yangtze River Bridge reopens today after repairs"],
+    [["长江大桥", "Yangtze River Bridge (南京市 | 长江大桥, not 市长 | 江大桥)"], ["封闭维修", "closed for repairs"]], ft=[None, 0, 0, 1])
+sen("结婚/的|和|尚未/结婚/的|都|来/了|。",
+    ["Both the married and the not-yet-married came", "The married people and the monk all came", "Only those not yet married came", "The married couple and their guests all came"],
+    [["尚未", "not yet (formal; 和 | 尚未, not 和尚 monk)"], ["…的和…的", "those who … and those who …"]], ft=[None, 0, 1, 1])
+sen("美/国会|通过|了|这项|法案|。",
+    ["The US Congress passed this bill", "America will pass this bill", "The US passed this bill at a meeting", "The American states passed this bill"],
+    [["国会", "Congress (美 | 国会, not 美国 | 会 'will')"], ["美", "the US (abbreviation)"]], ft=[None, 0, 0, 1])
+sen("他|说/的|确实|在理|。",
+    ["What he said really makes sense", "He did say it, and he was right to", "He said it was certainly reasonable", "He spoke about what's right"],
+    [["说的", "what (he) said (说的 | 确实, not 的确 | 实在)"], ["确实", "really, indeed"], ["在理", "reasonable, makes sense"]], ft=[None, 0, 0, 2])

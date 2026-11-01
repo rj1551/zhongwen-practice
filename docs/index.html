@@ -744,9 +744,10 @@ function sibKey(id) {
   if (SIB_CACHE.has(id)) return SIB_CACHE.get(id);
   let k = null;
   if (id.startsWith("B:")) k = id.slice(2);
+  else if (id.startsWith("F:")) k = id;
   else if (LADDER.has(id)) { const m = /\[([^\]]+)\]/.exec(LADDER.get(id).zh || ""); k = m ? m[1].replace(/[|\/]/g, "") : null; }
   else if (CTX.has(id)) k = CTX.get(id).w;
-  if (LADDER.has(id) || CTX.has(id) || id.startsWith("B:")) SIB_CACHE.set(id, k);
+  if (LADDER.has(id) || CTX.has(id) || id.startsWith("B:") || id.startsWith("F:")) SIB_CACHE.set(id, k);
   return k;
 }
 function doneToday() {
@@ -820,6 +821,7 @@ function candidates(cat, done = doneToday()) {
   } else {
     for (const [id] of CTX) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due, k0: dueKey(it) }); }
     for (const id in S.bank) { if (done("B:" + id)) continue; const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due, k0: dueKey(it) }); }
+    for (const id in S.items) { const it = S.items[id]; if (it.t === "frag" && it.due <= t && !done(id)) due.push({ t: "frag", id, due: it.due, k0: dueKey(it) }); }
   }
   due.sort((a, b) => (a.k0 != null && b.k0 != null ? a.k0 - b.k0 : a.due - b.due));
   return due.concat(fresh, reuse);
@@ -918,7 +920,7 @@ function backupNudge() {
     <button class="btn soft" id="backup-go">去导出 Go to export</button></div>`;
 }
 function mixReason() {
-  const k = ["ctx", "seg", "news", "pick", "write", "speed"].map(x => [x, skillVal(x)]).sort((a, b) => a[1] - b[1]);
+  const k = ["ctx", "news", "pick", "write", "speed"].map(x => [x, skillVal(x)]).sort((a, b) => a[1] - b[1]);
   const names = { ctx: "words in context", seg: "chunking", news: "written-register parsing", pick: "choosing natural Chinese", write: "writing Chinese", speed: "reading speed" };
   return `Your weakest areas right now: <b>${names[k[0][0]]}</b> (${pct(k[0][1])}) and <b>${names[k[1][0]]}</b> (${pct(k[1][1])}). The weaker a skill, the more of the session it gets; production always gets a boost because it's your main goal.`;
 }
@@ -969,7 +971,7 @@ function load7() {
   }
   return sec / 60;
 }
-const isNewToday = it => it && it.h && it.h.length && !it.z && dayKey(it.h[0][0] * 1000) === dayKey();
+const isNewToday = it => it && it.t !== "frag" && it.h && it.h.length && !it.z && dayKey(it.h[0][0] * 1000) === dayKey();
 function tripNewCap() {
   const c = stockCfg(); if (!c.trip) return null;
   const today = midnight(now()), from = new Date(c.from + "T00:00").getTime(), to = new Date(c.to + "T00:00").getTime();
@@ -1039,9 +1041,11 @@ function buildBlock(n, used, rnd = Math.random) {
     // 3. new phase
     if (pNew == null) pNew = newChance();
     let c = null, isNew = false;
-    if (rnd() < pNew) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
+    if (!out.some(x => x.t === "rr") && rnd() < 0.15) { const rp = rereadable(used)[0]; if (rp) { used.add("rr" + rp.id); c = { t: "rr", id: rp.id }; } }
+    if (!c && rnd() < pNew) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
     if (!c) c = next(false, ["sen"]);
     if (!c) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
+    if (!c) { const rp = rereadable(used)[0]; if (rp) { used.add("rr" + rp.id); c = { t: "rr", id: rp.id }; } }
     if (!c) { const i = pools.sen.findIndex(x => x.re && free(x)); if (i >= 0) c = pools.sen.splice(i, 1)[0]; }
     if (!c) break;
     if (isNew && S.nb && !S.nb.under) { S.nb.over++; pNew = Math.max(0.05, Math.pow(0.5, S.nb.over / 3)); }
@@ -1100,12 +1104,13 @@ function renderSession(main) {
   if (card.t === "div") {
     $("#slot").innerHTML = `<div class="card" id="cc"><span class="label">${card.none ? "今天没有要复习的 · Nothing due today" : "复习完了 · Reviews done"}</span>
       <h2>${card.none ? "今天没有要复习的" : "今天该复习的都完成了 ✓"}</h2>
-      <p class="muted">${card.none ? "Nothing is due for review today." : "That's everything due for review today."} From here on it's new material: new sentences and drills. Keep going as long as you like; tap ■ whenever.</p></div>`;
+      <p class="muted">${card.none ? "Nothing is due for review today." : "That's everything due for review today."} From here on it's new material (new sentences and drills) and the odd re-read. Keep going as long as you like; tap ■ whenever.</p></div>`;
     nextButton($("#cc"), () => { s.i++; render(); window.scrollTo(0, 0); });
     return;
   }
   const t0 = now();
   renderCard(card, $("#slot"), (r) => {
+    if (r.rr) { logDay(Math.min((now() - t0) / 1000, 900), true); return; } // re-read: time only
     logDay((now() - t0) / 1000, r.ok);
     s.res[s.i] = r.ok;
     if (r.ok) { s.combo++; s.best = Math.max(s.best, s.combo); const c = $("#combo"); if (c && s.combo >= 2) { c.textContent = "连对 ×" + s.combo; c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); } }
@@ -1161,6 +1166,8 @@ function renderCard(card, el, onResult, onNext) {
   if (card.t === "news") return renderNews(card.item, el, onResult, onNext);
   if (card.t === "pick") return renderPick(card.item, el, onResult, onNext);
   if (card.t === "sen") return renderSen(SEN.get(card.id), el, onResult, onNext);
+  if (card.t === "frag") return renderFrag(card.id, el, onResult, onNext);
+  if (card.t === "rr") return renderReread(card.id, el, onResult, onNext);
 }
 // Tap once to select, tap the same option again to confirm (or 1–4 then Enter on a keyboard).
 function bindOpts(scope, onPick) {
@@ -1595,7 +1602,7 @@ function renderNews(item, el, onResult, onNext) {
     nextButton(cc, onNext);
   });
 }
-function renderSen(item, el, onResult, onNext) {
+function renderSen(item, el, onResult, onNext, frag) {
   const plain = item.s.replace(/[|\/]/g, "");
   const right = item.opts[0], opts = shuffle(item.opts);
   // v22: read first, then answer. The sentence is shown alone; 读懂了 stops the (invisible) reading timer and
@@ -1627,18 +1634,112 @@ function renderSen(item, el, onResult, onNext) {
       $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
       if (!ok) b.classList.add("wrong");
       recordSen(item.id, ok, credit, peek);
+      const fid = ok ? null : addFragment(item, item.opts.indexOf(opts[+b.dataset.i]));
       sent.hidden = false; $("#peek", el).hidden = true;
       const chunks = item.s.split("|").filter(t => !Array.from(t).every(isPunct));
       const solid = ok && credit >= 0.75;
       $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span class="small muted">怎么读 · How it parses</span>
         <div class="chunks">${chunks.map(c => `<span>${c.split("/").map(esc).join('<i class="may"></i>')}</span>`).join("")}</div>
         <div class="frames">${(item.frames || []).map(([z, g]) => `<div><b>${esc(z)}</b>${esc(g)}</div>`).join("")}</div>
-        ${solid ? "" : `<span class="small muted">${ok ? (peek ? "对了，看了一眼 · Right, with a look back." : "对了，就是慢了点 · Right, just not quick yet.") : ""} 这句两周左右再来 · This sentence comes back in about two weeks.</span>`}</div>`;
+        ${solid ? "" : `<span class="small muted">${ok ? (peek ? "对了，看了一眼 · Right, with a look back." : "对了，就是慢了点 · Right, just not quick yet.") : ""} 这句两周左右再来 · This sentence comes back in about two weeks.</span>`}
+        ${fid ? `<div class="row" id="fragnote" style="gap:8px"><span class="small">📌 「<b class="zh">${esc(S.items[fid].p)}</b>」加入复习，以后在别的句子里再见 · added for review in other sentences</span><button class="btn ghost" id="fragx" style="min-height:32px;padding:4px 10px">✕ 不用 Skip</button></div>` : ""}
+        ${frag ? `<span class="small muted">这句是为了复习「${esc(frag)}」· This sentence was reviewing 「${esc(frag)}」.</span>` : ""}</div>`;
+      const fx = $("#fragx", el); if (fx) fx.onclick = () => { dropFragment(fid); $("#fragnote", el).remove(); toast("不复习这个了 · Won't review it"); };
       onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i], credit, ms: readMs, interrupted: tr.interrupted });
       nextButton(cc, onNext);
     });
   }
   $("#gotit", el).onclick = reveal;
+}
+/* ---------- parsing fragments (v24) ----------
+   A wrong pick on a parsing card names the structure it misread: each option's frame index is in item.ft. That
+   phrase becomes a small memory item "F:<phrase>" (t "frag", FSRS word group, same budget as words). When it's due
+   it's reviewed in a DIFFERENT parsing sentence that contains it (graded by that card); if there is none, as the
+   phrase in its original sentence with a choice of meanings. ✕ on the feedback drops it (a slip). */
+const fragPieces = z => String(z || "").split(/…|\.\.\./).map(norm).filter(Boolean);
+function senHas(item, z) {
+  const t = norm(item.s.replace(/[|\/]/g, "")); let pos = 0;
+  for (const piece of fragPieces(z)) { const i = t.indexOf(piece, pos); if (i < 0) return false; pos = i + piece.length; }
+  return fragPieces(z).length > 0;
+}
+function addFragment(item, optIdx) {
+  const fi = item.ft && optIdx >= 0 ? item.ft[optIdx] : null;
+  if (fi == null || !item.frames || !item.frames[fi]) return null;
+  const [z, g] = item.frames[fi], id = "F:" + norm(z).slice(0, 24) + (z.includes("…") ? "…" : "");
+  const it = S.items[id] = S.items[id] || { t: "frag", n: 0, ok: 0 };
+  it.p = z; it.g = g; it.src = item.id;
+  it.n++; logAnswer(it, 0, 0); fsrsReplay(it); save();
+  return id;
+}
+function dropFragment(id) { delete S.items[id]; save(); }
+function fragSentence(it) {
+  const t = now(), list = [...SEN.values()].filter(x => x.id !== it.src && senHas(x, it.p));
+  const fresh = list.filter(x => !S.items[x.id]);
+  const rested = list.filter(x => S.items[x.id] && t - lastAnswerT(S.items[x.id]) > 14 * DAY).sort((a, b) => lastAnswerT(S.items[a.id]) - lastAnswerT(S.items[b.id]));
+  return fresh[0] || rested[0] || null;
+}
+function renderFrag(id, el, onResult, onNext) {
+  const it = S.items[id];
+  if (!it) return onNext();
+  const sx = fragSentence(it);
+  // (a miss here may already have been logged by addFragment a moment ago: don't count it twice)
+  if (sx) return renderSen(sx, el, r => { if (!S.items[id] || now() - lastAnswerT(S.items[id]) > 5000) recordBox(id, "frag", r.ok, null); onResult(r); }, onNext, it.p);
+  // no other sentence has it: the phrase in its original sentence, choose what it means here
+  const src = SEN.get(it.src), plain = src ? src.s.replace(/[|\/]/g, "") : it.p;
+  const others = shuffle([...new Set([...SEN.values()].flatMap(x => (x.frames || []).map(f => f[1])).filter(g => g !== it.g))]).slice(0, 3);
+  const opts = shuffle([it.g, ...others]);
+  const pieces = fragPieces(it.p);
+  let shown = esc(plain); for (const pc of new Set(String(it.p).split("…").filter(Boolean))) shown = shown.split(esc(pc)).join(`<mark>${esc(pc)}</mark>`);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">句型复习 · Structure review</span></div>
+    <p class="sent">${shown}</p><p class="small muted">这里的「${esc(it.p)}」是什么意思？ What does it mean here?</p>
+    <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  bindOpts(el, b => {
+    const ok = opts[+b.dataset.i] === it.g;
+    $$(".opt", el).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === it.g) x.classList.add("right"); });
+    if (!ok) b.classList.add("wrong");
+    recordBox(id, "frag", ok, null);
+    $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span><b class="zh">${esc(it.p)}</b> · ${esc(it.g)}</span></div>`;
+    onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i] });
+    nextButton(cc, onNext);
+  });
+}
+/* ---------- re-reads inside practice (v24) ----------
+   After the divider, passages you've read before can come up as a re-read card (about one per block): read it again,
+   tap 读完了, see chars/min against your first read. No questions; doesn't touch the reading-speed stat or any
+   schedule. The gap before a passage is offered again doubles each time: 2, 4, 8, 16, then 32 days. */
+const rereadGap = r => 2 * Math.pow(2, Math.min(4, r.re || 0)) * DAY;
+function rereadable(used) {
+  const t = now();
+  return [...PSG.values()].filter(p => { const r = S.reads[p.id]; return r && !used.has("rr" + p.id) && t - (r.lastT || r.t) >= rereadGap(r); })
+    .sort((a, b) => (S.reads[a.id].lastT || S.reads[a.id].t) - (S.reads[b.id].lastT || S.reads[b.id].t));
+}
+const psgChars = p => Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
+function recordReread(pid, cpm) {
+  const r = S.reads[pid]; if (!r) return;
+  if (cpm) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; }
+  r.re = (r.re || 0) + 1; r.lastT = now(); save();
+}
+function renderReread(pid, el, onResult, onNext) {
+  const p = PSG.get(pid), r = S.reads[pid];
+  if (!p || !r) return onNext();
+  const timer = makeTimer();
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">重读 · Re-read for speed</span><span class="chip ${p.reg || ""}">${p.mine ? "我的" : REG_NAME[p.reg] || ""}</span></div>
+    <h2 class="zh" style="font-size:19px">${esc(p.mine ? mineTitle(p) : p.title)}</h2>
+    <div class="reading" style="font-size:19px;line-height:1.9">${p.paras.map(x => `<p>${esc(x.replace(/[|\/]/g, ""))}</p>`).join("")}</div>
+    <p class="small muted">读过了，再读一遍练速度，不答题 · You've read this before: read it again at your pace, no questions.</p>
+    <button class="btn wide" id="done">读完了 Done</button><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  $("#done", el).onclick = () => {
+    $("#done", el).remove();
+    const sec = timer.stop() / 1000, cpm = Math.round(psgChars(p) / (sec / 60)), paused = sec > 20 * 60;
+    recordReread(pid, paused ? null : cpm);
+    const gain = r.cpm ? Math.round((cpm / r.cpm - 1) * 100) : 0;
+    $("#fb", el).innerHTML = `<div class="fb ok">${paused ? `<span>看起来中途停了，这次不算速度 · Looks like you paused, so speed isn't counted.</span>` :
+      `<span><b style="font-size:20px">${cpm}</b> 字/分钟 · 第一次 first read ${r.cpm} ${gain > 0 ? `<b style="color:var(--good)">+${gain}%</b>` : gain < 0 ? `(${gain}%)` : ""}</span>`}</div>`;
+    onResult({ ok: true, rr: true, ms: sec * 1000 });
+    nextButton(cc, onNext);
+  };
 }
 function renderPick(item, el, onResult, onNext) {
   const right = item.opts[0], opts = shuffle(item.opts);
@@ -1661,7 +1762,6 @@ function renderPick(item, el, onResult, onNext) {
 // It stops after 2 misses at one level, after the top level is passed twice, or after MAX_STEPS items.
 const SECTIONS = [
   { key: "ctx", zh: "语境词", en: "Words inside real sentences. It starts easy and gets harder each time you're right, until you start missing. Missing some is expected." },
-  { key: "seg", zh: "断词", en: "Split sentences into chunks. The last level has trap sentences where a wrong cut changes the words." },
   { key: "news", zh: "新闻理解", en: "One-sentence news items in formal written Chinese, getting denser as you go." },
   { key: "pick", zh: "选最自然", en: "English → pick what a native speaker would say. At higher levels every option is grammatical; only one is natural." },
   { key: "write", zh: "自己写", en: "Five sentences to type in Chinese. Don't look anything up." },
@@ -1790,10 +1890,10 @@ function placementRead(slot, pid, next) {
     askQ();
   };
 }
-function slowList(R, names) { return ["ctx", "seg", "news"].filter(k => R[k + "Fluency"] != null && R[k + "Fluency"] < 0.85).map(k => names[k].split(" ")[0]).join("、"); }
+function slowList(R, names) { return ["ctx", "news"].filter(k => R[k + "Fluency"] != null && R[k + "Fluency"] < 0.85).map(k => names[k].split(" ")[0]).join("、"); }
 function finishPlacement(main) {
   const R = PLACE.res;
-  const sk = { ctx: R.ctx ?? .5, seg: R.seg ?? .5, news: R.news ?? .5, pick: R.pick ?? .5, write: R.write ?? .5, speed: R.speed ?? .4 };
+  const sk = { ctx: R.ctx ?? .5, news: R.news ?? .5, pick: R.pick ?? .5, write: R.write ?? .5, speed: R.speed ?? .4 };
   S.skills = sk; S.placed = true; S.placedAt = now(); S.cpm = R.cpm;
   S.recent = {}; // fresh start: the new profile shouldn't be diluted by answers from an older test
   S.placementLog = (S.placementLog || []).concat([{ t: now(), timed: true, skills: sk, levels: { ctx: R.ctxLevel, seg: R.segLevel, news: R.newsLevel, pick: R.pickLevel }, cpm: R.cpm, readAcc: R.readAcc, answers: PLACE.log }]).slice(-3);
@@ -1808,7 +1908,7 @@ function finishPlacement(main) {
   const gap = (sk.ctx + sk.news) / 2 - (sk.pick + sk.write) / 2;
   main.innerHTML = `<div class="card"><span class="label">测试结果 · Your profile</span>
     <div class="bars">${Object.keys(sk).map(k => `<div class="bar"><span>${names[k].split(" ")[0]}</span><span class="t"><i style="width:${pct(sk[k])}"></i></span><span class="v">${pct(sk[k])}</span></div>`).join("")}</div>
-    <p class="small muted">${["ctx", "seg", "news", "pick"].map(k => names[k].split(" ")[0] + lv(k)).join(" · ")}<br>${slowList(R, names) ? `答对了但比较慢 Right but slow: ${slowList(R, names)}. Those are scored partly on speed.<br>` : ""}<br>阅读速度：约 ${R.cpm || "—"} 字/分钟 · 理解 ${Math.round((R.readAcc || 0) * 3)}/3</p></div>
+    <p class="small muted">${["ctx", "news", "pick"].map(k => names[k].split(" ")[0] + lv(k)).join(" · ")}<br>${slowList(R, names) ? `答对了但比较慢 Right but slow: ${slowList(R, names)}. Those are scored partly on speed.<br>` : ""}<br>阅读速度：约 ${R.cpm || "—"} 字/分钟 · 理解 ${Math.round((R.readAcc || 0) * 3)}/3</p></div>
     <div class="card"><span class="label">这说明什么 · What this means</span>
     <p>Weakest: <b>${names[order[0]]}</b>, then <b>${names[order[1]]}</b>.</p>
     <p>${gap > 0.15 ? `Recognition is ahead of production by about ${Math.round(gap * 100)} points. Sessions lean on the production ladder until that gap closes.` : gap < -0.1 ? `Production held up better than recognition here, so sessions will push more reading and chunking.` : `Recognition and production came out fairly even; sessions spread across both.`}</p>
@@ -2431,7 +2531,7 @@ function renderMe(main) {
   const segRecent = S.recent.seg || [];
   const week = [];
   for (let i = 6; i >= 0; i--) { const t = now() - i * DAY; const d = S.log[dayKey(t)]; week.push({ lab: "日一二三四五六"[new Date(t).getDay()], m: d ? d.sec / 60 : 0 }); }
-  const names = { ctx: "语境识词", seg: "断词", news: "书面语", pick: "选自然", write: "自己写", speed: "阅读速度" };
+  const names = { ctx: "语境识词", news: "书面语", pick: "选自然", write: "自己写", speed: "阅读速度" };
   main.innerHTML = `<div class="top"><div><h1>进度</h1><p class="date">${esc(syncNote)}</p></div></div>
   <div class="card"><span class="label">能写出来的句型 · Production-ready</span>
     <div class="row" style="align-items:flex-end"><span class="big">${ready}</span><span class="muted">/ ${LADDER.size} · 在练 ${started}</span></div>
@@ -2628,12 +2728,14 @@ async function mergeCode(raw, fail) {
 async function genSen(quiet) {
   const genStatus = quiet ? () => {} : window.genStatus;
 
-  const missed = [...SEN.values()].filter(x => { const it = S.items[x.id]; return it && it.b === 0 && it.n; }).flatMap(x => (x.frames || []).map(f => f[0])).slice(0, 12);
+  // structures the learner misread (fragments), so new sentences give them another sentence to be reviewed in
+  const missed = Object.values(S.items).filter(it => it.t === "frag" && it.p).sort((a, b) => (a.due || 0) - (b.due || 0)).map(it => it.p).slice(0, 12);
   const prompt = `Create 10 sentence-parsing drills for an advanced Mandarin reader (HSK 6+ vocabulary) who understands formal written Chinese only slowly. Each item is ONE dense sentence in the style of news, official notices, reports or formal writing (simplified Chinese, 20–40 characters), with ONE English multiple-choice question about its precise meaning.
 The 4 options must all fit the topic, so elimination doesn't work; the wrong ones differ only in what the structure decides (time frames like 截至/自…起, amounts like 余/近/成, direction like 下降/下降到, negation frames like 并非…而是, modality like 或将/有望/不得, cause vs result).
 Structures the learner recently misread: ${missed.join("、") || "none yet"}.
 Reply with only a JSON array of 10 objects:
-{"s":"the sentence split into chunks with | (chunk breaks) and / (word breaks inside a chunk), punctuation as its own chunk, e.g. 据|海关/总署|统计|，|出口|增长|6%|。","q":"What does it say?","opts":["correct","wrong","wrong","wrong"],"frames":[["key structure","short English gloss"]]}`;
+{"s":"the sentence split into chunks with | (chunk breaks) and / (word breaks inside a chunk), punctuation as its own chunk, e.g. 据|海关/总署|统计|，|出口|增长|6%|。","q":"What does it say?","opts":["correct","wrong","wrong","wrong"],"frames":[["key structure","short English gloss"]],"ft":[null, 0, 1, 0]}
+"ft": for each option, the index in "frames" of the structure that option gets wrong (null for the correct first option, null if none). Use some of the misread structures above in some sentences, written exactly as listed.`;
   genStatus("sen", `<span class="spin"></span> 生成中…（通常 30–90 秒）`, true);
   try {
     const arr = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("sen", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
@@ -2643,6 +2745,7 @@ Reply with only a JSON array of 10 objects:
     arr.forEach((x, i) => {
       if (!x || typeof x.s !== "string" || !x.s.includes("|") || !Array.isArray(x.opts) || x.opts.length !== 4) return;
       const item = { id: "GS" + now().toString(36) + uid4() + i, s: x.s, q: String(x.q || "What does it say?"), opts: x.opts.map(String), frames: (Array.isArray(x.frames) ? x.frames : []).filter(f => Array.isArray(f) && f.length >= 2).map(f => [String(f[0]), String(f[1])]).slice(0, 5), gen: true };
+      if (Array.isArray(x.ft) && x.ft.length === 4) item.ft = x.ft.map((f, j) => j > 0 && Number.isInteger(f) && f >= 0 && f < item.frames.length ? f : null);
       S.gen.sen.push(item); SEN.set(item.id, item); added++;
     });
     save();
@@ -2718,8 +2821,9 @@ function forecast(days, mins) {
         const block = buildBlock(8, used, rnd).filter(c => c.t !== "div" && !c.re);
         if (!block.length) break;
         for (const c of block) {
+          if (c.t === "rr") { const pp = PSG.get(c.id), r0 = S.reads[c.id], cpm = (r0 && (r0.lastCpm || r0.cpm)) || 80, rs = pp ? psgChars(pp) / cpm * 60 : 120; recordReread(c.id, cpm); sec += rs; CLOCK_OFF += rs * 1000; continue; }
           if (c.t === "lad") { const ok = rnd() < 0.85; recordLadder(c.id, c.r || 5, ok ? 3 : 0, ok && (c.r === 4 || c.r === 5) ? "x" : undefined); sec += c.r === 4 || c.r === 5 ? 90 : 25; }
-          else { const ok = rnd() < 0.9; if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx"); else if (c.t === "sen") recordSen(c.id, ok, 1); else recordBox(c.id, c.t, ok, c.t); sec += 25; }
+          else { const ok = rnd() < 0.9; if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx"); else if (c.t === "sen") recordSen(c.id, ok, 1); else if (c.t === "frag") recordBox(c.id, "frag", ok, null); else recordBox(c.id, c.t, ok, c.t); sec += 25; }
           CLOCK_OFF += (c.t === "lad" && c.r >= 4 && c.r <= 5 ? 90 : 25) * 1000;
           if (sec >= mins * 60) break;
         }
