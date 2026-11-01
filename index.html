@@ -272,32 +272,42 @@ function splitState(st) {
   return docs;
 }
 const newerItem = (x, y) => !y || (x.n || 0) > (y.n || 0) || ((x.n || 0) === (y.n || 0) && (x.due || 0) > (y.due || 0));
-/* ---------- answer log (v22) ----------
-   Each item keeps its last H_MAX answers in it.h: [time in s, rung (0 = not a drill), value, source?, Claude's later score?]
-   value: drills = score 0–3; reading cards = 0 if wrong, else time credit × 100; bank words 100 / 0.
-   source: "s" self-graded, "a" graded by Claude, "p" looked back at the sentence; absent = checked by the app.
-   Merging takes the union of both logs, so no answer is lost. The schedule fields still come from newerItem for
-   now; a future scheduler (FSRS) can replay the merged log instead. */
-const H_MAX = 30;
+/* ---------- answer log (v22, v23) ----------
+   Each item keeps its recent answers in it.h: [time in s, rung, value, source?, Claude's later grade?]
+   rung: 0 = not a drill; drills 1 pick, 2 gap, 3 tiles, 4 typing with hint, 5 typing, 6 type the missing chunk.
+   value: drills = score 0–3, or [score, chunk] when Claude said whether the key chunk was used ("ok"/"wrong"/"missing");
+   reading cards = 0 if wrong, else time credit × 100; bank words 100 / 0.
+   source: "s" self-graded, "k" key chunk not found (offline, no Claude), "a" Claude, "x" matched a stored answer,
+   "p" looked back at the sentence; absent = checked by the app.
+   v23: FSRS schedules are computed by replaying this log (fsrsReplay), starting from the seed it.z = [s, d, lastReview]
+   (state before the oldest kept answer). Merging = union of answers, then replay: no answer is ever lost. */
+const H_MAX = 40;
 function logAnswer(it, rung, v, src) {
   const e = [Math.round(now() / 1000), rung, v]; if (src) e.push(src);
-  (it.h = it.h || []).push(e); if (it.h.length > H_MAX) it.h = it.h.slice(-H_MAX);
+  (it.h = it.h || []).push(e);
+  if (it.h.length > H_MAX) foldLog(it, it.h.length - H_MAX);
 }
-// Claude graded a self-graded answer later: note its score on that answer (the nearest self-graded one after t)
-function regradeLog(id, t, score) {
+// Claude graded a self-graded answer later: note its grade on that answer (the nearest self-graded one after t)
+function regradeLog(id, t, v) {
   const it = S.items[id]; if (!it || !it.h) return;
   const ts = (t || 0) / 1000; let best = null;
-  for (const e of it.h) if (e[3] === "s" && e.length < 5 && e[0] >= ts - 5 && e[0] <= ts + 3600 && (!best || e[0] < best[0])) best = e;
-  if (best) best[4] = score;
+  for (const e of it.h) if ((e[3] === "s" || e[3] === "k") && e.length < 5 && e[0] >= ts - 5 && e[0] <= ts + 3600 && (!best || e[0] < best[0])) best = e;
+  if (best) { best[4] = v; if (FSRS_KINDS.has(it.t)) fsrsReplay(it); }
 }
 const lastAnswerT = it => it && it.h && it.h.length ? it.h[it.h.length - 1][0] * 1000 : 0;
 function mergeItem(x, y) {
   if (!y) return x; if (!x) return y;
   const keep = newerItem(x, y) ? x : y, other = keep === x ? y : x;
-  if (!x.h && !y.h) return keep;
+  if (!x.h && !y.h && !x.z && !y.z) return keep;
+  // the seed that has folded in more history wins; answers already inside it are dropped
+  const zs = [x.z, y.z].filter(Boolean).sort((a, b) => b[2] - a[2]), z = zs[0];
   const seen = new Map();
-  for (const e of [...(other.h || []), ...(keep.h || [])]) { const k = e[0] + ":" + e[1]; const p = seen.get(k); if (!p || e.length > p.length) seen.set(k, e); }
-  return Object.assign({}, keep, { h: [...seen.values()].sort((a, b) => a[0] - b[0]).slice(-H_MAX) });
+  for (const e of [...(other.h || []), ...(keep.h || [])]) { if (z && e[0] * 1000 <= z[2]) continue; const k = e[0] + ":" + e[1]; const p = seen.get(k); if (!p || e.length > p.length) seen.set(k, e); }
+  const m = Object.assign({}, keep, { h: [...seen.values()].sort((a, b) => a[0] - b[0]), n: Math.max(x.n || 0, y.n || 0), ok: Math.max(x.ok || 0, y.ok || 0) });
+  if (z) m.z = z.slice(); else delete m.z;
+  if (m.h.length > H_MAX && FSRS_KINDS.has(m.t)) foldLog(m, m.h.length - H_MAX);
+  if (FSRS_KINDS.has(m.t) && (m.h.length || m.z)) fsrsReplay(m);
+  return m;
 }
 function joinDocs(list) {
   const core = list.find(d => d.id === "state");
@@ -366,7 +376,7 @@ function pullRemote() {
     const remote = joinDocs(list.filter(d => d.id !== "state-v1-backup"));
     if (remote) {
       const before = stable(S);
-      S = mergeStates(S, remote); indexGen(); if (C) rescoreLastPlacement();
+      S = mergeStates(S, remote); indexGen(); migrateFsrs(); if (C) rescoreLastPlacement();
       try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
       if (stable(S) !== before && !busyView()) render();
     }
@@ -570,31 +580,139 @@ function skillVal(k) {
 function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
 function logDay(sec, ok) { const k = dayKey(); const d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; d.n++; d.ok += ok ? 1 : 0; d.sec += Math.min(sec, 240); }
 function startRung() { return skillVal("pick") >= 0.6 ? 2 : 1; }
-function recordLadder(id, rung, score, src) {
-  // score: 0..3 (3 = natural, 2 = acceptable); src: "a" Claude, "s" self-graded, absent = checked by the app
-  const it = S.items[id] = S.items[id] || { t: "lad", r: rung, due: 0, ivl: 0, n: 0, ok: 0, m: false };
+/* ============ FSRS (v23) ============
+   Drills (lad) and word cards (ctx, bank) are scheduled by FSRS-6 with its default parameters (w below, as in the
+   open-spaced-repetition reference implementations). Each item has stability s (days until recall drops to 90%),
+   difficulty d (1–10) and last review lr. The schedule is always recomputed by replaying the answer log, so merges
+   and Claude's later grades just change the log. Target recall: 85% for drills (typed production), 90% for words.
+   Sentence parsing is not here: it's a skill with its own rule (recordSen). */
+const FSRS_W = [0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542];
+const FSRS_KINDS = new Set(["lad", "ctx", "bank", "frag"]);
+const TARGET_R = { lad: 0.85, word: 0.90 };
+const fsrsGroup = t => t === "lad" ? "lad" : "word";
+const fsrsW = grp => (S.fsrs && S.fsrs[grp] && S.fsrs[grp].w) || FSRS_W; // a refit (later) can replace these
+const fsrsF = w => Math.pow(0.9, -1 / w[20]) - 1;
+const fsrsR = (w, days, s) => Math.pow(1 + fsrsF(w) * Math.max(0, days) / s, -w[20]);
+const fsrsIvl = (w, s, r) => s / fsrsF(w) * (Math.pow(r, -1 / w[20]) - 1);
+const clampD = d => Math.min(10, Math.max(1, d)), clampS = s => Math.min(36500, Math.max(0.001, s));
+const fsrsD0 = (w, g) => w[4] - Math.exp((g - 1) * w[5]) + 1;
+const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+// one review with grade g (1 Again, 2 Hard, 3 Good, 4 Easy) at time t
+function fsrsStep(w, st, g, t) {
+  if (!st) return { s: clampS(w[g - 1]), d: clampD(fsrsD0(w, g)), lr: t };
+  const d1 = st.d + (-w[6] * (g - 3)) * (10 - st.d) / 9;
+  const nd = clampD(w[7] * fsrsD0(w, 4) + (1 - w[7]) * d1);
+  let s;
+  const days = Math.round((midnight(t) - midnight(st.lr)) / DAY);
+  if (days <= 0) { // same-day review
+    const sinc = Math.pow(st.s, -w[19]) * Math.exp(w[17] * (g - 3 + w[18]));
+    s = st.s * (g >= 2 ? Math.max(sinc, 1) : sinc);
+  } else {
+    const r = fsrsR(w, days, st.s);
+    s = g === 1 ? Math.min(st.s, w[11] * Math.pow(st.d, -w[12]) * (Math.pow(st.s + 1, w[13]) - 1) * Math.exp((1 - r) * w[14]))
+      : st.s * (1 + Math.exp(w[8]) * (11 - st.d) * Math.pow(st.s, -w[9]) * (Math.exp((1 - r) * w[10]) - 1) * (g === 2 ? w[15] : 1) * (g === 4 ? w[16] : 1));
+  }
+  return { s: clampS(s), d: nd, lr: t };
+}
+// The grade an answer counts as (spacing spec §3). No answer is ever Easy.
+function gradeOf(t, e) {
+  const rung = e[1], later = e.length > 4 ? e[4] : null;
+  const num = v => Array.isArray(v) ? v[0] : v;
+  if (t !== "lad" || !rung) return num(later != null ? later : e[2]) > 0 ? 3 : 1; // words: right = Good, however slow
+  if (rung <= 3 || rung === 6) return num(e[2]) >= 2 ? 2 : 1;                      // recognition / tiles / chunk-blank
+  const v = later != null ? later : e[2], src = later != null ? "a" : e[3];         // typed sentence (4 hint, 5 free)
+  let g;
+  if (src === "x") g = 3;
+  else if (src === "k") g = 1;
+  else if (Array.isArray(v)) g = v[1] !== "ok" || v[0] <= 0 ? 1 : v[0] >= 3 ? 3 : 2;
+  else g = v >= 3 ? 3 : v === 2 ? 2 : (src === "a" && v === 1 ? 2 : 1);
+  return rung === 4 && g === 3 ? 2 : g;
+}
+function fsrsDays(it, s) {
+  const grp = fsrsGroup(it.t), d = fsrsIvl(fsrsW(grp), s, TARGET_R[grp]);
+  if (d < 2.5) return Math.max(1, Math.round(d));
+  const x = Math.abs(Math.sin((it.lr || 1) / 997)) * 10000 % 1; // ±5% spread, the same on every device
+  return Math.max(1, Math.round(d * (0.95 + 0.1 * x)));
+}
+function fsrsState(it, entries) {
+  const w = fsrsW(fsrsGroup(it.t));
+  let st = it.z ? { s: it.z[0], d: it.z[1], lr: it.z[2] } : null;
+  for (const e of entries) st = fsrsStep(w, st, gradeOf(it.t, e), e[0] * 1000);
+  return st;
+}
+function fsrsReplay(it) {
+  const h = (it.h || []).slice().sort((a, b) => a[0] - b[0]);
+  const st = fsrsState(it, h);
+  if (!st) return it;
+  it.s = +st.s.toFixed(4); it.d = +st.d.toFixed(4); it.lr = st.lr;
+  if (h.length) it.due = midnight(st.lr) + fsrsDays(it, st.s) * DAY; // due from the morning of that day
+  return it;
+}
+// keep the log short: fold the oldest answers into the seed
+function foldLog(it, k) {
+  it.h.sort((a, b) => a[0] - b[0]);
+  if (FSRS_KINDS.has(it.t)) { const st = fsrsState(it, it.h.slice(0, k)); if (st) it.z = [+st.s.toFixed(4), +st.d.toFixed(4), st.lr]; }
+  it.h = it.h.slice(k);
+}
+// Which kind of drill card a due drill gets: typing (5); after a typed miss typing with the hint (4); after two
+// misses in a row tiles (3). Passing tiles moves back up to the hint, passing the hint back to free typing.
+function drillRung(it) {
+  // a drill that has only ever been met as recognition (old rungs 1–3, or a first meeting) is typed with the hint first
+  const typedBefore = (it.h || []).some(e => e[1] === 4 || e[1] === 5) || it.m || (it.r || 0) >= 4;
+  if (!typedBefore) return 4;
+  let miss = 0;
+  for (let i = (it.h || []).length - 1; i >= 0; i--) {
+    const e = it.h[i], r = e[1];
+    if (r === 1 || r === 2 || r === 6) continue; // first meeting and same-day support don't decide
+    if (gradeOf("lad", e) >= 2) return miss ? (miss >= 2 ? 3 : 4) : r === 3 ? 4 : 5;
+    if (++miss >= 2) return 3;
+  }
+  return miss ? 4 : 5;
+}
+// score: 0..3; src: "a" Claude, "s" self-graded, "k" key chunk not found, "x" matched a stored answer;
+// chunk: Claude's verdict on the key chunk ("ok" / "wrong" / "missing"), when Claude graded
+function recordLadder(id, rung, score, src, chunk) {
+  const it = S.items[id] = S.items[id] || { t: "lad", n: 0, ok: 0 };
+  const before = it.s || 0;
   it.n++;
-  logAnswer(it, rung, score, src);
-  const pass = score >= 2;
-  if (pass) {
-    it.ok++;
-    if (rung >= 5) { it.m = true; it.ivl = Math.max(it.ivl * 2.5, 7 * DAY); it.due = now() + it.ivl; it.r = 5; }
-    else { it.r = Math.max(it.r, rung + 1); it.due = now() + LAD_NEXT[rung]; }
-  } else { it.r = Math.max(1, rung - 1); it.ivl = 0; it.due = now() + 10 * MIN; }
-  pushRecent(rung >= 4 ? "write" : "pick", rung >= 4 ? score / 3 : (pass ? 1 : 0));
+  logAnswer(it, rung, chunk ? [score, chunk] : score, src);
+  const g = gradeOf("lad", it.h[it.h.length - 1]);
+  if (g >= 2) it.ok++;
+  fsrsReplay(it);
+  pushRecent(rung >= 4 ? "write" : "pick", rung >= 4 ? (chunk && chunk !== "ok" ? Math.min(score, 1) : score) / 3 : (g >= 2 ? 1 : 0));
+  save();
+  return { it, g, ready: rung >= 4 && before < 7 && it.s >= 7 };
+}
+// credit: 1 = right and fluent; 0.5–1 = right but slow. For word cards slowness feeds the skill, not the schedule.
+function recordBox(id, t, ok, cat, credit = 1) {
+  const it = S.items[id] = S.items[id] || { t, n: 0, ok: 0 };
+  it.n++; if (ok) it.ok++;
+  logAnswer(it, 0, ok ? Math.round(credit * 100) : 0);
+  if (FSRS_KINDS.has(t)) fsrsReplay(it);
+  else { it.b = ok ? Math.min(5, (it.b || 0) + 1) : 0; it.due = now() + (ok ? BOX_IVL[it.b] : 10 * MIN); } // retired chunking
+  if (cat) pushRecent(cat, ok ? credit : 0);
   save();
   return it;
 }
-// credit: 1 = right and fluent; 0.5–1 = right but slow (counts as correct, comes back sooner)
-function recordBox(id, t, ok, cat, credit = 1) {
-  const it = S.items[id] = S.items[id] || { t, b: 0, due: 0, n: 0, ok: 0 };
-  it.n++;
-  logAnswer(it, 0, ok ? Math.round(credit * 100) : 0);
-  if (ok && credit >= 0.75) { it.ok++; it.b = Math.min(5, it.b + 1); it.due = now() + BOX_IVL[it.b]; }
-  else if (ok) { it.ok++; it.b = Math.max(1, it.b); it.due = now() + BOX_IVL[it.b] / 2; }
-  else { it.b = 0; it.due = now() + 10 * MIN; }
-  if (cat) pushRecent(cat, ok ? credit : 0);
-  save();
+// v23: records from the old rung/box schedules get a starting state (seed z) for FSRS; their current due date is
+// kept until the next answer, so nothing piles up on the switch. Per item and idempotent, so it also runs after
+// merging in progress from a device that hasn't updated yet.
+function migrateFsrs() {
+  let changed = false;
+  for (const id in S.items) {
+    const it = S.items[id]; if (!FSRS_KINDS.has(it.t) || it.z || it.s != null) continue;
+    changed = true;
+    const logged = (it.h || []).length;
+    if ((it.n || 0) > logged) {
+      const s = it.t === "lad" ? (it.m ? Math.max(7, (it.ivl || 0) / DAY) : ({ 5: 4, 4: 2, 3: 1 }[it.r] || 0.5)) : BOX_IVL[Math.max(0, Math.min(5, it.b || 0))] / DAY;
+      const ref = logged ? Math.min(...it.h.map(e => e[0] * 1000)) : (it.due || now());
+      it.z = [s, 5, Math.min(now(), ref - Math.max(1, Math.round(s)) * DAY)];
+    }
+    const keep = it.due;
+    fsrsReplay(it);
+    if (!logged) it.due = keep || now();
+  }
+  if (changed && !SIM) save();
 }
 // Sentence parsing trains a skill, not a memory (v22). A sentence you read well isn't shown again until new ones
 // run out (and then only after ~2 months, once the answer is forgotten); a miss, a slow read or looking back at
@@ -674,29 +792,35 @@ function weights() {
   const w = {
     lad: (1.15 - (skillVal("pick") + skillVal("write")) / 2) * 1.7,
     sen: (1.15 - skillVal("news")) * 1.1,
-    seg: (1.15 - skillVal("seg")) * 0.8,
     ctx: (1.15 - skillVal("ctx")) * 0.85
-  };
-  const sum = w.lad + w.sen + w.seg + w.ctx;
+  }; // v23: chunking (seg) retired from practice; it stays in the placement test
+  const sum = w.lad + w.sen + w.ctx;
   for (const k in w) w[k] /= sum;
   return w;
 }
-// Due cards (most overdue first), then new ones. Cards with a `due` field count as reviews; new cards and
-// sentences being reused (`re`) don't. Nothing answered today (or sharing its key chunk) is offered again today.
+// How urgent a due review is: FSRS items closest to being forgotten first (while still worth reviewing, R > 0.3),
+// then the long-gone ones; everything else most overdue first.
+function dueKey(it) {
+  if (!FSRS_KINDS.has(it.t) || !it.s || !it.lr) return 1 + (it.due || 0) / 1e14;
+  const r = fsrsR(fsrsW(fsrsGroup(it.t)), (now() - it.lr) / DAY, it.s);
+  return r > 0.3 ? r : 1 + (it.due || 0) / 1e14 + 0.5;
+}
+// Due cards, then new ones. Cards with a `due` field count as reviews; new cards and sentences being reused (`re`)
+// don't. Nothing answered today (or sharing its key chunk) is offered again today.
 function candidates(cat, done = doneToday()) {
   const t = now(), due = [], fresh = [], reuse = [];
   if (cat === "lad") {
-    for (const [id] of LADDER) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "lad", id, r: startRung() }); else if (it.due <= t) due.push({ t: "lad", id, r: it.r, due: it.due }); }
+    for (const [id] of LADDER) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "lad", id, r: startRung() }); else if (it.due <= t) due.push({ t: "lad", id, r: drillRung(it), due: it.due, k0: dueKey(it) }); }
   } else if (cat === "sen") {
     for (const [id] of SEN) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "sen", id }); else if (it.due <= t) (it.b >= 5 ? reuse : due).push(it.b >= 5 ? { t: "sen", id, re: it.due } : { t: "sen", id, due: it.due }); }
     reuse.sort((a, b) => a.re - b.re);
   } else if (cat === "seg") {
     for (const [id] of SEG) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "seg", id }); else if (it.due <= t) due.push({ t: "seg", id, due: it.due }); }
   } else {
-    for (const [id] of CTX) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due }); }
-    for (const id in S.bank) { if (done("B:" + id)) continue; const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due }); }
+    for (const [id] of CTX) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due, k0: dueKey(it) }); }
+    for (const id in S.bank) { if (done("B:" + id)) continue; const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due, k0: dueKey(it) }); }
   }
-  due.sort((a, b) => a.due - b.due);
+  due.sort((a, b) => (a.k0 != null && b.k0 != null ? a.k0 - b.k0 : a.due - b.due));
   return due.concat(fresh, reuse);
 }
 /* ============ views ============ */
@@ -799,70 +923,141 @@ function mixReason() {
 }
 
 /* ---------- session ---------- */
-// Writing (rungs 4–5) needs a grader. The online version waits for Claude: no writing cards while offline.
-// The offline copy has no Claude at all, so it always self-grades.
-const writingAllowed = () => !(HOSTED && AI && !ONLINE);
-// Writing cards: drills at rung 4–5 that are due. (Until v21, drills that weren't due were "stretched" up to
-// writing whenever nothing was due; that reviewed the same drills too early and too often, so it's gone.)
+// v23: typed cards are always shown. Without Claude (offline copy, or the online version while Claude can't be
+// reached) they're checked for the key chunk and self-graded, then queued for Claude to check later; a later grade
+// corrects the schedule by replaying the log. (v7–v22 swapped them for reading cards in the online version.)
+const writingAllowed = () => true;
+// Typed reviews: due drills whose next card is typing (with or without the hint).
 function writingCandidates(exclude, done = doneToday()) {
-  const t = now(), due = [];
-  for (const [id] of LADDER) {
-    if (exclude.has("lad" + id) || done(id)) continue;
-    const it = S.items[id]; if (!it) continue;
-    if (it.r >= 4 && it.due <= t) due.push({ t: "lad", id, r: it.r, due: it.due });
-  }
-  return due.sort((a, b) => a.due - b.due);
+  return candidates("lad", done).filter(c => c.due && c.r >= 4 && !exclude.has("lad" + c.id));
 }
-const isWriting = c => c && c.t === "lad" && c.r >= 4;
-// One block of up to n cards (v22). Reviews (due cards) come first, in the weighted mix, with a due writing card
-// in every 4th slot (8th with 少打字). When no reviews are left, a divider card ("reviews done") goes in once per
-// session, then new material follows in the same mix. A card already queued this session, answered today, or
-// sharing a key chunk with one of those is skipped. Returns [] when there's nothing at all left.
-function buildBlock(n, used) {
-  const every = S.settings && S.settings.lightTyping ? 8 : 4;
+const isWriting = c => c && c.t === "lad" && (c.r === 4 || c.r === 5);
+
+/* ---------- new-item budget (v23) ----------
+   No setting and no numbers on screen. New drills and words keep coming while the next week's projected reviews fit
+   in your usual daily practice time (learned from the last two weeks, days off included); past that they become
+   gradually rarer while new parsing sentences (which don't pile up) take over. Practise more for a while and the
+   budget grows; less and it shrinks. During a trip (dates in 离线备货) it also spreads the unseen material over the
+   days left. */
+let BUDGET_MINS = null; // the forecast sets this to its minutes/day
+function minsPerDay() {
+  if (BUDGET_MINS) return BUDGET_MINS;
+  const days = Object.keys(S.log || {}).sort(), today = dayKey();
+  const first = days.find(d => d !== today);
+  if (!first) return 15;
+  const span = Math.min(14, Math.max(3, Math.round((midnight(now()) - new Date(first + "T00:00").getTime()) / DAY)));
+  let a = 0, b = 0;
+  for (let i = 1; i <= span; i++) { const d = S.log[dayKey(now() - i * DAY)], wt = Math.pow(0.85, i - 1); a += (d ? d.sec / 60 : 0) * wt; b += wt; }
+  return Math.max(10, a / b);
+}
+const REVIEW_SEC = { lad: 90, word: 25 };
+// minutes of reviews expected over the next 7 days, assuming each review succeeds at the target
+function load7() {
+  const t = now(), end = t + 7 * DAY;
+  let sec = 0;
+  for (const id in S.items) {
+    const it = S.items[id]; if (!FSRS_KINDS.has(it.t) || !it.s) continue;
+    const grp = fsrsGroup(it.t), w = fsrsW(grp), r = TARGET_R[grp];
+    let due = Math.max(it.due || t, t), s = it.s, k = 0;
+    const d = it.d || 5;
+    while (due < end && k++ < 8) {
+      sec += REVIEW_SEC[grp];
+      due += Math.max(1, fsrsIvl(w, s, r)) * DAY;
+      s = s * (1 + Math.exp(w[8]) * (11 - d) * Math.pow(s, -w[9]) * (Math.exp((1 - r) * w[10]) - 1));
+    }
+  }
+  return sec / 60;
+}
+const isNewToday = it => it && it.h && it.h.length && !it.z && dayKey(it.h[0][0] * 1000) === dayKey();
+function tripNewCap() {
+  const c = stockCfg(); if (!c.trip) return null;
+  const today = midnight(now()), from = new Date(c.from + "T00:00").getTime(), to = new Date(c.to + "T00:00").getTime();
+  if (today < from || today > to) return null;
+  const left = Math.round((to - today) / DAY) + 1;
+  const unseen = [...LADDER.keys()].filter(id => !S.items[id]).length + [...CTX.keys()].filter(id => !S.items[id]).length + Object.keys(S.bank).filter(w => !S.items["B:" + w]).length;
+  const doneNew = Object.values(S.items).filter(isNewToday).length;
+  return Math.ceil((unseen + doneNew) / left);
+}
+// chance that a slot after the divider is a new drill/word (the rest: new parsing sentences)
+function newChance() {
+  const today = dayKey();
+  if (!S.nb || S.nb.d !== today) S.nb = { d: today, over: 0 };
+  const cap = tripNewCap(), newN = Object.values(S.items).filter(isNewToday).length;
+  // during a trip the stock is spread evenly over the days left (the trip has an end, so this pace leads)
+  if (cap != null) { S.nb.under = true; return newN >= cap ? 0.05 : 0.6; }
+  if (load7() / 7 <= 0.6 * minsPerDay()) { S.nb.under = true; return 0.6; }
+  S.nb.under = false;
+  return Math.max(0.05, Math.pow(0.5, S.nb.over / 3));
+}
+// One block of up to n cards (v22, v23):
+// 1. same-day repeats of misses whose time has come (≥10 min after the miss);
+// 2. due reviews in the weighted mix, a typed review in up to every 2nd slot (every 8th with 少打字);
+// 3. once no reviews are left: the divider (once per session), then the new phase — each slot is a new drill/word
+//    with probability newChance(), otherwise a new parsing sentence; if those run out, new drills/words anyway;
+//    then reused old sentences. A card already queued this session, answered today, or sharing a key chunk with one
+//    of those is skipped. Returns [] when there's nothing at all left.
+function buildBlock(n, used, rnd = Math.random) {
+  const every = S.settings && S.settings.lightTyping ? 8 : 2;
   const done = doneToday();
   const tag = c => Object.assign(c, { k: sibKey(c.t === "bank" ? "B:" + c.id : c.id) });
   const free = c => !used.has(c.t + c.id) && !(c.k && used.has("k:" + c.k));
-  // writing slots per block as before; due writing beyond that is shown at rung 3 in the drill slots
-  const writing = writingAllowed() ? writingCandidates(used, done).map(tag).filter(free).slice(0, Math.max(1, Math.round(n / every))) : [];
-  const wIds = new Set(writing.map(c => c.id));
-  const w = weights(), pools = {}, tally = {};
-  for (const k of ["lad", "sen", "seg", "ctx"]) { pools[k] = candidates(k, done).filter(c => !(c.t === "lad" && wIds.has(c.id))).map(tag).map(c => isWriting(c) ? Object.assign({}, c, { r: 3 }) : c); tally[k] = 0; }
   const out = [];
   const take = c => { out.push(c); used.add(c.t + c.id); if (c.k) used.add("k:" + c.k); };
+  // 1. same-day repeats
+  const today = dayKey(), t = now();
+  S.repeat = (S.repeat || []).filter(x => x.d === today);
+  const ready = S.repeat.filter(x => x.at <= t).slice(0, n);
+  if (ready.length) { S.repeat = S.repeat.filter(x => !ready.includes(x)); ready.forEach(x => out.push({ t: x.t, id: x.id, r: x.r, rep: true })); save(); }
+  // 2. reviews
+  const writing = writingAllowed() ? writingCandidates(used, done).map(tag).filter(free) : [];
+  const w = weights(), pools = {}, tally = {};
+  for (const k of Object.keys(w)) { pools[k] = candidates(k, done).filter(c => !(c.t === "lad" && c.due && c.r >= 4)).map(tag); tally[k] = 0; }
   const dueLeft = () => Object.keys(pools).some(k => pools[k].some(c => c.due && free(c)));
   // the category furthest below its share of the mix, among those that still have a card of the wanted kind
-  const next = isDue => {
-    const ks = Object.keys(pools).filter(k => pools[k].some(c => !!c.due === isDue && free(c)));
+  const next = (isDue, cats = Object.keys(pools), ok = () => true) => {
+    const want = c => !!c.due === isDue && !c.re && free(c) && ok(c);
+    const ks = cats.filter(k => pools[k].some(want));
     if (!ks.length) return null;
     const tot = out.length + 1;
     ks.sort((a, b) => (tally[a] / tot - w[a]) - (tally[b] / tot - w[b]));
-    const k = ks[0], i = pools[k].findIndex(c => !!c.due === isDue && free(c));
+    const k = ks[0], i = pools[k].findIndex(want);
     tally[k]++;
     return pools[k].splice(i, 1)[0];
   };
+  const ws = () => { while (writing.length && !free(writing[0])) writing.shift(); return writing.length ? writing.shift() : null; };
+  let pNew = null;
   while (out.length < n) {
     if (!used.has("div")) {
-      const ws = () => { while (writing.length && !free(writing[0])) writing.shift(); return writing.length ? writing.shift() : null; };
       let c = null;
-      if (out.length % every === 2 || !dueLeft()) c = ws();
+      if ((out.length + 1) % every === 0 || !dueLeft()) c = ws();
       if (!c) c = next(true);
       if (!c) c = ws();
       if (c) { take(c); continue; }
-      // reviews done: divider, then new material (no divider if nothing new is left either)
-      used.add("div");
-      const first = next(false);
-      if (!first) break;
-      out.push({ t: "div", id: "div", none: !used.has("rev") && !out.some(c => c.due) });
-      take(first);
-      continue;
+      used.add("div"); // reviews done: the divider goes in front of the first new card
     }
-    const c = next(false);
+    // 3. new phase
+    if (pNew == null) pNew = newChance();
+    let c = null, isNew = false;
+    if (rnd() < pNew) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
+    if (!c) c = next(false, ["sen"]);
+    if (!c) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
+    if (!c) { const i = pools.sen.findIndex(x => x.re && free(x)); if (i >= 0) c = pools.sen.splice(i, 1)[0]; }
     if (!c) break;
+    if (isNew && S.nb && !S.nb.under) { S.nb.over++; pNew = Math.max(0.05, Math.pow(0.5, S.nb.over / 3)); }
+    if (!used.has("divshown")) { used.add("divshown"); out.push({ t: "div", id: "div", none: !used.has("rev") && !out.some(x => x.due) }); }
     take(c);
   }
   if (out.some(c => c.due)) used.add("rev");
   return out;
+}
+// Online: when unseen parsing sentences run low during practice, Claude writes 10 more (once per session, with a toast).
+function topUpSentences(s) {
+  if (s.toppedUp || !HOSTED || !AI || !ONLINE || GEN.senBusy) return;
+  const unseen = [...SEN.keys()].filter(id => !S.items[id]).length;
+  if (unseen >= 10) return;
+  s.toppedUp = true;
+  toast("Claude 正在写 10 个新短句 · Writing 10 new sentences", 3000);
+  genSen(true).then(n => toast(`加了 ${n || 0} 句新短句 · Added ${n || 0} sentences`)).catch(e => toast(aiErr(e), 4000));
 }
 // kept for tests and the spacing chat: a fixed-length plan
 function buildSession(minutes) { return buildBlock(GOAL_CARDS[minutes] || 10, new Set()); }
@@ -877,6 +1072,7 @@ function startSession(goal) {
   SESSION.fbUsed = new Set();
   (S.offfb || []).filter(f => !f.seen).forEach(f => SESSION.used.add("lad" + f.id)); // feedback first, then the drill (next session)
   SESSION.q = addFeedback(buildBlock(8, SESSION.used), SESSION);
+  topUpSentences(SESSION);
   if (!SESSION.q.length) { SESSION = null; toast("今天的都练完了，也没有新题了 · All done for today, and no new cards left. 阅读 has passages to read or re-read."); return; }
   setView("session");
 }
@@ -888,9 +1084,8 @@ function renderSession(main) {
   if (s.goalN && !s.goalShown && answered(s) >= s.goalN) { s.goalShown = true; return renderGoal(main); }
   const ri = s.retry.findIndex(x => x.at <= s.i);
   if (ri >= 0) s.q.splice(s.i, 0, s.retry.splice(ri, 1)[0].card);
-  if (s.i >= s.q.length) s.q.push(...addFeedback(buildBlock(8, s.used), s));
+  if (s.i >= s.q.length) { s.q.push(...addFeedback(buildBlock(8, s.used), s)); topUpSentences(s); }
   if (s.i >= s.q.length) { s.ended = true; return render(); }
-  if (isWriting(s.q[s.i]) && !writingAllowed()) { const sw = readingSwap(s); s.q[s.i] = sw || Object.assign({}, s.q[s.i], { r: 3 }); }
   const card = s.q[s.i];
   const n = answered(s);
   main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="结束">■</button>
@@ -916,18 +1111,25 @@ function renderSession(main) {
     else s.combo = 0;
     if (r.promoted) s.promoted++;
     if (r.mastered) s.mastered++;
-    // v22: no same-session redo. One appearance per item a day; a miss comes back on a later day.
-    // (Until v21 a missed reading card or drill step 1–3 came back 5 cards later.)
+    // v23: a miss on a drill or word card comes back once, ≥10 minutes later, if you're still practising.
+    // A missed typed sentence comes back as "type the missing chunk"; a missed recognition/tiles card as the gap.
+    // Correct answers and parsing sentences never come back the same day.
+    const missed = card.t === "lad" ? r.g === 1 : (card.t === "ctx" || card.t === "bank") && !r.ok;
+    if (missed && !card.rep && !card.placement) {
+      const rr = card.t === "lad" ? (card.r === 4 || card.r === 5 ? 6 : 2) : undefined;
+      (S.repeat = S.repeat || []).push({ t: card.t, id: card.id, r: rr, at: now() + 10 * MIN, d: dayKey() }); save();
+    }
     if (s.best > (S.best.combo || 0)) { S.best.combo = s.best; save(); }
   }, () => { s.i++; render(); window.scrollTo(0, 0); });
 }
+// production-ready = a drill you can type whose memory now lasts a week or more (FSRS stability ≥ 7 days)
+const prodReady = () => [...LADDER.keys()].filter(id => { const it = S.items[id]; return it && (it.s >= 7 || (!it.h && it.m)); }).length;
 function sessionStats(s) {
   const n = answered(s), ok = s.res.filter(Boolean).length;
   const mins = Math.max(1, Math.round((now() - s.t0) / 60000));
-  const ready = [...LADDER.keys()].filter(id => S.items[id] && S.items[id].m).length;
+  const ready = prodReady();
   return `<div class="row" style="align-items:flex-end;gap:18px"><div class="big">${n ? pct(ok / n) : "—"}</div><p class="muted">${ok}/${n} 对 · ${mins} 分钟 · 最高连对 ${s.best}</p></div>
-    ${s.promoted ? `<p>📈 ${s.promoted} 个句型升了一级 · ${s.promoted} drill(s) climbed a rung</p>` : ""}
-    ${s.mastered ? `<p>✅ ${s.mastered} 个句型已经能写出来了 · newly production-ready</p>` : ""}
+    ${s.mastered ? `<p>✅ ${s.mastered} 个句型能写出来了，一周后还记得 · newly production-ready (remembered for a week+)</p>` : ""}
     <p class="small muted">能写出来的句型 Production-ready: <b style="color:var(--ink)">${ready}</b> / ${LADDER.size}</p>`;
 }
 function renderGoal(main) {
@@ -998,28 +1200,53 @@ function nextButton(el, onNext, label = "继续 Continue") {
   setTimeout(() => { if (!gone) document.addEventListener("keydown", kd); }, 50);
   el.append(b); b.focus({ preventScroll: true });
 }
-const RUNG_NAME = { 1: "选最自然 Pick the natural one", 2: "填空 Fill the gap", 3: "排顺序 Build the sentence", 4: "提示写 Write with a hint", 5: "自己写 Write it yourself" };
+const RUNG_NAME = { 1: "选最自然 Pick the natural one", 2: "填空 Fill the gap", 3: "排顺序 Build the sentence", 4: "提示写 Write with a hint", 5: "自己写 Write it yourself", 6: "补上词块 Type the missing chunk" };
+// Is the drill's key chunk in what you wrote? (A key like 起…作用 matches its pieces in order.)
+function hasChunk(raw, key) {
+  const s = norm(raw); let pos = 0;
+  for (const piece of String(key || "").split(/…|\.\.\./).map(norm).filter(Boolean)) { const i = s.indexOf(piece, pos); if (i < 0) return false; pos = i + piece.length; }
+  return true;
+}
 function renderLadder(item, rung, el, onResult, onNext, placement) {
   const p = ladParts(item);
-  const head = `<div class="kind"><span class="label">造句 · 第 ${rung} 级 · ${RUNG_NAME[rung]}</span>${placement ? "" : `<span class="chip">${esc(item.tag || "")}</span>`}</div>
+  const head = `<div class="kind"><span class="label">造句 · ${RUNG_NAME[rung]}</span>${placement ? "" : `<span class="chip">${esc(item.tag || "")}</span>`}</div>
     <p class="prompt-en">${esc(item.en)}</p>`;
   el.innerHTML = `<div class="card" id="cc">${head}<div id="body" class="stack"></div><div id="fb"></div></div>`;
   const body = $("#body", el), fb = $("#fb", el), cc = $("#cc", el);
   let answered = false, given = "";
-  const finish = (score, html, src) => {
+  // src: "a" Claude, "s" self-graded, "k" key chunk not found (no Claude), "x" matched a stored answer
+  const finish = (score, html, src, chunk) => {
     if (answered) return; answered = true;
-    let promoted = false, mastered = false;
-    if (!placement) { const before = S.items[item.id] ? { ...S.items[item.id] } : null; const it = recordLadder(item.id, rung, score, src); promoted = score >= 2 && (!before || it.r > before.r); mastered = it.m && !(before && before.m); }
-    const cls = score >= 3 ? "ok" : score === 2 ? "mid" : "no";
-    const verdict = score >= 3 ? "对了 ✓" : score === 2 ? "意思对，可以更地道" : "还不对";
-    fb.innerHTML = `<div class="fb ${cls}"><span class="verdict">${verdict}</span>${html || ""}
+    let mastered = false, g = score >= 2 ? 2 : 1;
+    if (!placement) { const res = recordLadder(item.id, rung, score, src, chunk); mastered = res.ready; g = res.g; }
+    const chunkBad = (chunk && chunk !== "ok") || src === "k";
+    const cls = chunkBad ? "no" : score >= 3 ? "ok" : score === 2 ? "mid" : "no";
+    const verdict = chunkBad && score >= 2 ? "句子可以，但没练到词块 · Fine sentence, chunk missed" : score >= 3 ? "对了 ✓" : score === 2 ? "意思对，可以更地道" : "还不对";
+    fb.innerHTML = `<div class="fb ${cls}"><span class="verdict">${verdict}</span>
+      ${chunkBad ? `<span>⚠ 这题练的是「<b class="zh">${esc(p.key)}</b>」${chunk === "wrong" ? "，用得不对" : "，句子里没用上"} · The practiced chunk ${chunk === "wrong" ? "wasn't used correctly" : "wasn't used"}, so the drill comes back soon.</span>` : ""}${html || ""}
       <span class="model">${esc(p.model)}</span>
       ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 2).map(esc).join(" ／ ")}</span>` : ""}
       <span>${esc(item.why)}</span></div>`;
-    onResult({ ok: score >= 2, score, promoted, mastered, given });
+    onResult({ ok: score >= 2 && !chunkBad, score, g, mastered, given });
     nextButton(cc, onNext);
   };
-  if (rung === 1 || rung === 2) {
+  if (rung === 6) {
+    // same-day support after a missed typed sentence: the sentence with the key chunk blanked; type the chunk
+    body.innerHTML = `<p class="sent">${p.toks.map((t, i) => i === p.keyIdx ? `<span class="blank">？</span>` : esc(t)).join("")}</p>
+      <input class="inp zh" id="ans" lang="zh-CN" placeholder="打出空着的词块 Missing chunk" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="row"><button class="btn" id="check">检查 Check</button><button class="btn ghost" id="giveup">不会 Show me</button></div>`;
+    const inp = $("#ans", body);
+    setTimeout(() => inp.focus({ preventScroll: true }), 30);
+    inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("#check", body).click(); } });
+    $("#giveup", body).onclick = () => { $("#check", body).disabled = true; $("#giveup", body).disabled = true; inp.disabled = true; finish(0); };
+    $("#check", body).onclick = () => {
+      const v = inp.value.trim(); if (!v) { inp.focus(); return; }
+      given = v; $("#check", body).disabled = true; $("#giveup", body).disabled = true; inp.disabled = true;
+      const full = p.toks.map((t, i) => i === p.keyIdx ? v : t).join("");
+      const ok = norm(v) === norm(p.key) || accepted(item).has(norm(full));
+      finish(ok ? 3 : 0, ok ? "" : `<span>你的：<span class="zh">${esc(v)}</span> · 应该是 <b class="zh">${esc(p.key)}</b></span>`);
+    };
+  } else if (rung === 1 || rung === 2) {
     let opts, correct;
     if (rung === 1) { correct = p.model; opts = shuffle([p.model, ...item.bad.slice(0, 2)]); body.insertAdjacentHTML("beforeend", `<p class="small muted">哪一句最自然？ Which is the most natural Chinese?</p>`); }
     else {
@@ -1063,12 +1290,12 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
       const raw = ta.value.trim(); if (!raw) { ta.focus(); return; }
       given = raw;
       $("#check", body).disabled = true; $("#giveup", body).disabled = true; ta.disabled = true;
-      if (accepted(item).has(norm(raw))) return finish(3);
+      if (accepted(item).has(norm(raw))) return finish(3, "", "x");
       const queue = () => queueGrade(item, rung, raw, placement);
       if (AI && ONLINE) {
         fb.innerHTML = `<div class="fb mid"><span><span class="spin"></span> 批改中… Claude is reading your answer</span><button class="btn ghost" id="selfg">不等了，自己判断 Grade it myself</button></div>`;
         let cancelled = false, entry = null;
-        $("#selfg", fb).onclick = () => { cancelled = true; entry = queue(); selfGrade(raw, entry, true); };
+        $("#selfg", fb).onclick = () => { cancelled = true; entry = queue(); noClaude(raw, entry, true); };
         try {
           const g = await gradeAI(item, raw);
           if (cancelled || answered) { if (entry) settleGrade(entry, g); return; }
@@ -1077,16 +1304,23 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
           finish(sc, `<span>你的：<span class="zh">${esc(raw)}</span></span>
             ${g.fixed && norm(g.fixed) !== norm(raw) ? `<span>改一改：<span class="zh" style="font-size:17px">${esc(g.fixed)}</span></span>` : ""}
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
-            ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a");
+            ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a", chunkVerdict(g));
         } catch (e) {
           if (cancelled || answered) return;
           const transient = !ONLINE || !e || !e.code || e.code === "upstream_error" || e.code === "rate_limited";
-          if (transient && AI) selfGrade(raw, queue(), false);
-          else { toast(aiErr(e)); selfGrade(raw); }
+          if (transient && AI) noClaude(raw, queue(), false);
+          else { toast(aiErr(e)); noClaude(raw); }
         }
-      } else if (AI) selfGrade(raw, queue(), false);
-      else selfGrade(raw);
+      } else if (AI) noClaude(raw, queue(), false);
+      else noClaude(raw);
     };
+    // No Claude right now: if the key chunk isn't in the answer it counts as a miss straight away (and is kept for
+    // Claude to check later); otherwise you grade yourself, as before.
+    function noClaude(raw, entry, waiting) {
+      if (placement || hasChunk(raw, p.key)) return selfGrade(raw, entry, waiting);
+      if (entry) { entry.self = 0; save(); } else if (!HOSTED) keepOffline(item, rung, raw, 0);
+      finish(0, `<span>你的：<span class="zh">${esc(raw)}</span></span>${entry || !HOSTED ? `<span class="small muted">${entry ? "Claude 能用了会再看一遍 · Claude will check it once available." : "联网后可以让 Claude 再看一遍 · Claude can check it later in the online version."}</span>` : ""}`, "k");
+    }
     function selfGrade(raw, entry, waiting) {
       fb.innerHTML = `<div class="fb mid"><span>你的：<span class="zh" style="font-size:18px">${esc(raw)}</span></span>
         <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span>
@@ -1094,7 +1328,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
         ${entry ? `<span class="small">${waiting ? "Claude 的批改到了会放在首页。Claude's feedback will appear on the home screen when it arrives." : "现在用不了 Claude（离线或到了用量上限）。先自己判断；Claude 能用了会补批改，结果放在首页。Can't reach Claude right now (offline or usage limit), so grade yourself; Claude's feedback will appear on the home screen once it's available again."}</span>` : ""}
         <span class="small">自己判断 How did you do?</span>
         <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
-      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } else if (!HOSTED && !placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`, "s"); });
+      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } else if (!HOSTED && !placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`, placement ? undefined : "s"); });
     }
   }
 }
@@ -1113,14 +1347,8 @@ function settleGrade(entry, g) {
   const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
   (S.graded = S.graded || []).unshift({ k: entry.k, id: entry.id, en: item.en, raw: entry.raw, score, self: entry.self, fixed: String(g.fixed || ""), good: String(g.good || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), model: ladParts(item).model, t: now(), seen: false });
   S.graded = S.graded.slice(0, 20);
-  // if Claude disagrees with the self-grade, correct the drill's level
-  const it = S.items[entry.id];
-  if (!entry.pl) regradeLog(entry.id, entry.t, score);
-  if (it && !entry.pl && entry.self != null) {
-    const selfPass = entry.self >= 2, aiPass = score >= 2;
-    if (selfPass && !aiPass) { it.r = Math.max(1, it.r - 2); it.m = false; it.due = now(); }
-    else if (!selfPass && aiPass) { it.r = Math.min(5, it.r + 1); }
-  }
+  // Claude's grade replaces the self-grade in the answer log; the schedule is recomputed from the log (v23)
+  if (!entry.pl) regradeLog(entry.id, entry.t, gradeValue(g));
   save();
   if (VIEW === "home") render();
 }
@@ -1188,18 +1416,15 @@ function settleOffline(e, g) {
   S.offwDone = (S.offwDone || []).concat([e.k]).slice(-400);
   if (!g) return true;
   const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
-  const it = S.items[e.id];
-  regradeLog(e.id, e.t, score);
-  if (it && e.self != null) {
-    const selfPass = e.self >= 2, aiPass = score >= 2;
-    if (selfPass && !aiPass) { it.r = Math.max(1, it.r - 2); it.m = false; it.due = now(); }
-    else if (!selfPass && aiPass) it.r = Math.min(5, it.r + 1);
-  }
-  if (score >= 3) return true;
+  regradeLog(e.id, e.t, gradeValue(g));
+  if (score >= 3 && chunkVerdict(g) === "ok") return true;
   (S.offfb = S.offfb || []).unshift({ k: e.k, id: e.id, raw: e.raw, score, self: e.self, fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), t: e.t, seen: false });
   S.offfb = S.offfb.slice(0, 60);
   return false;
 }
+// Claude's verdict on the drill's key chunk: "ok" | "wrong" | "missing" (older replies without it count as ok)
+const chunkVerdict = g => ["ok", "wrong", "missing"].includes(g && g.chunk) ? g.chunk : "ok";
+const gradeValue = g => [Math.max(0, Math.min(3, Math.round(+(g && g.score) || 0))), chunkVerdict(g)];
 async function gradeBatch(entries) {
   const list = entries.map((e, i) => { const item = LADDER.get(e.id), p = ladParts(item); return `${i + 1}. English: ${item.en}\n   Reference translations (any natural equivalent is fine): ${[p.model, ...(item.alt || [])].join(" / ")}\n   Chunk being practiced: ${p.key}\n   Learner's answer: ${e.raw}`; }).join("\n\n");
   const prompt = `You are a precise, encouraging Mandarin tutor grading English→Chinese translations by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks. The learner wrote these offline.
@@ -1207,7 +1432,8 @@ async function gradeBatch(entries) {
 ${list}
 
 Score each: 3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = wrong meaning or ungrammatical. Do not penalize a different but natural phrasing, or punctuation.
-Reply with only a JSON array, one object per answer in the same order: {"i": answer number, "score": 0-3, "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
+Also judge the practiced chunk separately: "ok" if the learner used it (or a form of it) correctly, "wrong" if they used it incorrectly, "missing" if it isn't in the answer (even if the sentence is otherwise fine).
+Reply with only a JSON array, one object per answer in the same order: {"i": answer number, "score": 0-3, "chunk": "ok" | "wrong" | "missing", "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
   const arr = await AI.json(prompt, { modelTier: "default", effort: "low" });
   if (!Array.isArray(arr)) throw { code: "invalid_json" };
   return entries.map((e, j) => arr.find(x => x && +x.i === j + 1) || null);
@@ -1268,7 +1494,8 @@ Chunk being practiced: ${p.key}
 Learner's answer: ${answer}
 
 Score: 3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = wrong meaning or ungrammatical. Do not penalize a different but natural phrasing, or punctuation.
-Reply with only JSON: {"score": 0-3, "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "good": "one short note on what they did right, or empty string", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
+Also judge the practiced chunk separately: "ok" if the learner used it (or a form of it) correctly, "wrong" if they used it incorrectly, "missing" if it isn't in the answer (even if the sentence is otherwise fine).
+Reply with only JSON: {"score": 0-3, "chunk": "ok" | "wrong" | "missing", "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "good": "one short note on what they did right, or empty string", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
   return AI.json(prompt, { modelTier: "default", effort: "low" });
 }
 const SEG_HOW = `<div class="how"><b>怎么切 · How it's scored</b>
@@ -1571,7 +1798,7 @@ function finishPlacement(main) {
   S.placementLog = (S.placementLog || []).concat([{ t: now(), timed: true, skills: sk, levels: { ctx: R.ctxLevel, seg: R.segLevel, news: R.newsLevel, pick: R.pickLevel }, cpm: R.cpm, readAcc: R.readAcc, answers: PLACE.log }]).slice(-3);
   for (const id in PLACE.seen) {
     const x = PLACE.seen[id];
-    if (!S.items[id]) S.items[id] = { t: "lad", r: x.ok ? 5 : 3, due: now() + (x.ok ? DAY : 0), ivl: 0, n: 1, ok: x.ok ? 1 : 0, m: false };
+    if (!S.items[id]) S.items[id] = fsrsReplay({ t: "lad", n: 1, ok: x.ok ? 1 : 0, z: [x.ok ? 2.3 : 0.5, 5, now()], due: now() + (x.ok ? DAY : 0) });
   }
   save();
   const names = { ctx: "语境识词 Words in context", seg: "断词 Chunking", news: "书面语理解 News parsing", pick: "选自然表达 Natural choice", write: "自己写 Writing", speed: "阅读速度 Reading speed" };
@@ -2197,9 +2424,9 @@ Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | b
 /* ---------- progress ---------- */
 function renderMe(main) {
   const ladIds = [...LADDER.keys()];
-  const ready = ladIds.filter(id => S.items[id] && S.items[id].m).length;
+  const ready = prodReady();
   const started = ladIds.filter(id => S.items[id]).length;
-  const fixed = [...CTX.keys()].filter(id => S.items[id] && S.items[id].b >= 3).length;
+  const fixed = [...CTX.keys()].filter(id => S.items[id] && S.items[id].s >= 7).length;
   const segRecent = S.recent.seg || [];
   const week = [];
   for (let i = 6; i >= 0; i--) { const t = now() - i * DAY; const d = S.log[dayKey(t)]; week.push({ lab: "日一二三四五六"[new Date(t).getDay()], m: d ? d.sec / 60 : 0 }); }
@@ -2208,7 +2435,7 @@ function renderMe(main) {
   <div class="card"><span class="label">能写出来的句型 · Production-ready</span>
     <div class="row" style="align-items:flex-end"><span class="big">${ready}</span><span class="muted">/ ${LADDER.size} · 在练 ${started}</span></div>
     <div class="mix" style="background:var(--line)"><i style="width:${LADDER.size ? ready / LADDER.size * 100 : 0}%;background:var(--accent)"></i></div>
-    <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词修好 (box ≥3)</span></div><div class="stat"><b>${Object.keys(S.bank).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
+    <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词记住一周以上 · leeches held 7+ days</span></div><div class="stat"><b>${Object.keys(S.bank).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
   <div class="card"><span class="label">这周 · This week (minutes)</span>
     <div class="week">${week.map(d => `<div><i style="background:${d.m ? `color-mix(in srgb, var(--accent) ${Math.min(100, 25 + d.m * 5)}%, var(--line))` : "var(--line)"}"></i>${d.lab}<br>${d.m ? Math.round(d.m) : ""}</div>`).join("")}</div></div>
   <div class="card"><span class="label">技能 · Skills</span>
@@ -2395,7 +2622,7 @@ async function mergeCode(raw, fail) {
   let data;
   try { data = JSON.parse(json); } catch (e) { return fail(cut); }
   if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
-  S = mergeStates(S, data); S.lastImport = now(); indexGen(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
+  S = mergeStates(S, data); S.lastImport = now(); indexGen(); migrateFsrs(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
 }
 async function genSen(quiet) {
   const genStatus = quiet ? () => {} : window.genStatus;
@@ -2459,7 +2686,13 @@ const STOCKERS = [
   { key: "sen", name: "短句", cap: "sen", run: () => genSen(true) },
 ];
 const PSG_KINDS = ["xhs", "news", "travel", "book"];
-const stockCfg = () => Object.assign({ mins: 60, days: 21 }, (S.settings || {}).stock);
+// minutes/day × days, or trip dates (from/to, "YYYY-MM-DD"): with both dates set they decide the number of days
+const stockCfg = () => {
+  const c = Object.assign({ mins: 60, days: 21 }, (S.settings || {}).stock);
+  c.trip = !!(c.from && c.to && c.to >= c.from);
+  if (c.trip) c.days = Math.round((new Date(c.to + "T00:00") - new Date(c.from + "T00:00")) / DAY) + 1;
+  return c;
+};
 function secPerCard() {
   let n = 0, sec = 0; for (const d in S.log) { n += S.log[d].n; sec += S.log[d].sec; }
   return n >= 20 ? Math.max(20, Math.min(60, sec / n)) : 35;
@@ -2468,33 +2701,33 @@ const unreadPassages = () => [...PSG.keys()].filter(id => !S.reads[id]).length;
 let FORECAST = null;
 function forecast(days, mins) {
   const keepS = S, keepOff = CLOCK_OFF;
-  SIM = true; S = JSON.parse(JSON.stringify(S));
+  SIM = true; S = JSON.parse(JSON.stringify(S)); BUDGET_MINS = mins;
   try {
-    const per = secPerCard(), perDay = Math.max(1, Math.floor(mins * 60 / per));
     let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const w = weights(), cats = Object.keys(w);
-    let covered = 0, cards = 0;
+    let covered = 0;
+    // v23: each simulated day runs the real session builder (reviews, same-day repeats, divider, new-item budget)
+    // for `mins` minutes; typed cards ~90 s, others ~25 s; 85% of drills and 90% of other cards right.
+    const cfg = stockCfg(), tripStart = cfg.trip ? new Date(cfg.from + "T00:00").getTime() : 0;
+    const base = tripStart > Date.now() + keepOff ? tripStart : midnight(Date.now() + keepOff + DAY); // the trip's first day, or tomorrow
     for (let d = 1; d <= days; d++) {
-      CLOCK_OFF = keepOff + d * DAY;
-      const tally = {}, lists = {}; cats.forEach(k => { tally[k] = 0; lists[k] = candidates(k).filter(c => !c.re); }); // reused old sentences don't count
-      let n = 0;
-      while (n < perDay) {
-        // the day's due + new cards per category (computed once a day: fast enough for a phone);
-        // pick the category furthest below its share; each card once a day (a miss comes back on a later day)
-        const avail = cats.filter(k => lists[k].length); if (!avail.length) break;
-        const k = avail.sort((a, b) => (tally[a] / (n + 1) - w[a]) - (tally[b] / (n + 1) - w[b]))[0];
-        const c = lists[k].shift(), ok = rnd() < 0.85;
-        if (c.t === "lad") recordLadder(c.id, (S.items[c.id] || {}).r || c.r, ok ? 3 : 1);
-        else if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx");
-        else if (c.t === "sen") recordSen(c.id, ok, 1);
-        else recordBox(c.id, c.t, ok, c.t);
-        tally[k]++; n++; cards++; CLOCK_OFF += per * 1000;
+      CLOCK_OFF = midnight(base + (d - 1) * DAY + 12 * 3600e3) + 9 * 3600e3 - Date.now();
+      const used = new Set();
+      let sec = 0;
+      while (sec < mins * 60) {
+        const block = buildBlock(8, used, rnd).filter(c => c.t !== "div" && !c.re);
+        if (!block.length) break;
+        for (const c of block) {
+          if (c.t === "lad") { const ok = rnd() < 0.85; recordLadder(c.id, c.r || 5, ok ? 3 : 0, ok && (c.r === 4 || c.r === 5) ? "x" : undefined); sec += c.r === 4 || c.r === 5 ? 90 : 25; }
+          else { const ok = rnd() < 0.9; if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx"); else if (c.t === "sen") recordSen(c.id, ok, 1); else recordBox(c.id, c.t, ok, c.t); sec += 25; }
+          CLOCK_OFF += (c.t === "lad" && c.r >= 4 && c.r <= 5 ? 90 : 25) * 1000;
+          if (sec >= mins * 60) break;
+        }
       }
-      if (n < perDay * 0.9) break;
+      if (sec < mins * 60 * 0.9) break;
       covered = d;
     }
-    return { days: covered, target: days, per: Math.round(per), unread: unreadPassages(), needPsg: Math.ceil(days / 2), t: keepS.updatedAt };
-  } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; }
+    return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days / 2), t: keepS.updatedAt };
+  } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; BUDGET_MINS = null; }
 }
 let STOCK = null;
 function stockStatus() {
@@ -2503,7 +2736,7 @@ function stockStatus() {
   const okCards = f.days >= f.target, okPsg = f.unread >= f.needPsg;
   let h = `<p class="small">练习卡够用 Practice cards last: <b>${okCards ? `≥ ${f.target}` : f.days} 天 days</b> ${okCards ? "✓" : ""}<br>
     没读过的短文 Unread passages: <b>${f.unread}</b> / ${f.needPsg} 篇 needed (one every 2 days) ${okPsg ? "✓" : ""}</p>
-    <p class="small muted">Assumes about ${f.per} s per card (your pace) and 85% right, counting only cards that are due or new.</p>`;
+    <p class="small muted">Runs the real scheduler forward: about 90 s per typed card and 25 s per other card, 85–90% right, new drills and words paced by the daily budget, new parsing sentences filling the rest. Old sentences being reused don't count.</p>`;
   if (STOCK) {
     const a = STOCK.added;
     h += `<p class="small">${STOCK.running ? `<span class="spin"></span> 备货中 Stocking up…` : "这次 This run:"} +${a.lad} 造句 · +${a.sen} 短句 · +${a.psg} 短文${STOCK.msg ? `<br><span class="muted">${esc(STOCK.msg)}</span>` : ""}</p>`;
@@ -2516,7 +2749,11 @@ function stockCard() {
   const sel = (id, opts, v, unit) => `<select id="${id}" style="font:inherit;font-size:16px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)">${opts.map(o => `<option value="${o}" ${o === v ? "selected" : ""}>${o} ${unit}</option>`).join("")}</select>`;
   return `<div class="card"><span class="label">离线备货 · Stock up for offline</span>
     <p class="small muted">${AI ? "The offline copy can't make new material. Stock up here before you go, then carry it over with a copy code." : "How long this copy's material lasts. New material can only be made in the online version."}</p>
-    <div class="row small">每天 Daily ${sel("st-mins", [15, 30, 60, 90], cfg.mins, "分钟")} × ${sel("st-days", [7, 14, 21, 28], cfg.days, "天")}</div>
+    <div class="row small">每天 Daily ${sel("st-mins", [15, 30, 60, 90], cfg.mins, "分钟")} × ${cfg.trip ? `<b>${cfg.days} 天 days</b>` : sel("st-days", [7, 14, 21, 28], cfg.days, "天")}</div>
+    <div class="row small" style="gap:6px">或者按行程日期 Or trip dates:
+      <input type="date" id="st-from" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.from || "")}"> → <input type="date" id="st-to" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.to || "")}">
+      ${cfg.from || cfg.to ? `<button class="btn ghost" id="st-clr" style="min-height:34px;padding:6px 10px">清除 Clear</button>` : ""}</div>
+    ${cfg.trip ? `<p class="small muted">During the trip, new drills and words are spread over the days left, so the stock lasts to the end.</p>` : ""}
     <div id="st-body">${stockStatus()}</div>
     ${AI ? `<div class="row"><button class="btn soft" id="st-go" ${STOCK && STOCK.running ? "hidden" : ""}>开始备货 Stock up</button><button class="btn ghost" id="st-stop" ${STOCK && STOCK.running ? "" : "hidden"}>停止 Stop</button></div>` : ""}</div>`;
 }
@@ -2527,9 +2764,17 @@ function updateForecast() {
   setTimeout(() => { FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30);
 }
 function bindStock() {
-  const m = $("#st-mins"), d = $("#st-days"); if (!m) return;
-  const set = () => { S.settings = Object.assign({}, S.settings, { stock: { mins: +m.value, days: +d.value } }); save(); updateForecast(); };
-  m.onchange = set; d.onchange = set;
+  const m = $("#st-mins"), d = $("#st-days"), f = $("#st-from"), t = $("#st-to"); if (!m) return;
+  const set = (redraw) => {
+    const prev = (S.settings || {}).stock || {};
+    S.settings = Object.assign({}, S.settings, { stock: { mins: +m.value, days: d ? +d.value : prev.days || 21, from: f.value || undefined, to: t.value || undefined } });
+    save();
+    if (redraw) render(); else updateForecast();
+  };
+  m.onchange = () => set(false); if (d) d.onchange = () => set(false);
+  f.onchange = () => set(true);
+  t.onchange = f.onchange;
+  const clr = $("#st-clr"); if (clr) clr.onclick = () => { f.value = ""; t.value = ""; set(true); };
   const go = $("#st-go"); if (go) go.onclick = stockUp;
   const st = $("#st-stop"); if (st) st.onclick = () => { if (STOCK) { STOCK.stop = true; STOCK.msg = "停下来了 · Stopping after the current batch…"; refreshStock(); } };
   const cfg = stockCfg();
@@ -2584,6 +2829,7 @@ function rescoreLastPlacement() {
   $("#tabs").hidden = false;
   rescoreLastPlacement();
   migrateSen();
+  migrateFsrs();
   render();
   drawOffline();
   connectRemote();
