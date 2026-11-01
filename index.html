@@ -272,7 +272,7 @@ function splitState(st) {
   return docs;
 }
 const newerItem = (x, y) => !y || (x.n || 0) > (y.n || 0) || ((x.n || 0) === (y.n || 0) && (x.due || 0) > (y.due || 0));
-/* ---------- answer log (v19) ----------
+/* ---------- answer log (v22) ----------
    Each item keeps its last H_MAX answers in it.h: [time in s, rung (0 = not a drill), value, source?, Claude's later score?]
    value: drills = score 0–3; reading cards = 0 if wrong, else time credit × 100; bank words 100 / 0.
    source: "s" self-graded, "a" graded by Claude, "p" looked back at the sentence; absent = checked by the app.
@@ -596,7 +596,7 @@ function recordBox(id, t, ok, cat, credit = 1) {
   if (cat) pushRecent(cat, ok ? credit : 0);
   save();
 }
-// Sentence parsing trains a skill, not a memory (v19). A sentence you read well isn't shown again until new ones
+// Sentence parsing trains a skill, not a memory (v22). A sentence you read well isn't shown again until new ones
 // run out (and then only after ~2 months, once the answer is forgotten); a miss, a slow read or looking back at
 // the sentence brings it back in about 2 weeks.
 const SEN_AGAIN = 14 * DAY, SEN_REUSE = 60 * DAY;
@@ -617,7 +617,7 @@ function migrateSen() {
   for (const id in S.items) { const it = S.items[id]; if (it.t !== "sen") continue; if (it.ok >= it.n) { it.b = 5; it.due = now() + SEN_REUSE; } else { it.b = Math.min(it.b, 1); it.due = now() + SEN_AGAIN; } }
   S.mig = 1; save();
 }
-/* ---------- once a day per item (v19) ----------
+/* ---------- once a day per item (v22) ----------
    An item answered today isn't offered again today, and neither is anything sharing its key chunk or word
    (a drill on 前往, the word card 前往, a saved word 前往). sibKey gives that shared key. */
 const SIB_CACHE = new Map();
@@ -802,7 +802,7 @@ function mixReason() {
 // Writing (rungs 4–5) needs a grader. The online version waits for Claude: no writing cards while offline.
 // The offline copy has no Claude at all, so it always self-grades.
 const writingAllowed = () => !(HOSTED && AI && !ONLINE);
-// Writing cards: drills at rung 4–5 that are due. (Until v18, drills that weren't due were "stretched" up to
+// Writing cards: drills at rung 4–5 that are due. (Until v21, drills that weren't due were "stretched" up to
 // writing whenever nothing was due; that reviewed the same drills too early and too often, so it's gone.)
 function writingCandidates(exclude, done = doneToday()) {
   const t = now(), due = [];
@@ -814,7 +814,7 @@ function writingCandidates(exclude, done = doneToday()) {
   return due.sort((a, b) => a.due - b.due);
 }
 const isWriting = c => c && c.t === "lad" && c.r >= 4;
-// One block of up to n cards (v19). Reviews (due cards) come first, in the weighted mix, with a due writing card
+// One block of up to n cards (v22). Reviews (due cards) come first, in the weighted mix, with a due writing card
 // in every 4th slot (8th with 少打字). When no reviews are left, a divider card ("reviews done") goes in once per
 // session, then new material follows in the same mix. A card already queued this session, answered today, or
 // sharing a key chunk with one of those is skipped. Returns [] when there's nothing at all left.
@@ -916,8 +916,8 @@ function renderSession(main) {
     else s.combo = 0;
     if (r.promoted) s.promoted++;
     if (r.mastered) s.mastered++;
-    // v19: no same-session redo. One appearance per item a day; a miss comes back on a later day.
-    // (Until v18 a missed reading card or drill step 1–3 came back 5 cards later.)
+    // v22: no same-session redo. One appearance per item a day; a miss comes back on a later day.
+    // (Until v21 a missed reading card or drill step 1–3 came back 5 cards later.)
     if (s.best > (S.best.combo || 0)) { S.best.combo = s.best; save(); }
   }, () => { s.i++; render(); window.scrollTo(0, 0); });
 }
@@ -1370,7 +1370,7 @@ function renderNews(item, el, onResult, onNext) {
 function renderSen(item, el, onResult, onNext) {
   const plain = item.s.replace(/[|\/]/g, "");
   const right = item.opts[0], opts = shuffle(item.opts);
-  // v19: read first, then answer. The sentence is shown alone; 读懂了 stops the (invisible) reading timer and
+  // v22: read first, then answer. The sentence is shown alone; 读懂了 stops the (invisible) reading timer and
   // swaps the sentence for the question, so the options can't be checked against it. 再看一眼 brings the
   // sentence back but counts as a slow read (it returns in ~2 weeks instead of being retired).
   const timer = makeTimer();
