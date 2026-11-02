@@ -387,7 +387,7 @@ function pullRemote() {
       try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
       if (stable(S) !== before && !busyView()) render();
     }
-  }).then(() => { remoteDirty = true; pushRemote(); processSentences(); redoQuestions(); });
+  }).then(() => { remoteDirty = true; pushRemote(); processSentences(); });
 }
 async function connectRemote() {
   if (!window.claude || !window.claude.use) return;
@@ -462,13 +462,13 @@ function drawOffline() {
   if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
   b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
 }
-addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); redoQuestions(); if (COL) pullRemote(); });
+addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); if (COL) pullRemote(); });
 addEventListener("offline", () => { ONLINE = false; drawOffline(); });
 let PERSISTED = null;
 
 /* ============ AI (Claude-hosted only) ============ */
 let AI = null;
-if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); redoQuestions(); }).catch(() => {});
+if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); }).catch(() => {});
 function aiErr(e) {
   const c = e && e.code;
   if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
@@ -493,6 +493,9 @@ async function loadData() {
 }
 // Generated drills taken out (2026-11-02): near-copies of built-in drills, several with unnatural Chinese.
 const RETIRED_GEN = new Set(["Gmvvtnjw1hnai2", "Gmvvtnjw1l8ke1", "Gmvvtnjw1muq35", "Gmvvtnjw1f8pi6", "Gmvvtnjw1i3pe0", "Gmvvtnjw1vjbl4", "Gmvvtnjw1hqay7", "Gmvvtnjw14uxe3"]);
+// One-time fix (2026-11-02): harder questions, written by Claude in the build chat, for the six unread passages that
+// still had the old easy ones. Applied only while a passage has no reasons (ex) yet, so it never overwrites newer questions.
+const QFIX = {"Gmvube9if": [{"q": "What does the first paragraph say about Old Zhou?", "opts": ["He has almost nothing materially, yet his eyes are as pure as snow", "He rarely leaves the mountains because he can't afford to", "He owns nothing but an old mailbox and an album", "He never leaves the mountains"], "ex": ["物质上几乎一无所有，然而他的眼神却像雪一样纯洁: 然而 sets the two against each other.", "很少出山 and 一无所有 are separate facts; no cause is given.", "The album is the young man's, brought later.", "很少 = rarely, not never."]}, {"q": "How did Old Zhou react to the album?", "opts": ["He was silent for a long time, then said only that the mountain wind sounds better", "He said the music was abstract, like clouds and water merging", "He answered at once, and the young man was offended", "He listened and never said a word"], "ex": ["沉默了很久，只说了一句：“山里的风比这个好听。”", "That's how the young man described it.", "He was silent for a long time first, and the young man laughed (笑了).", "只说了一句: he said exactly one sentence."]}, {"q": "What did the young man realise?", "opts": ["Real quality isn't about how much you know but whether you can listen quietly", "Real quality comes from knowing a lot about music", "Mountain wind really is better than any music", "Old Zhou simply didn't understand abstract music"], "ex": ["不在于懂得多少，而在于能否安静地听: 不在于…而在于… = not X but Y.", "Reversed: 不在于懂得多少 = it's NOT about how much you know.", "That's Old Zhou's remark, not what the young man realised.", "He laughed, but what he understood (明白) was the opposite: listening matters more."]}], "Gmvymo1xviqf7": [{"q": "Which is true about the grandfather?", "opts": ["He worked as a teacher and later set up a school in the town", "He set up the school first and only taught later", "He joined the army after many years of teaching", "He taught at an army school before retiring to the lake"], "ex": ["从事教书工作，后来在小镇上办学: 后来 = later.", "Reversed: teaching came first, 后来 the school.", "He was in the army 年轻时, when he was young.", "The army and teaching are separate; no army school is mentioned."]}, {"q": "What happened on those summer afternoons on the lake?", "opts": ["At the hottest time of day, the grandfather dozed at the bow under his straw hat", "The narrator dozed at the stern while the grandfather rowed", "They waited until the sun went down before going out", "The grandfather watched the water birds skim over the reeds"], "ex": ["正当太阳最毒的时候，他坐在船头打盹儿，草帽盖着脸。", "The narrator sat at the stern watching the birds; the grandfather dozed.", "正当太阳最毒的时候 = right when the sun was fiercest.", "The narrator watched the birds (我…看水鸟)."]}, {"q": "How did he answer the person who wanted to buy the school?", "opts": ["He just smiled and said he'd think about it", "He smiled and turned the offer down", "He thought it over and then signed", "He laughed at the idea of selling"], "ex": ["他只是笑了笑，说要再想想。", "要再想想 = he'd think it over, not a refusal.", "The text never says he signed.", "笑了笑 is a brief smile, not mockery."]}], "Gmvyd6phaejhs": [{"q": "What does the report say about 星河城?", "opts": ["It had three million online visits by the end of 2024 and may become a new tourist hotspot", "It has already become the hottest new tourist destination", "Three million people visited it in person by the end of 2024", "It has three million users who visit every year"], "ex": ["线上游客已达三百万人次…有望成为新的旅游热点: 有望 = is expected to.", "有望成为 = may become, not already is.", "线上游客: online visits; 人次 counts visits, not people.", "三百万人次 is total visits so far, not yearly users."]}, {"q": "What did the survey find?", "opts": ["Eighty percent of respondents were quite willing to visit again", "Eight percent of respondents wanted to go back", "Most respondents found the festival events too crowded", "Most respondents preferred it to real travel"], "ex": ["八成受访者的再访意愿较高: 八成 = 80%.", "八成 = eight tenths, 80%.", "The events are called 格外缤纷, especially colourful; crowds aren't mentioned.", "No comparison with real travel is made."]}, {"q": "What is the operator planning, and why?", "opts": ["Because so many want to come back, it will speed up overseas expansion and send a ten-person team abroad", "It will send ten teams to different countries", "It will open real-world venues in several countries", "It will expand abroad because domestic visitors are falling"], "ex": ["为此 = for this reason; 一行十人 = a group of ten people.", "一行十人 = one group of ten people.", "It goes abroad to negotiate cooperation (洽谈合作), not to build venues.", "为此 points back to the high return rate, not to a decline."]}], "Gmvymngekfcq8": [{"q": "What did she find in the park?", "opts": ["Cypress trees at the entrance and a big stretch of plum blossoms further back", "Plum blossoms at the entrance and cypresses further back", "Only cypress trees, but they looked great in photos", "A stall where she bought a bunch of plum blossoms"], "ex": ["一进门全是柏树，后头还有一大片梅花。", "Reversed: cypresses at the entrance (一进门), plum blossoms behind (后头).", "后头还有一大片梅花: there were plum blossoms too.", "She bought the blossoms later (后来), after getting home; where isn't said."]}, {"q": "Why did she wear sunglasses?", "opts": ["Her eyes were inflamed, and the UV index was high that day", "To look like the heroine of a spy drama", "The high UV index had inflamed her eyes", "Her friend told her to, as a joke"], "ex": ["最近眼睛发炎了，今天紫外线指数又很高: 又 adds a second reason.", "That was her friend's joke about how she looked.", "Two separate facts: 最近 (lately) for her eyes, 今天 (today) for the UV.", "Her friend only laughed at how she looked."]}, {"q": "What happened on the way home and after?", "opts": ["She phoned her mum to show her the photos, and at home found a parcel notice in her mailbox", "Her mum phoned her and asked to come along next time", "She found a parcel of plum blossoms in her mailbox", "She showed her mum the photos when she got home"], "ex": ["回家路上我拨通了妈妈的电话…到家先看了信箱，居然有一张快递通知单。", "She made the call (我拨通了); her mum asked to be brought next time.", "The mailbox held a delivery notice (通知单); she bought the blossoms herself.", "She showed them on the way home, by phone."]}], "Mmvwt8c8nwxz80p0": [{"q": "Where does her information about the team come from?", "opts": ["A friend who spent a few months on that team during a rotation programme there", "A friend who currently works on the team she would join", "The company's own description of the team", "What she saw in her interview with the team"], "ex": ["据我一位曾在该公司参加轮岗项目的朋友说…他在那个团队工作了几个月。", "曾 = previously; he was there on a rotation.", "It's all from her friend (据…朋友说).", "Her interview isn't mentioned."]}, {"q": "What did the friend say about the team?", "opts": ["It's evidently very high-pressure and unpleasant, and getting work done there was very frustrating", "It's high-pressure but rewarding", "The pay is low for so much pressure", "The team is fine; only the manager is difficult"], "ex": ["显然压力极大且很不愉快…开展工作非常令人沮丧。", "很不愉快 and 令人沮丧: nothing rewarding is mentioned.", "Pay isn't mentioned.", "The whole team (那个团队) is described as stressful and unpleasant."]}, {"q": "What is she unsure about?", "opts": ["Whether to accept an offer she has already received", "Whether the company will make her an offer", "Whether to join the rotation programme her friend did", "Which of two teams to join"], "ex": ["我收到了这家公司的录用通知，但我不太确定是否要接受。", "收到了录用通知 = she already has the offer.", "The rotation was her friend's; she's choosing whether to take the job.", "Only one team is mentioned (我将要加入的那个团队)."]}], "Mmvzgxvaou46i0p0": [{"q": "What contrast does the author draw between China and the US?", "opts": ["Over drinks in China friends soon open up completely; in the US people never tell you what they really think", "Americans speak bluntly, while Chinese friends mostly talk nonsense", "Chinese friends tell the truth only when drunk; Americans do it sober", "Americans lecture you because they care, unlike Chinese friends"], "ex": ["哥们一句“操！”，之后就开始推心置腹了。这在美国根本不存在。", "Reversed: he says Americans are preachy or talk nonsense (废话).", "He says Americans never tell you the truth (从来不…说真话).", "好为人师爹味重 is a complaint, not care."]}, {"q": "What happened with his PhD topic?", "opts": ["He felt it was trivial, but his advisor and other professors insisted it mattered, so he half-believed them and took it on", "He was sure it was important, but other professors warned him off", "He turned it down and had to go back to China", "His advisor admitted it was minor but promised success anyway"], "ex": ["我一看就不太对劲…都说这课题不得了…将信将疑，还被忽悠进了。", "Reversed: he doubted it, and the other professors praised it.", "拒绝…只能卷铺盖滚回国 is what WOULD have happened; he took it.", "The advisor said it was 无比重要, extremely important."]}, {"q": "What happened when he looked for jobs?", "opts": ["He found a postdoc, but two years of faculty applications brought only two interviews, both failed", "He skipped the postdoc and got two interviews in his first year", "He couldn't find a postdoc, so he applied for faculty jobs straight away", "He got two offers but turned them down to improve himself first"], "ex": ["费了好大的劲申请了两年，只拿到了两个学校的面试，最后全挂。", "He did a postdoc first, and it took two years of applying.", "差点找不到 = he almost couldn't find one, but did.", "全挂 = he failed both interviews; improving himself is his plan for next year."]}]};
 function indexGen() {
   S.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [] }, S.gen); // older saves lack newer kinds
   S.gen.ladder = (S.gen.ladder || []).filter(x => !RETIRED_GEN.has(x.id));
@@ -500,6 +503,7 @@ function indexGen() {
   (S.gen.passages || []).forEach(x => PSG.set(x.id, x));
   ((S.gen || {}).sen || []).forEach(x => SEN.set(x.id, x));
   ((S.gen || {}).mine || []).forEach(x => PSG.set(x.id, x));
+  for (const id in QFIX) { const p = PSG.get(id); if (p && p.qs && !p.qs.some(q => q.ex)) p.qs = JSON.parse(JSON.stringify(QFIX[id])); }
 }
 const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎" };
 const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "不在你的词库 Not in your Anki list" };
@@ -2092,43 +2096,12 @@ function renderRead(main) {
       <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting. You can leave this tab while it works; it'll appear below as 新.</p>
       <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}" data-genkey="passage" ${GEN.passageBusy ? "disabled" : ""}>${v}</button>`).join("")}</div><div id="st-passage" class="small muted">${GEN.passage || ""}</div></div>` : ""}
     ${mineSection()}
-    ${redoQsCard()}
     ${fresh.length ? `<span class="label">没读过 · New (${fresh.length})</span><div class="plist">${fresh.map(item).join("")}</div>` : ""}
     ${ready.length ? `<span class="label">可以重读 · Ready to re-read (${ready.length})</span><p class="small muted" style="margin-top:-8px">读过两天以上了。再读一遍练速度，不答题。 It's been 2+ days: read it again for speed, no questions.</p><div class="plist">${ready.map(rItem).join("")}</div>` : ""}
     ${done.length ? `<span class="label">最近读过 · Read recently (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
   $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[b.dataset.p] }; render(); window.scrollTo(0, 0); });
   $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen));
   bindMineSection(main);
-  const rq = $("#redoqs", main); if (rq) rq.onclick = redoQuestions;
-}
-/* ---------- harder questions for unread passages written before 2026-11-02 (online) ----------
-   Questions are only asked on a first read, so only unread passages are worth redoing. One request each. */
-let REDO_Q = null;
-const oldQs = () => [...PSG.values()].filter(p => (p.gen || p.mine) && !S.reads[p.id] && p.qs && p.qs.length && !p.qs.some(q => q.ex));
-// Runs by itself whenever Claude is available (start, reconnect, after a sync); a card shows progress.
-function redoQsCard() {
-  if (REDO_Q) return `<div class="card"><p class="small"><span class="spin"></span> 换成更难的问题… Writing harder questions ${REDO_Q.done}/${REDO_Q.n}</p></div>`;
-  const n = oldQs().length; if (!n || !AI) return "";
-  return `<div class="card"><p class="small">${n} 篇没读过的文章还是旧的简单问题，联网时会自动换 · ${n} unread passage${n > 1 ? "s" : ""} still ha${n > 1 ? "ve" : "s"} the old questions; they're replaced automatically when Claude is reachable.</p><button class="btn soft" id="redoqs">现在换 Replace now</button></div>`;
-}
-async function redoQuestions() {
-  if (REDO_Q || !AI || !ONLINE || !C) return;
-  const list = oldQs(); if (!list.length) return;
-  REDO_Q = { n: list.length, done: 0 }; if (VIEW === "read" && !READ) render();
-  let failed = null, made = 0;
-  for (const p of list) {
-    const text = p.paras.map(x => x.replace(/[|\/]/g, "")).join("\n");
-    try {
-      const j = await AI.json(`Write comprehension questions for this Chinese text, for an advanced learner (knows HSK 1–6 well; reads slowly and tends to answer by elimination).\n${text}\nReply with only JSON: {"qs":[{"q":"English question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}\nQuestions: ${QS_RULES}`, { modelTier: "default", cache: false });
-      const qs = toQs(j && j.qs);
-      if (qs.length < 2 || !qs.every(q => q.ex)) throw { code: "invalid_json" };
-      p.qs = qs; made++; save();
-    } catch (e) { failed = e; break; }
-    REDO_Q.done++; if (VIEW === "read" && !READ) render();
-  }
-  REDO_Q = null;
-  if (made || failed) toast(failed ? aiErr(failed) : `换好了 ${made} 篇 · New questions for ${made} passage${made > 1 ? "s" : ""}`);
-  if (VIEW === "read" && !READ) render();
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
 function segmentText(text, gl = {}) {
