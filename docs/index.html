@@ -2693,14 +2693,16 @@ function trEditorHtml(f) {
     </div>
     <span class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)</span>${filePick("ltf", ".srt,.vtt,.lrc,.txt,text/plain", "选文件 Choose file", f.trName)}
     <textarea class="inp" id="ltr" rows="5" lang="zh-CN" placeholder="或者粘贴文字 Or paste the transcript (with or without [00:12.30] / SRT timings)" style="font-family:var(--f-zh)">${esc(f.tr || "")}</textarea>
-    ${f.tr ? `<span class="small muted">${(() => { const c = parseCues(f.tr); return `${c.cues.length} 行 lines${c.timed ? " · 有时间 timed ✓" : " · 没有时间 no timings"}`; })()}</span>` : ""}`;
+    <span class="small muted" id="ltrn">${trCount(f.tr)}</span>`;
 }
+function trCount(tr) { if (!tr || !tr.trim()) return ""; const c = parseCues(tr); return `${c.cues.length} 行 lines${c.timed ? " · 有时间 timed ✓" : " · 没有时间 no timings"}`; }
 // keep(): copy the form's inputs into f before a redraw
 const LR_CACHE = new Map();
 function bindTrEditor(main, f, keep, redraw) {
   const lrKeep = () => { f.lr = Object.assign({}, f.lr, { q: $("#lrq", main).value, a: $("#lra", main).value }); };
   $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); f.trName = file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
-  $("#ltr", main).onchange = () => { keep(); lrKeep(); redraw(); };
+  // update the line count in place (a full redraw here would swallow a tap on Save made while the box is focused)
+  $("#ltr", main).oninput = () => { const n = $("#ltrn", main); if (n) n.textContent = trCount($("#ltr", main).value); };
   $("#lrgo", main).onclick = async () => {
     keep(); lrKeep(); const q = (f.lr.q || "").trim(), a = (f.lr.a || "").trim();
     if (!q) return $("#lrq", main).focus();
@@ -2773,8 +2775,8 @@ function renderListenItem(main, it) {
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="chip">${it.kind === "link" ? "🔗 链接" : "🎧 文件"}</span></div>
     <div class="card stack"><h2 class="zh">${esc(it.title)}</h2>
       <div id="lplay"></div>
-      <button class="btn soft lostbtn" id="llost">没跟上 · Lost it${LST.lost.length ? ` <span class="small">(${LST.lost.length})</span>` : ""}</button>
-      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. It doesn't rewind; afterwards you'll see where it happened${timed ? "" : " (with a timed transcript, the exact line)"}.</p>
+      ${it.kind === "link" && !hasTr ? "" : `<button class="btn soft lostbtn" id="llost">没跟上 · Lost it${LST.lost.length ? ` <span class="small">(${LST.lost.length})</span>` : ""}</button>
+      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. It doesn't rewind. ${timed && it.kind === "file" ? "Afterwards you'll see the exact lines." : it.kind === "link" ? "This page can't see where the other app is, so afterwards you mark the lines yourself." : "Afterwards you'll see roughly where (exact lines need a timed transcript)."}</p>`}
       ${hasTr ? `<div class="row" style="gap:6px"><span class="small">文字 Text:</span>${[["hide", "隐藏 Hidden"], ...(timed ? [["follow", "跟着看 Follow"]] : []), ["all", "全文 All"]].map(([m, l]) => `<button class="tagc ${LST.mode === m ? "on" : ""}" data-mode="${m}">${l}</button>`).join("")}</div>
         <div class="cues" id="lcues" ${LST.mode === "hide" ? "hidden" : ""}>${it.cues.map((c, i) => `<button class="cue" data-ci="${i}">${esc(c[1])}</button>`).join("")}</div>` : ""}
       <button class="btn wide" id="ldone">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
@@ -2788,7 +2790,7 @@ function renderListenItem(main, it) {
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
   $("#lback", main).onclick = () => { stopAudio(); LST = null; render(); };
   $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; syncCue(it); });
-  $("#llost", main).onclick = () => {
+  if ($("#llost", main)) $("#llost", main).onclick = () => {
     LST.lost.push(it.kind === "file" && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null);
     const b = $("#llost", main); b.innerHTML = `没跟上 · Lost it <span class="small">(${LST.lost.length})</span>`; b.classList.remove("pop"); void b.offsetWidth; b.classList.add("combo", "pop"); setTimeout(() => b.classList.remove("combo"), 400);
   };
@@ -2872,8 +2874,13 @@ function syncCue(it) {
 }
 // lines near each "lost it" (the line playing, and the one before it: you usually notice a moment late)
 function lostLines(it, lost) {
-  const out = new Set(); if (!isTimed(it)) return out;
-  for (const t of lost) { if (t == null) continue; const i = cueAt(it, t); if (i >= 0) out.add(i); if (i > 0) out.add(i - 1); }
+  const out = new Set(), cues = it.cues || [];
+  if (isTimed(it)) { for (const t of lost) { if (t == null) continue; const i = cueAt(it, t); if (i >= 0) out.add(i); if (i > 0) out.add(i - 1); } return out; }
+  // untimed transcript of a file: assume speech runs at an even pace, so x% through the audio ≈ x% through the text
+  const dur = (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : 0) || it.dur || 0;
+  if (!dur || !cues.length) return out;
+  const ends = []; let n = 0; for (const c of cues) { n += c[1].length; ends.push(n); }
+  for (const t of lost) { if (t == null) continue; const at = Math.min(1, t / dur) * n; let i = ends.findIndex(e => e >= at); if (i < 0) i = cues.length - 1; out.add(i); if (i > 0) out.add(i - 1); }
   return out;
 }
 function renderListenReview(main, it) {
@@ -2890,18 +2897,24 @@ function renderListenReview(main, it) {
     return;
   }
   if (LST.quiz && LST.score != null && !LST.saved) { const h = S.lsn[it.id]; if (h && h.length) { h[h.length - 1].score = LST.score; h[h.length - 1].nq = it.qs.length; save(); } LST.saved = true; }
-  const marks = lostLines(it, LST.lost), timed = isTimed(it), file = it.kind === "file";
+  const timed = isTimed(it), file = it.kind === "file", exact = timed && file;
+  if (!LST.marks) LST.marks = lostLines(it, LST.lost);
+  const marks = LST.marks, canMark = !exact && LST.lost.length > 0 && (it.cues || []).length > 0;
+  const rough = !exact && file && marks.size > 0;
   const pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags };
   LST.paras = (it.cues || []).map(c => segmentText(c[1], it.gl || {}));
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="small muted">没跟上 ${LST.lost.length} 次${LST.quiz ? ` · 问题 ${LST.score}/${it.qs.length}` : ""}</span></div>
     <div class="card stack"><span class="label">对一下 · Check against the text</span>
-      ${(it.cues || []).length ? `<p class="small muted">${marks.size ? "黄色 = 你没跟上的地方 · Yellow = where you lost it. " : ""}Tap any word you didn't catch or know: it's looked up and can go into review.${timed && file ? " ▶ replays a line." : ""}</p>
-        <div class="reading" id="lrd" style="gap:4px">${LST.paras.map((toks, li) => `<p class="${marks.has(li) ? "cue lost" : "cue"}" style="margin:0">${timed && file ? `<button class="tagc" data-rl="${li}" style="margin-right:6px">▶</button>` : ""}${toks.map((t, ti) => tokHtml(t, li + ":" + ti, LST.looked.has(li + ":" + ti))).join("")}</p>`).join("")}</div>`
+      ${(it.cues || []).length ? `<p class="small muted">${canMark ? (rough ? `没跟上 ${LST.lost.length} 次。黄色是按时间估计的大概位置，点 ⚑ 改一下 · Yellow = roughly where (estimated from the time); tap ⚑ to fix it. ` : `没跟上 ${LST.lost.length} 次。点 ⚑ 标出大概在哪儿 · Tap ⚑ on the lines where you lost it. `) : marks.size ? "黄色 = 你没跟上的地方 · Yellow = where you lost it. " : ""}Tap any word you didn't catch or know: it's looked up and can go into review.${timed && file ? " ▶ replays a line." : ""}</p>
+        <div class="reading" id="lrd" style="gap:4px">${LST.paras.map((toks, li) => `<p class="${marks.has(li) ? "cue lost" : "cue"}" data-li="${li}" style="margin:0">${canMark ? `<button class="tagc ${marks.has(li) ? "on" : ""}" data-mk="${li}" style="margin-right:6px" aria-label="Lost it here">⚑</button>` : ""}${exact ? `<button class="tagc" data-rl="${li}" style="margin-right:6px">▶</button>` : ""}${toks.map((t, ti) => tokHtml(t, li + ":" + ti, LST.looked.has(li + ":" + ti))).join("")}</p>`).join("")}</div>`
       : `<p class="small muted">没有文字，没法对 · No transcript to check against. You lost the thread ${LST.lost.length} time${LST.lost.length === 1 ? "" : "s"}${LST.lost.some(x => x != null) ? " at " + LST.lost.filter(x => x != null).map(fmtT).join(", ") : ""}.</p>`}
       <button class="btn wide" id="lagain">再听一遍 Listen again</button><button class="btn ghost wide" id="llist">回到列表 Back to list</button></div>`;
   $("#lback", main).onclick = $("#llist", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
   $("#lagain", main).onclick = () => { closeSheet(); LST = { id: it.id, mode: LST.mode, lost: [], rate: LST.rate }; if (AUD) AUD.currentTime = 0; render(); window.scrollTo(0, 0); };
   $$(".tk", main).forEach(el => el.onclick = () => { const [pi, ti] = el.dataset.k.split(":").map(Number); LST.looked.add(el.dataset.k); el.classList.add("looked"); openSheet(pp, LST.paras, pi, ti, el); });
+  const saveMarks = () => { const h = (S.lsn || {})[it.id]; if (h && h.length) { h[h.length - 1].lines = [...marks].sort((a, b) => a - b); save(); } };
+  if (canMark && !LST.marksSaved) { LST.marksSaved = true; if (marks.size) saveMarks(); }
+  $$("[data-mk]", main).forEach(b => b.onclick = () => { const i = +b.dataset.mk; marks.has(i) ? marks.delete(i) : marks.add(i); b.classList.toggle("on", marks.has(i)); b.parentElement.classList.toggle("lost", marks.has(i)); saveMarks(); });
   $$("[data-rl]", main).forEach(b => b.onclick = async () => {
     const i = +b.dataset.rl, start = it.cues[i][0], end = i + 1 < it.cues.length ? it.cues[i + 1][0] : null;
     if (AUD_ID !== it.id) { const blob = await audioGet(it.id); if (!blob) return toast("这台设备上没有这个音频 · The audio isn't on this device"); if (!AUD) { AUD = document.createElement("audio"); AUD.hidden = true; document.body.append(AUD); } stopAudio(); AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; }
