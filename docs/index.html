@@ -49,6 +49,7 @@ p{margin:0}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;border-radius:12px;font-weight:600;background:var(--accent);color:var(--accent-ink);min-height:46px}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
 .btn.soft{background:var(--accent-soft);color:var(--ink)}
+.fpick{position:relative;cursor:pointer}.fpick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;font-size:16px}
 .btn.wide{width:100%}
 .btn:disabled{opacity:.45;cursor:default}
 .chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--ink)}
@@ -2658,6 +2659,9 @@ function parseCues(text) {
   return { cues: t.split("\n").map(x => x.trim()).filter(Boolean).map(x => [null, x]), timed: false };
 }
 const cueChars = cues => (cues || []).reduce((a, c) => a + charCount(c[1]), 0);
+// file picker as a button + the chosen name (the browser's own picker forgets its file when the page redraws)
+const AUDIO_ACCEPT = "audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus";
+const filePick = (id, accept, label, chosen) => `<span class="row" style="gap:8px;align-items:center"><label class="btn soft fpick">${label}<input type="file" id="${id}" accept="${accept}"></label><span class="small ${chosen ? "" : "muted"}">${chosen ? "已选 " + esc(chosen) : "还没选 Nothing chosen"}</span></span>`;
 const isTimed = it => (it.cues || []).length > 0 && it.cues[0][0] != null;
 const fmtT = x => { x = Math.max(0, Math.floor(x || 0)); return Math.floor(x / 60) + ":" + String(x % 60).padStart(2, "0"); };
 function cueAt(it, t) { let i = -1; for (let k = 0; k < it.cues.length; k++) { if (it.cues[k][0] <= t + 0.05) i = k; else break; } return i; }
@@ -2687,7 +2691,7 @@ function trEditorHtml(f) {
       ${lr.err ? `<span class="small" style="color:var(--bad)">${esc(lr.err)}</span>` : ""}
       ${lr.res ? (lr.res.length ? `<div class="stack" style="gap:4px">${lr.res.map((r, i) => { const near = f.dur && r.duration && Math.abs(r.duration - f.dur) <= 3; return `<button class="pitem" data-lr="${i}" style="padding:8px 12px;gap:2px"><span class="zh"><b>${esc(r.trackName)}</b> · ${esc(r.artistName)}</span><span class="small muted">${esc(r.albumName || "")}${r.duration ? " · " + fmtT(r.duration) : ""} · ${r.syncedLyrics ? "有时间 timed" : r.plainLyrics ? "只有文字 text only" : "没有歌词 no lyrics"}${near ? " · ✓ 时长对得上 length matches your file" : ""}</span></button>`; }).join("")}</div>` : `<span class="small muted">没找到 · Nothing found. Try fewer words, or the title only.</span>`) : ""}
     </div>
-    <label class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)<input type="file" id="ltf" accept=".srt,.vtt,.lrc,.txt,text/plain" style="display:block;margin-top:6px;font-size:16px"></label>
+    <span class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)</span>${filePick("ltf", ".srt,.vtt,.lrc,.txt,text/plain", "选文件 Choose file", f.trName)}
     <textarea class="inp" id="ltr" rows="5" lang="zh-CN" placeholder="或者粘贴文字 Or paste the transcript (with or without [00:12.30] / SRT timings)" style="font-family:var(--f-zh)">${esc(f.tr || "")}</textarea>
     ${f.tr ? `<span class="small muted">${(() => { const c = parseCues(f.tr); return `${c.cues.length} 行 lines${c.timed ? " · 有时间 timed ✓" : " · 没有时间 no timings"}`; })()}</span>` : ""}`;
 }
@@ -2695,7 +2699,7 @@ function trEditorHtml(f) {
 const LR_CACHE = new Map();
 function bindTrEditor(main, f, keep, redraw) {
   const lrKeep = () => { f.lr = Object.assign({}, f.lr, { q: $("#lrq", main).value, a: $("#lra", main).value }); };
-  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
+  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); f.trName = file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
   $("#ltr", main).onchange = () => { keep(); lrKeep(); redraw(); };
   $("#lrgo", main).onclick = async () => {
     keep(); lrKeep(); const q = (f.lr.q || "").trim(), a = (f.lr.a || "").trim();
@@ -2720,7 +2724,7 @@ function bindTrEditor(main, f, keep, redraw) {
     if (res && f.dur) f.lr.res.sort((x, y) => Math.abs((x.duration || 0) - f.dur) - Math.abs((y.duration || 0) - f.dur));
     redraw();
   };
-  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
+  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; f.trName = ""; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
 }
 // the file's length (to match LRCLIB results); null if it can't be read
 function fileDuration(file) {
@@ -2732,7 +2736,7 @@ function renderListenAdd(main) {
     <div class="card stack">
       <input class="inp" id="lt" placeholder="标题 Title" value="${esc(f.title || "")}">
       <div class="row"><button class="goal ${f.kind === "file" ? "on" : ""}" data-kind="file">🎧 文件 File</button><button class="goal ${f.kind === "link" ? "on" : ""}" data-kind="link">🔗 链接 Link</button></div>
-      ${f.kind === "file" ? `<label class="small">音频文件 Audio file (mp3, m4a…; it stays on this device)<input type="file" id="lf" accept="audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus" style="display:block;margin-top:6px;font-size:16px"></label>${f.fileName ? `<span class="small muted">已选 ${esc(f.fileName)}</span>` : ""}`
+      ${f.kind === "file" ? `<span class="small">音频文件 Audio file (mp3, m4a…; it stays on this device)</span>${filePick("lf", AUDIO_ACCEPT, "选音频 Choose audio", f.fileName)}`
         : `<input class="inp" id="lu" placeholder="链接 Link (https://…)" value="${esc(f.url || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">`}
       ${trEditorHtml(f)}
       ${tagInput("ltag", f.tags || "")}
@@ -2830,7 +2834,7 @@ async function drawPlayer(it) {
     const blob = await audioGet(it.id);
     if (!$("#lplay") || !LST || LST.id !== it.id) return;
     if (!blob) {
-      box.innerHTML = `<p class="small">这台设备上没有这个音频 · The audio isn't on this device${it.fname ? ` (${esc(it.fname)})` : ""}. Choose the same file to add it here.</p><input type="file" id="lre" accept="audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus" style="font-size:16px">`;
+      box.innerHTML = `<p class="small">这台设备上没有这个音频 · The audio isn't on this device${it.fname ? ` (${esc(it.fname)})` : ""}. Choose the same file to add it here.</p>${filePick("lre", AUDIO_ACCEPT, "选音频 Choose audio", "")}`;
       $("#lre").onchange = async e => { const f = e.target.files[0]; if (!f) return; await audioPut(it.id, f); drawPlayer(it); };
       return;
     }
