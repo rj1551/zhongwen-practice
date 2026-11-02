@@ -2718,6 +2718,7 @@ function trEditorHtml(f) {
     ${f.tr ? `<span class="small muted">${(() => { const c = parseCues(f.tr); return `${c.cues.length} 行 lines${c.timed ? " · 有时间 timed ✓" : " · 没有时间 no timings"}`; })()}</span>` : ""}`;
 }
 // keep(): copy the form's inputs into f before a redraw
+const LR_CACHE = new Map();
 function bindTrEditor(main, f, keep, redraw) {
   const lrKeep = () => { f.lr = Object.assign({}, f.lr, { q: $("#lrq", main).value, a: $("#lra", main).value }); };
   $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
@@ -2727,12 +2728,17 @@ function bindTrEditor(main, f, keep, redraw) {
     if (!q) return $("#lrq", main).focus();
     Object.assign(f.lr, { busy: true, err: "", res: null }); redraw();
     const url = "https://lrclib.net/api/search?" + new URLSearchParams(a ? { track_name: q, artist_name: a } : { q }).toString();
-    let res = null, err = "";
-    for (let k = 0; k < 2 && !res; k++) {
+    // 503 = LRCLIB's whole server is overloaded (it asks to retry after 1 s), not a limit on you: keep retrying
+    // patiently, a little longer each time (about 20 s in all). Results are remembered for this session.
+    let res = LR_CACHE.get(url) || null, err = "";
+    for (let k = 0; k < 7 && !res; k++) {
       try {
         const r = await fetch(url);
-        if (r.ok) res = await r.json();
-        else if (r.status === 503 || r.status === 429) { err = "LRCLIB 现在很忙，过一会儿再试 · LRCLIB is busy right now (503); try again in a moment."; if (!k) await new Promise(z => setTimeout(z, 1500)); }
+        if (r.ok) { res = await r.json(); LR_CACHE.set(url, res); }
+        else if (r.status === 503 || r.status === 429) {
+          err = "LRCLIB 现在很忙，过一会儿再试 · LRCLIB's server is overloaded right now; try again in a minute.";
+          if (k < 6) { const st = $("#lrgo", main); if (st) st.innerHTML = `<span class="spin"></span> LRCLIB 忙，重试中 Busy, retrying (${k + 1}/6)…`; await new Promise(z => setTimeout(z, (+r.headers.get("Retry-After") || 1) * 1000 * (1 + k * 0.6) + Math.random() * 400)); }
+        }
         else { err = "LRCLIB 出错了 · LRCLIB error " + r.status; break; }
       } catch (e) { err = "这里连不上 LRCLIB · Can't reach LRCLIB from here" + (HOSTED ? " (Claude's page may block it; the offline copy can usually reach it)." : " (offline, or the site is blocked)."); break; }
     }
