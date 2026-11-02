@@ -387,7 +387,7 @@ function pullRemote() {
       try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
       if (stable(S) !== before && !busyView()) render();
     }
-  }).then(() => { remoteDirty = true; pushRemote(); processSentences(); });
+  }).then(() => { remoteDirty = true; pushRemote(); processSentences(); redoQuestions(); });
 }
 async function connectRemote() {
   if (!window.claude || !window.claude.use) return;
@@ -462,13 +462,13 @@ function drawOffline() {
   if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
   b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
 }
-addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); if (COL) pullRemote(); });
+addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); redoQuestions(); if (COL) pullRemote(); });
 addEventListener("offline", () => { ONLINE = false; drawOffline(); });
 let PERSISTED = null;
 
 /* ============ AI (Claude-hosted only) ============ */
 let AI = null;
-if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); }).catch(() => {});
+if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); redoQuestions(); }).catch(() => {});
 function aiErr(e) {
   const c = e && e.code;
   if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
@@ -2105,17 +2105,16 @@ function renderRead(main) {
    Questions are only asked on a first read, so only unread passages are worth redoing. One request each. */
 let REDO_Q = null;
 const oldQs = () => [...PSG.values()].filter(p => (p.gen || p.mine) && !S.reads[p.id] && p.qs && p.qs.length && !p.qs.some(q => q.ex));
+// Runs by itself whenever Claude is available (start, reconnect, after a sync); a card shows progress.
 function redoQsCard() {
-  if (!AI) return "";
   if (REDO_Q) return `<div class="card"><p class="small"><span class="spin"></span> 换成更难的问题… Writing harder questions ${REDO_Q.done}/${REDO_Q.n}</p></div>`;
-  const n = oldQs().length; if (!n) return "";
-  return `<div class="card"><span class="label">更难的问题 · Harder questions</span>
-    <p class="small">${n} 篇没读过的文章还是旧的简单问题 · ${n} unread passage${n > 1 ? "s" : ""} still ha${n > 1 ? "ve" : "s"} the old, easier questions.</p>
-    <button class="btn soft" id="redoqs">换成更难的问题 Replace them (${n} request${n > 1 ? "s" : ""})</button></div>`;
+  const n = oldQs().length; if (!n || !AI) return "";
+  return `<div class="card"><p class="small">${n} 篇没读过的文章还是旧的简单问题，联网时会自动换 · ${n} unread passage${n > 1 ? "s" : ""} still ha${n > 1 ? "ve" : "s"} the old questions; they're replaced automatically when Claude is reachable.</p><button class="btn soft" id="redoqs">现在换 Replace now</button></div>`;
 }
 async function redoQuestions() {
-  if (REDO_Q || !AI) return;
-  const list = oldQs(); REDO_Q = { n: list.length, done: 0 }; if (VIEW === "read") render();
+  if (REDO_Q || !AI || !ONLINE || !C) return;
+  const list = oldQs(); if (!list.length) return;
+  REDO_Q = { n: list.length, done: 0 }; if (VIEW === "read" && !READ) render();
   let failed = null, made = 0;
   for (const p of list) {
     const text = p.paras.map(x => x.replace(/[|\/]/g, "")).join("\n");
@@ -2128,8 +2127,8 @@ async function redoQuestions() {
     REDO_Q.done++; if (VIEW === "read" && !READ) render();
   }
   REDO_Q = null;
-  toast(failed ? aiErr(failed) : `换好了 ${made} 篇 · New questions for ${made} passage${made > 1 ? "s" : ""}`);
-  if (VIEW === "read") render();
+  if (made || failed) toast(failed ? aiErr(failed) : `换好了 ${made} 篇 · New questions for ${made} passage${made > 1 ? "s" : ""}`);
+  if (VIEW === "read" && !READ) render();
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
 function segmentText(text, gl = {}) {
@@ -2701,6 +2700,53 @@ function renderListen(main) {
   $("#ladd", main).onclick = () => { LST = { add: true, kind: "file" }; render(); };
   $$("[data-l]", main).forEach(b => b.onclick = () => { LST = { id: b.dataset.l, mode: "hide", lost: [] }; render(); window.scrollTo(0, 0); });
 }
+/* ---- transcript editor (new items and existing ones): subtitle file, paste, or LRCLIB lookup ----
+   LRCLIB (lrclib.net) is a free database of timed lyrics. Searched straight from your browser; the results only
+   go into your own item. It sometimes answers 503 (busy): one quiet retry, then a message. */
+function trEditorHtml(f) {
+  const lr = f.lr || {};
+  return `<span class="label">文字 · Transcript / lyrics (optional)</span>
+    <div class="stack" style="gap:6px;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <span class="small">在 LRCLIB 找带时间的歌词 · Find timed lyrics on LRCLIB</span>
+      <input class="inp" id="lrq" placeholder="歌名 Song title" value="${esc(lr.q != null ? lr.q : f.title || "")}">
+      <input class="inp" id="lra" placeholder="歌手 Artist (optional)" value="${esc(lr.a || "")}">
+      <button class="btn soft" id="lrgo" ${lr.busy ? "disabled" : ""}>${lr.busy ? '<span class="spin"></span> 搜索中… Searching' : "搜索 Search"}</button>
+      ${lr.err ? `<span class="small" style="color:var(--bad)">${esc(lr.err)}</span>` : ""}
+      ${lr.res ? (lr.res.length ? `<div class="stack" style="gap:4px">${lr.res.map((r, i) => { const near = f.dur && r.duration && Math.abs(r.duration - f.dur) <= 3; return `<button class="pitem" data-lr="${i}" style="padding:8px 12px;gap:2px"><span class="zh"><b>${esc(r.trackName)}</b> · ${esc(r.artistName)}</span><span class="small muted">${esc(r.albumName || "")}${r.duration ? " · " + fmtT(r.duration) : ""} · ${r.syncedLyrics ? "有时间 timed" : r.plainLyrics ? "只有文字 text only" : "没有歌词 no lyrics"}${near ? " · ✓ 时长对得上 length matches your file" : ""}</span></button>`; }).join("")}</div>` : `<span class="small muted">没找到 · Nothing found. Try fewer words, or the title only.</span>`) : ""}
+    </div>
+    <label class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)<input type="file" id="ltf" accept=".srt,.vtt,.lrc,.txt,text/plain" style="display:block;margin-top:6px;font-size:16px"></label>
+    <textarea class="inp" id="ltr" rows="5" lang="zh-CN" placeholder="或者粘贴文字 Or paste the transcript (with or without [00:12.30] / SRT timings)" style="font-family:var(--f-zh)">${esc(f.tr || "")}</textarea>
+    ${f.tr ? `<span class="small muted">${(() => { const c = parseCues(f.tr); return `${c.cues.length} 行 lines${c.timed ? " · 有时间 timed ✓" : " · 没有时间 no timings"}`; })()}</span>` : ""}`;
+}
+// keep(): copy the form's inputs into f before a redraw
+function bindTrEditor(main, f, keep, redraw) {
+  const lrKeep = () => { f.lr = Object.assign({}, f.lr, { q: $("#lrq", main).value, a: $("#lra", main).value }); };
+  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
+  $("#ltr", main).onchange = () => { keep(); lrKeep(); redraw(); };
+  $("#lrgo", main).onclick = async () => {
+    keep(); lrKeep(); const q = (f.lr.q || "").trim(), a = (f.lr.a || "").trim();
+    if (!q) return $("#lrq", main).focus();
+    Object.assign(f.lr, { busy: true, err: "", res: null }); redraw();
+    const url = "https://lrclib.net/api/search?" + new URLSearchParams(a ? { track_name: q, artist_name: a } : { q }).toString();
+    let res = null, err = "";
+    for (let k = 0; k < 2 && !res; k++) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) res = await r.json();
+        else if (r.status === 503 || r.status === 429) { err = "LRCLIB 现在很忙，过一会儿再试 · LRCLIB is busy right now (503); try again in a moment."; if (!k) await new Promise(z => setTimeout(z, 1500)); }
+        else { err = "LRCLIB 出错了 · LRCLIB error " + r.status; break; }
+      } catch (e) { err = "这里连不上 LRCLIB · Can't reach LRCLIB from here" + (HOSTED ? " (Claude's page may block it; the offline copy can usually reach it)." : " (offline, or the site is blocked)."); break; }
+    }
+    Object.assign(f.lr, { busy: false, err: res ? "" : err, res: res ? res.slice(0, 8) : null });
+    if (res && f.dur) f.lr.res.sort((x, y) => Math.abs((x.duration || 0) - f.dur) - Math.abs((y.duration || 0) - f.dur));
+    redraw();
+  };
+  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
+}
+// the file's length (to match LRCLIB results); null if it can't be read
+function fileDuration(file) {
+  return new Promise(res => { try { const a = document.createElement("audio"), u = URL.createObjectURL(file); a.preload = "metadata"; a.onloadedmetadata = () => { res(isFinite(a.duration) ? a.duration : null); URL.revokeObjectURL(u); }; a.onerror = () => { res(null); URL.revokeObjectURL(u); }; a.src = u; setTimeout(() => res(null), 4000); } catch (e) { res(null); } });
+}
 function renderListenAdd(main) {
   const f = LST;
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><h2>添加音频 · Add audio</h2></div>
@@ -2709,9 +2755,7 @@ function renderListenAdd(main) {
       <div class="row"><button class="goal ${f.kind === "file" ? "on" : ""}" data-kind="file">🎧 文件 File</button><button class="goal ${f.kind === "link" ? "on" : ""}" data-kind="link">🔗 链接 Link</button></div>
       ${f.kind === "file" ? `<label class="small">音频文件 Audio file (mp3, m4a…; it stays on this device)<input type="file" id="lf" accept="audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus" style="display:block;margin-top:6px;font-size:16px"></label>${f.fileName ? `<span class="small muted">已选 ${esc(f.fileName)}</span>` : ""}`
         : `<input class="inp" id="lu" placeholder="链接 Link (https://…)" value="${esc(f.url || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">`}
-      <span class="label">文字 · Transcript (optional)</span>
-      <label class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)<input type="file" id="ltf" accept=".srt,.vtt,.lrc,.txt,text/plain" style="display:block;margin-top:6px;font-size:16px"></label>
-      <textarea class="inp" id="ltr" rows="5" lang="zh-CN" placeholder="或者粘贴文字 Or paste the transcript (with or without [00:12.30] / SRT timings)" style="font-family:var(--f-zh)">${esc(f.tr || "")}</textarea>
+      ${trEditorHtml(f)}
       ${tagInput("ltag", f.tags || "")}
       <div id="lerr" class="small" style="color:var(--bad)"></div>
       <button class="btn" id="lsave">保存 Save</button></div>`;
@@ -2719,8 +2763,8 @@ function renderListenAdd(main) {
   $("#lback", main).onclick = () => { LST = null; render(); };
   $$("[data-kind]", main).forEach(b => b.onclick = () => { keep(); f.kind = b.dataset.kind; render(); });
   bindTagInput(main);
-  const lf = $("#lf", main); if (lf) lf.onchange = () => { const file = lf.files[0]; if (!file) return; keep(); f.file = file; f.fileName = file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); render(); };
-  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); f.tr = await file.text(); if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); render(); };
+  const lf = $("#lf", main); if (lf) lf.onchange = async () => { const file = lf.files[0]; if (!file) return; keep(); f.file = file; f.fileName = file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); f.dur = await fileDuration(file); render(); };
+  bindTrEditor(main, f, keep, () => render());
   $("#lsave", main).onclick = async () => {
     keep(); const err = m => { $("#lerr", main).textContent = m; };
     if (f.kind === "file" && !f.file) return err("先选一个音频文件 · Choose an audio file first.");
@@ -2732,7 +2776,7 @@ function renderListenAdd(main) {
     if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了（${LISTEN_TR_TOTAL} 字）· Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
     const id = "A" + now().toString(36) + uid4();
     const it = { id, title: (f.title || "").trim() || "无标题", kind: f.kind, t: now() };
-    if (f.kind === "link") it.url = f.url.trim(); else { it.fname = f.file.name; it.size = f.file.size; }
+    if (f.kind === "link") it.url = f.url.trim(); else { it.fname = f.file.name; it.size = f.file.size; if (f.dur) it.dur = Math.round(f.dur); }
     if (cues.length) it.cues = cues;
     const tags = parseTags(f.tags); if (tags.length) it.tags = tags;
     if (f.kind === "file") { const kept = await audioPut(id, f.file); if (!kept) toast("这个页面不能长期保存音频，这次可以听 · This page can't keep the file; it plays this time only. The offline copy keeps it.", 4500); }
@@ -2753,7 +2797,10 @@ function renderListenItem(main, it) {
       <button class="btn wide" id="ldone">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
     <div class="card stack"><span class="label">这一条 · This item</span>
       ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>`) : ""}
-      ${!hasTr ? `<span class="small muted">没有文字：只有播放和“没跟上”记录。 No transcript: player and "lost it" marks only. Add one to get questions and a transcript check.</span>` : ""}
+      ${LST.edit ? `<div class="stack" style="gap:8px">${trEditorHtml(LST.edit)}<div id="lerr" class="small" style="color:var(--bad)"></div>
+          <div class="row"><button class="btn" id="ltrsave">保存文字 Save transcript</button><button class="btn ghost" id="ltrcancel">取消 Cancel</button></div>
+          ${hasTr ? `<span class="small muted">换文字会删掉根据旧文字出的问题 · Replacing it removes questions made from the old transcript.</span>` : ""}</div>`
+        : `${!hasTr ? `<span class="small muted">没有文字：只有播放和“没跟上”记录。 No transcript yet: player and "lost it" marks only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? "换文字 Replace transcript / lyrics" : "加文字 Add transcript / lyrics"}</button>`}
       <div id="lqs" class="small muted"></div>
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
   $("#lback", main).onclick = () => { stopAudio(); LST = null; render(); };
@@ -2770,6 +2817,22 @@ function renderListenItem(main, it) {
     Object.assign(LST, { review: true, quiz: !!(it.qs && it.qs.length), qi: 0, score: 0, looked: new Set() }); render(); window.scrollTo(0, 0);
   };
   const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
+  const te = $("#ltredit", main); if (te) te.onclick = () => { LST.edit = { title: it.title, tr: "", dur: it.dur || (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : null) }; renderListenItem(main, it); };
+  if (LST.edit) {
+    const f = LST.edit, keep = () => { f.tr = $("#ltr", main).value; };
+    bindTrEditor(main, f, keep, () => renderListenItem(main, it));
+    $("#ltrcancel", main).onclick = () => { LST.edit = null; renderListenItem(main, it); };
+    $("#ltrsave", main).onclick = () => {
+      keep(); const err = m => { $("#lerr", main).textContent = m; };
+      const { cues } = parseCues(f.tr), n = cueChars(cues);
+      if (!cues.length) return err("先加文字 · Add a transcript first.");
+      if (n > LISTEN_TR_MAX) return err(`文字太长（${n} 字，最多 ${LISTEN_TR_MAX}）· Transcript too long (${n} characters; max ${LISTEN_TR_MAX}).`);
+      const total = S.gen.listen.reduce((a, x) => a + (x === it ? 0 : cueChars(x.cues)), 0);
+      if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了 · Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
+      it.cues = cues; delete it.qs; delete it.gl; delete it.qcut; save();
+      LST.edit = null; LAST_CUE = -1; toast(`文字已保存 · Transcript saved (${cues.length} lines${isTimed(it) ? ", timed" : ""})`); renderListenItem(main, it);
+    };
+  }
   $("#ldel", main).onclick = () => {
     const idx = S.gen.listen.indexOf(it); S.gen.listen.splice(idx, 1); stopAudio(); save(); LST = null; render();
     let undone = false; setTimeout(() => { if (!undone && !S.gen.listen.includes(it)) audioDel(it.id); }, 6000);
