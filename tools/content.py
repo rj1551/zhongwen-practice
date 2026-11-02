@@ -1,4 +1,4 @@
-import json, re, sys
+import json, re, sys, os
 
 # ---------- Production ladder ----------
 # zh: segments split by |, key chunk in [brackets]. alt: other accepted full answers.
@@ -91,24 +91,24 @@ lad("He loses his temper at the slightest thing.",
     ["动一动", "时不时", "一会儿"],
     ["他最小的事情就生气。", "他为最少的东西发火。"],
     "动不动就… = 'at the drop of a hat'. 时不时 = from time to time, without the 'over nothing' sense.", "chunk")
-lad("Maybe he's already left.",
+lad("Who knows — he might have left already.",
     "他|[说不定]|已经|走了|。",
-    ["说不定他已经走了。", "他可能已经走了。", "他也许已经走了。", "他没准儿已经走了。"],
+    ["说不定他已经走了。", "他没准儿已经走了。", "他可能已经走了。"],
     ["不一定", "一定", "肯定"],
     ["可能是他已经离开过了。", "他不一定已经走了。"],
-    "说不定 / 没准儿 = 'maybe, you never know'. 不一定 = 'not necessarily' — it leans the other way. 走了 is more natural than 离开了 in speech.", "word")
+    "说不定 / 没准儿 = 'who knows, quite possibly' — more open than plain 可能. 不一定 = 'not necessarily', which leans the other way. 走了 is more natural than 离开了 in speech.", "word")
 lad("Passengers for Shanghai, please go to gate 5 to board.",
     "[前往]|上海|的|旅客|，|请|到|5号|检票口|检票|上车|。",
     ["前往上海的旅客请到5号检票口检票上车。", "前往上海的旅客，请到五号检票口检票上车。", "前往上海的旅客，请到5号检票口上车。"],
     ["来往", "前来", "往来"],
     ["去上海的乘客，请上车在5号门。", "到上海的旅客，请在5号门登机。"],
     "前往 = 'heading to' (formal) — you'll hear it in every Chinese station. 检票口 = ticket gate; 检票上车 = have your ticket checked and board.", "leech")
-lad("What line of work are you in?",
-    "您|[从事]|什么|行业|？",
-    ["你从事什么行业？", "你从事什么工作？", "您是做哪一行的？", "你是做什么工作的？", "你是做哪行的？"],
+lad("He has worked in education for more than twenty years.",
+    "他|[从事]|教育|工作|二十多年|了|。",
+    ["他从事教育工作已经二十多年了。", "他从事教育工作二十多年了。", "他在教育行业工作了二十多年。"],
     ["从来", "事业", "处理"],
-    ["你的工作的领域是什么？", "你在什么行业工作在？"],
-    "从事 + field = 'work in' (formal). Casual: 你是做什么的？/ 做哪一行的？", "leech")
+    ["他在教育工作了二十多年以上。", "他工作在教育二十多年了。"],
+    "从事 + field (+ 工作) = 'work in a field', the written / biographical way. In conversation: 你是做什么的？/ 他做了二十多年教育。", "leech")
 lad("The heavy rain caused serious traffic jams.",
     "大雨|[造成]|了|严重的|交通|堵塞|。",
     ["暴雨造成了严重的交通堵塞。", "大雨导致交通严重堵塞。", "大雨造成交通严重拥堵。", "大雨造成了严重的交通拥堵。"],
@@ -133,24 +133,24 @@ lad("Only once the report was done could I sleep easy.",
     ["实在", "结实", "老实"],
     ["只在完成报告之后我可以好好地睡觉。", "完成报告以后我才可以睡安心。"],
     "踏实 = 'at ease, settled' (also 'down-to-earth'). 才 = 'only then'. 睡得踏实 uses a 得 complement for how you sleep.", "leech")
-lad("We went to Xi'an and then Chengdu, one after the other.",
-    "我们|[先后]|去了|西安|和|成都|。",
-    ["我们先去了西安，后去了成都。", "我们先去了西安，又去了成都。", "我们先去了西安，然后去了成都。"],
-    ["前后", "先前", "以后"],
-    ["我们一个又一个地访问了西安和成都。", "我们访问西安和成都一个之后另一个。"],
-    "先后 = 'successively' — the compact written way to list a sequence. Spoken: 先去了A，又去了B.", "leech")
-lad("Given the current situation, it's best to postpone the trip.",
-    "按|[当前]|的|情况|，|最好|把|行程|推迟|。",
-    ["按目前的情况，最好推迟行程。", "就目前的情况来看，最好把行程推迟。", "照现在的情况，最好把行程推迟一下。", "按目前的情况，最好把行程推迟。"],
+lad("The delegation visited Xi'an and Chengdu in succession.",
+    "代表团|[先后]|访问了|西安|和|成都|。",
+    ["代表团先后访问了西安、成都。", "代表团先后去了西安和成都。", "代表团先访问了西安，又访问了成都。"],
+    ["先前", "以前", "首先"],
+    ["代表团一个接一个地访问了西安和成都。", "代表团访问了西安然后成都。"],
+    "先后 = 'one after the other, in succession' — the compact written way to report a sequence (news, reports). In speech: 先去了西安，又去了成都. 先前 = 'previously'; 首先 = 'first of all'.", "leech")
+lad("Given the current economic situation, the company has decided to postpone its expansion plans.",
+    "鉴于|[当前]|的|经济|形势|，|公司|决定|推迟|扩张|计划|。",
+    ["鉴于当前经济形势，公司决定推迟扩张计划。", "考虑到当前的经济形势，公司决定推迟扩张计划。", "鉴于目前的经济形势，公司决定推迟扩张计划。"],
     ["当时", "当初", "前面"],
-    ["给当前的情况，最好推迟旅行。", "因为现在的情况，最好的是推迟旅游。"],
-    "当前/目前 = 'at present' (written); 当时 = 'at that time'. 'Given…' → 按/照/就…来看. 把行程推迟 moves the trip before the verb.", "leech")
-lad("Living near the subway makes getting around really convenient.",
-    "住在|地铁站|附近|，|出行|很|[便利]|。",
-    ["住在地铁站附近很方便。", "住在地铁附近，出门很方便。", "住在地铁站附近，出行很方便。"],
+    ["给当前的经济情况，公司决定推迟扩张计划。", "因为现在的经济的情况，公司决定了推迟扩大的计划。"],
+    "当前 = 'current, at present' in formal writing, especially before abstract nouns: 当前形势、当前的任务. 目前 also works here. In conversation (e.g. postponing a trip) say 按目前的情况 or 照现在这个情况. 鉴于 = 'in view of', the formal 'given…'. 当时 = 'at that time'.", "leech")
+lad("Once the new subway line opens, getting around will be much more convenient for residents.",
+    "新|地铁线|开通|后|，|市民|出行|将|更加|[便利]|。",
+    ["新地铁线开通以后，市民出行会更加便利。", "新地铁线开通后，市民出行将更便利。", "新地铁线开通后，市民出行会方便很多。"],
     ["便宜", "利益", "顺便"],
-    ["生活靠近地铁是真方便。", "住地铁附近是很便利的生活。"],
-    "便利 ≈ 方便, a bit more formal (便利店 = convenience store). 出行 = getting around.", "leech")
+    ["新地铁线打开以后，居民的到处走会很更方便。", "当新地铁线开了，市民出行将变得更多方便。"],
+    "便利 ≈ 方便 but written / official: 交通便利、出行更加便利 (also 便利店). 开通 = (a line or service) opens. In conversation 方便 is the everyday word.", "leech")
 lad("The exhibition runs for three months.",
     "展览|[为期]|三个月|。",
     ["这个展览为期三个月。", "展览持续三个月。", "展览会办三个月。"],
@@ -163,12 +163,12 @@ lad("I'm dying to go home right now.",
     ["舍不得", "不得不", "免不了"],
     ["我不能等回家。", "我等不了去回家。"],
     "巴不得 / 恨不得 = 'dying to'. 舍不得 = can't bear to part with; 不得不 = have no choice but to.", "leech")
-lad("It was expensive, but worth it.",
-    "[尽管]|很|贵|，|但是|值得|。",
-    ["尽管很贵，但很值。", "虽然贵，但是很值。", "虽然很贵，但是值得。", "虽然贵了点，但挺值的。"],
+lad("Despite the heavy rain, the match went ahead as planned.",
+    "[尽管]|下着|大雨|，|比赛|还是|照常|进行|了|。",
+    ["尽管下着大雨，比赛仍然照常进行。", "尽管下了大雨，比赛还是照常进行了。", "虽然下着大雨，比赛还是照常进行了。"],
     ["不管", "即使", "既然"],
-    ["即使它是贵的，它是值得。", "虽然很贵，可是它值得这个钱的。"],
-    "尽管/虽然 + fact, 但(是)… 不管 = 'no matter', 即使 = 'even if' (hypothetical). Drop the 'it' — 它 isn't needed.", "leech")
+    ["虽然有大雨，但是比赛进行了作为计划。", "尽管大雨，比赛还是按照计划去了。"],
+    "尽管 + a fact = 'despite / although', more emphatic and written than 虽然; pairs with 还是 / 仍然 / 但(是). 不管 = 'no matter (which / whether)'; 即使 = 'even if' (hypothetical). 照常 = as usual, as planned.", "leech")
 lad("I'd count myself a regular here.",
     "我|[算是]|这儿|的|老顾客|了|。",
     ["我也算是这里的常客了。", "我算是这里的老客人了。", "我在这儿算是常客了。", "我算是这里的常客了。"],
@@ -193,7 +193,7 @@ lad("He didn't reveal any details.",
     ["透明", "发布", "显露"],
     ["他不揭示任何细节。", "他不说了任何的细节。"],
     "透露 = disclose / let slip (information). Past non-events take 没(有), not 不. 'Any' → 任何…, or 一点…都没….", "leech")
-lad("We can learn from other cities' experience.",
+lad("We can draw on other cities' experience.",
     "我们|可以|[借鉴]|其他|城市|的|经验|。",
     ["我们可以借鉴别的城市的经验。", "我们可以向其他城市学习经验。", "我们可以学习其他城市的经验。"],
     ["借口", "鉴定", "参加"],
@@ -302,6 +302,17 @@ lad("The project doesn't have enough funding.",
 #   /  = word boundary inside a chunk                        -> cut or not, both fine
 #   no mark between two characters = inside one word        -> cutting here is a mistake (碑|附)
 S = []
+
+# Equally natural substitutes for a drill's key chunk. Answers using them don't count as using the chunk; the app says
+# "works, but this drill practises X" instead of "wrong". Contexts are chosen so these are rare.
+NEAR = {"L03": ["当地人"], "L06": ["好容易"], "L08": ["其实"], "L11": ["怪不得"], "L15": ["没准儿", "没准", "可能", "也许", "或许"],
+    "L17": ["做", "干"], "L18": ["导致"], "L20": ["特别", "非常"], "L23": ["目前", "现在", "眼下", "当下"], "L24": ["方便"],
+    "L25": ["持续"], "L26": ["恨不得"], "L27": ["虽然"], "L29": ["共识"], "L30": ["起着"], "L32": ["学习", "参考"],
+    "L35": ["支付", "付"], "L36": ["得"], "L37": ["老实说", "说真的", "说实在的"], "L39": ["不一定", "不见得"],
+    "L46": ["推动"], "L48": ["资金"]}
+for x in L:
+    if x["id"] in NEAR: x["near"] = NEAR[x["id"]]
+
 def seg(s, en, reg, note=""):
     S.append(dict(id="S%02d" % (len(S) + 1), s=s, en=en, reg=reg, note=note))
 # news
@@ -532,6 +543,9 @@ for pid in PL["read"]: assert pid in {p["id"] for p in P}
 for lv in PL["news"]:
     for x in lv: assert len(x["opts"]) == 4, x["s"]
 for x in C: assert len(x["opts"]) == 4, x["w"]
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "questions.py"), encoding="utf8").read())
+for x in P:
+    if x["id"] in QS: x["qs"] = QS[x["id"]]
 out = dict(version=1, ladder=L, seg=S, ctx=C, sen=N, passages=P, placement=PL)
 json.dump(out, open(sys.argv[1], "w"), ensure_ascii=False, separators=(",", ":"))
 print(len(L), "ladder", len(S), "seg", len(C), "ctx", len(P), "passages")

@@ -73,7 +73,7 @@ p{margin:0}
 .legend b{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:0}
 /* tab bar */
 nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);z-index:5}
-nav.tabs .in{max-width:600px;width:100%;display:grid;grid-template-columns:repeat(3,1fr)}
+nav.tabs .in{max-width:600px;width:100%;display:grid;grid-template-columns:repeat(4,1fr)}
 nav.tabs button{padding:10px 0 12px;display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--muted);font-size:12px}
 nav.tabs button .zh{font-size:18px;font-weight:700}
 nav.tabs button[aria-current="page"]{color:var(--accent)}
@@ -159,6 +159,11 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .inp{font:inherit;font-size:16px;padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%}
 .sheet.pop .in{border-radius:14px;border-bottom:1px solid var(--line);max-height:60vh}
 .pitem.done{opacity:.62;background:transparent}
+.cue{display:block;padding:4px 8px;margin:0 -8px;border-radius:8px;font-family:var(--f-zh);font-size:19px;line-height:1.7;text-align:left;width:calc(100% + 16px)}
+.cue.now{background:var(--accent-soft)} .cue.lost{box-shadow:inset 3px 0 0 var(--gold);background:var(--gold-soft)}
+.cues{max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.lostbtn{font-size:18px;min-height:64px}
+input[type=range]{width:100%;accent-color:var(--accent)}
 .pitem.done:hover{opacity:.9}
 .chip.new{background:transparent;color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .toast.act{display:flex;gap:10px;align-items:center;font-size:12.5px;padding:6px 12px}
@@ -193,6 +198,7 @@ textarea.code{width:100%;min-height:80px;font-family:ui-monospace,monospace;font
 <nav class="tabs" id="tabs" hidden><div class="in">
   <button data-tab="home"><span class="zh">练</span>今日 Today</button>
   <button data-tab="read"><span class="zh">读</span>阅读 Read</button>
+  <button data-tab="listen"><span class="zh">听</span>听力 Listen</button>
   <button data-tab="me"><span class="zh">进</span>进度 Progress</button>
 </div></nav>
 
@@ -230,7 +236,7 @@ const pct = x => Math.round((x || 0) * 100) + "%";
 const LS_KEY = "zwlgf:state:v1";
 const OFFW_MAX = 50; // offline copy keeps this many written answers for Claude to check later
 function freshState() {
-  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [] }, best: { combo: 0 } };
+  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [], listen: [] }, best: { combo: 0 } };
 }
 let S = freshState();
 try { const raw = localStorage.getItem(LS_KEY); if (raw) S = Object.assign(freshState(), JSON.parse(raw)); } catch (e) {}
@@ -239,7 +245,7 @@ let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer 
 let SYNC_BYTES = 0, SYNC_FULL = false, LOCAL_FULL = false;
 const SYNC_LIMIT = 256 * 1024;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
-const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400 }; // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80 }; // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
   if (SIM) return;
   S.updatedAt = now();
@@ -426,7 +432,9 @@ function mergeStates(a, b) {
     m.log[d] = !y ? x : { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   }
   const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
-  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = byId(gm[k] || [], o.gen[k] || [], "id"); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [] }, gm);
+  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = byId(gm[k] || [], o.gen[k] || [], "id"); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [] }, gm);
+  // listening history: union of sessions from both sides
+  m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
   m.graded = byId(m.graded || [], o.graded || [], "k").sort((p, q) => q.t - p.t).slice(0, 20);
@@ -483,9 +491,12 @@ async function loadData() {
   (c.sen || []).forEach(x => SEN.set(x.id, x));
   indexGen();
 }
+// Generated drills taken out (2026-11-02): near-copies of built-in drills, several with unnatural Chinese.
+const RETIRED_GEN = new Set(["Gmvvtnjw1hnai2", "Gmvvtnjw1l8ke1", "Gmvvtnjw1muq35", "Gmvvtnjw1f8pi6", "Gmvvtnjw1i3pe0", "Gmvvtnjw1vjbl4", "Gmvvtnjw1hqay7", "Gmvvtnjw14uxe3"]);
 function indexGen() {
-  S.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [] }, S.gen); // older saves lack newer kinds
-  (S.gen.ladder || []).forEach(x => LADDER.set(x.id, x));
+  S.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [] }, S.gen); // older saves lack newer kinds
+  S.gen.ladder = (S.gen.ladder || []).filter(x => !RETIRED_GEN.has(x.id));
+  S.gen.ladder.forEach(x => LADDER.set(x.id, x));
   (S.gen.passages || []).forEach(x => PSG.set(x.id, x));
   ((S.gen || {}).sen || []).forEach(x => SEN.set(x.id, x));
   ((S.gen || {}).mine || []).forEach(x => PSG.set(x.id, x));
@@ -542,7 +553,9 @@ function ladParts(item) {
   const clean = toks.map(t => t.replace(/[\[\]]/g, ""));
   return { toks: clean, keyIdx, key: clean[keyIdx], model: clean.join("") };
 }
-const accepted = item => { const { model } = ladParts(item); return new Set([model, ...(item.alt || [])].map(norm)); };
+// Answers that count as right: the reference plus alternatives that use the key chunk. Alternatives without it are
+// still shown as 也可以, but typing one means the chunk wasn't practised.
+const accepted = item => { const { model, key } = ladParts(item); return new Set([model, ...(item.alt || []).filter(a => hasChunk(a, key))].map(norm)); };
 
 /* ============ segmentation helpers ============ */
 const PARTICLES = new Set(["了", "的", "地", "得", "着", "过", "吗", "吧", "呢", "啊", "呀"]);
@@ -945,7 +958,7 @@ function genStatus(key, html, busy) {
   $$(`[data-genkey="${key}"]`).forEach(b => b.disabled = !!busy);
 }
 let SESSION = null, PLACE = null, READ = null;
-const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid);
+const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid) || (VIEW === "listen" && LST && (LST.play || LST.review));
 function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
 function render() {
   const main = $("#main");
@@ -956,8 +969,9 @@ function render() {
   else if (VIEW === "place") renderPlace(main);
   else if (VIEW === "read") renderRead(main);
   else if (VIEW === "me") renderMe(main);
+  else if (VIEW === "listen") renderListen(main);
 }
-$("#tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (!b) return; if (b.dataset.tab === "read") READ = null; setView(b.dataset.tab); });
+$("#tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (!b) return; if (b.dataset.tab === "read") READ = null; if (b.dataset.tab === "listen" && !(AUD && !AUD.paused)) { stopAudio(); LST = null; } setView(b.dataset.tab); });
 
 /* ---------- home ---------- */
 const CAT_COLORS = { lad: "var(--accent)", sen: "var(--plum)", seg: "var(--gold)", ctx: "var(--good)" };
@@ -1321,8 +1335,8 @@ function nextButton(el, onNext, label = "继续 Continue") {
 const RUNG_NAME = { 1: "选最自然 Pick the natural one", 2: "填空 Fill the gap", 3: "排顺序 Build the sentence", 4: "提示写 Write with a hint", 5: "自己写 Write it yourself", 6: "补上词块 Type the missing chunk" };
 // Is the drill's key chunk in what you wrote? (A key like 起…作用 matches its pieces in order.)
 function hasChunk(raw, key) {
-  const s = norm(raw); let pos = 0;
-  for (const piece of String(key || "").split(/…|\.\.\./).map(norm).filter(Boolean)) { const i = s.indexOf(piece, pos); if (i < 0) return false; pos = i + piece.length; }
+  const s = norm(raw).replace(/儿/g, ""); let pos = 0;
+  for (const piece of String(key || "").split(/…|\.\.\./).map(x => norm(x).replace(/儿/g, "")).filter(Boolean)) { const i = s.indexOf(piece, pos); if (i < 0) return false; pos = i + piece.length; }
   return true;
 }
 function renderLadder(item, rung, el, onResult, onNext, placement) {
@@ -1336,10 +1350,11 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
   const finish = (score, html, src, chunk) => {
     if (answered) return; answered = true;
     let mastered = false, g = score >= 2 ? 2 : 1;
-    if (!placement) { const res = recordLadder(item.id, rung, score, src, chunk); mastered = res.ready; g = res.g; }
-    const chunkBad = (chunk && chunk !== "ok") || src === "k";
-    const cls = chunkBad ? "no" : score >= 3 ? "ok" : score === 2 ? "mid" : "no";
-    const verdict = chunkBad && score >= 2 ? "句子可以，但没练到词块 · Fine sentence, chunk missed" : score >= 3 ? "对了 ✓" : score === 2 ? "意思对，可以更地道" : "还不对";
+    if (!placement) { const res = recordLadder(item.id, rung, score, src, chunk === "sub" || chunk === "unk" ? undefined : chunk); mastered = res.ready; g = res.g; }
+    const sub = chunk === "sub", unk = chunk === "unk"; if (sub || unk) chunk = undefined;
+    const chunkBad = !sub && !unk && ((chunk && chunk !== "ok") || src === "k");
+    const cls = sub || unk ? "mid" : chunkBad ? "no" : score >= 3 ? "ok" : score === 2 ? "mid" : "no";
+    const verdict = sub ? `也说得通，但这题练的是「${p.key}」 · That works too, but this drill practises ${p.key}` : unk ? "不是这题要的词块 · Not the chunk this drill practises" : chunkBad && score >= 2 ? "句子可以，但没练到词块 · Fine sentence, chunk missed" : score >= 3 ? "对了 ✓" : score === 2 ? "意思对，可以更地道" : "还不对";
     fb.innerHTML = `<div class="fb ${cls}"><span class="verdict">${verdict}</span>
       ${chunkBad ? `<span>⚠ 这题练的是「<b class="zh">${esc(p.key)}</b>」${chunk === "wrong" ? "，用得不对" : "，句子里没用上"} · The practiced chunk ${chunk === "wrong" ? "wasn't used correctly" : "wasn't used"}, so the drill comes back soon.</span>` : ""}${html || ""}
       <span class="model">${esc(p.model)}</span>
@@ -1357,12 +1372,25 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     setTimeout(() => inp.focus({ preventScroll: true }), 30);
     inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("#check", body).click(); } });
     $("#giveup", body).onclick = () => { $("#check", body).disabled = true; $("#giveup", body).disabled = true; inp.disabled = true; finish(0); };
-    $("#check", body).onclick = () => {
+    $("#check", body).onclick = async () => {
       const v = inp.value.trim(); if (!v) { inp.focus(); return; }
       given = v; $("#check", body).disabled = true; $("#giveup", body).disabled = true; inp.disabled = true;
       const full = p.toks.map((t, i) => i === p.keyIdx ? v : t).join("");
-      const ok = norm(v) === norm(p.key) || accepted(item).has(norm(full));
-      finish(ok ? 3 : 0, ok ? "" : `<span>你的：<span class="zh">${esc(v)}</span> · 应该是 <b class="zh">${esc(p.key)}</b></span>`);
+      if (hasChunk(v, p.key) && norm(v).replace(/儿/g, "").length <= norm(p.key).replace(/儿/g, "").length + 1 || accepted(item).has(norm(full))) return finish(3);
+      const yours = `<span>你的：<span class="zh">${esc(v)}</span> · 这题要的是 <b class="zh">${esc(p.key)}</b></span>`;
+      // a substitute that also works: not wrong, but the chunk wasn't practised (counts as a miss for scheduling)
+      const soft = note => finish(1, yours + (note ? `<span class="small">${esc(note)}</span>` : ""), undefined, "sub");
+      if ((item.near || []).some(n => norm(n) === norm(v))) return soft();
+      if (AI && ONLINE && !placement) {
+        fb.innerHTML = `<div class="fb mid"><span><span class="spin"></span> 看看你的词能不能用… Checking your word</span></div>`;
+        try {
+          const g = await AI.json(`A learner filled the blank in this Chinese sentence with "${v}" instead of the target "${p.key}".\nSentence: ${p.toks.map((t, i) => i === p.keyIdx ? "___" : t).join("")}\nEnglish: ${item.en}\nIs the sentence with "${v}" natural, correct Chinese with the same meaning? Reply with only JSON: {"fits": true|false, "note": "one short English sentence: how ${v} differs from ${p.key} here (register, nuance), or what is wrong with it"}`, { modelTier: "default", effort: "low" });
+          if (answered) return;
+          if (g && g.fits) return soft(g.note);
+          return finish(0, yours + (g && g.note ? `<span class="small">${esc(g.note)}</span>` : ""));
+        } catch (e) { if (answered) return; }
+      }
+      finish(0, yours, undefined, "unk"); // couldn't be judged (offline, or Claude unavailable)
     };
   } else if (rung === 1 || rung === 2) {
     let opts, correct;
@@ -2064,12 +2092,44 @@ function renderRead(main) {
       <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting. You can leave this tab while it works; it'll appear below as 新.</p>
       <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}" data-genkey="passage" ${GEN.passageBusy ? "disabled" : ""}>${v}</button>`).join("")}</div><div id="st-passage" class="small muted">${GEN.passage || ""}</div></div>` : ""}
     ${mineSection()}
+    ${redoQsCard()}
     ${fresh.length ? `<span class="label">没读过 · New (${fresh.length})</span><div class="plist">${fresh.map(item).join("")}</div>` : ""}
     ${ready.length ? `<span class="label">可以重读 · Ready to re-read (${ready.length})</span><p class="small muted" style="margin-top:-8px">读过两天以上了。再读一遍练速度，不答题。 It's been 2+ days: read it again for speed, no questions.</p><div class="plist">${ready.map(rItem).join("")}</div>` : ""}
     ${done.length ? `<span class="label">最近读过 · Read recently (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
   $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[b.dataset.p] }; render(); window.scrollTo(0, 0); });
   $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen));
   bindMineSection(main);
+  const rq = $("#redoqs", main); if (rq) rq.onclick = redoQuestions;
+}
+/* ---------- harder questions for unread passages written before 2026-11-02 (online) ----------
+   Questions are only asked on a first read, so only unread passages are worth redoing. One request each. */
+let REDO_Q = null;
+const oldQs = () => [...PSG.values()].filter(p => (p.gen || p.mine) && !S.reads[p.id] && p.qs && p.qs.length && !p.qs.some(q => q.ex));
+function redoQsCard() {
+  if (!AI) return "";
+  if (REDO_Q) return `<div class="card"><p class="small"><span class="spin"></span> 换成更难的问题… Writing harder questions ${REDO_Q.done}/${REDO_Q.n}</p></div>`;
+  const n = oldQs().length; if (!n) return "";
+  return `<div class="card"><span class="label">更难的问题 · Harder questions</span>
+    <p class="small">${n} 篇没读过的文章还是旧的简单问题 · ${n} unread passage${n > 1 ? "s" : ""} still ha${n > 1 ? "ve" : "s"} the old, easier questions.</p>
+    <button class="btn soft" id="redoqs">换成更难的问题 Replace them (${n} request${n > 1 ? "s" : ""})</button></div>`;
+}
+async function redoQuestions() {
+  if (REDO_Q || !AI) return;
+  const list = oldQs(); REDO_Q = { n: list.length, done: 0 }; if (VIEW === "read") render();
+  let failed = null, made = 0;
+  for (const p of list) {
+    const text = p.paras.map(x => x.replace(/[|\/]/g, "")).join("\n");
+    try {
+      const j = await AI.json(`Write comprehension questions for this Chinese text, for an advanced learner (knows HSK 1–6 well; reads slowly and tends to answer by elimination).\n${text}\nReply with only JSON: {"qs":[{"q":"English question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}\nQuestions: ${QS_RULES}`, { modelTier: "default", cache: false });
+      const qs = toQs(j && j.qs);
+      if (qs.length < 2 || !qs.every(q => q.ex)) throw { code: "invalid_json" };
+      p.qs = qs; made++; save();
+    } catch (e) { failed = e; break; }
+    REDO_Q.done++; if (VIEW === "read" && !READ) render();
+  }
+  REDO_Q = null;
+  toast(failed ? aiErr(failed) : `换好了 ${made} 篇 · New questions for ${made} passage${made > 1 ? "s" : ""}`);
+  if (VIEW === "read") render();
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
 function segmentText(text, gl = {}) {
@@ -2223,7 +2283,11 @@ function passageQuiz(main, p) {
       <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
     bindOpts(main, b => {
       const ok = opts[+b.dataset.i] === right; if (ok) score++;
-      $$(".opt", main).forEach(x => { x.disabled = true; if (opts[+x.dataset.i] === right) x.classList.add("right"); });
+      $$(".opt", main).forEach(x => {
+        x.disabled = true; const o = opts[+x.dataset.i]; if (o === right) x.classList.add("right");
+        const why = (q.ex || [])[q.opts.indexOf(o)]; // why each option is right or wrong, quoting the text
+        if (why) x.insertAdjacentHTML("beforeend", `<span class="small muted" style="display:block;margin-top:4px">${esc(why)}</span>`);
+      });
       if (!ok) b.classList.add("wrong");
       nextButton($("#cc"), () => { qi++; ask(); });
     });
@@ -2445,8 +2509,9 @@ async function mineQuestions(g) {
     const prompt = `Here is part of a Chinese text an advanced learner (knows HSK 1–6 well; reads slowly) wants to read. Do NOT change the text.
 ${plain.map((x, i) => `Paragraph ${i + 1}: ${x}`).join("\n")}
 Reply with only JSON:
-{"paras":["the same paragraphs, split into words/chunks with | between EVERY token (punctuation is its own token)"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"]}]}
-Rules: keep every character exactly as given; gl covers slang, names, HSK7+ words, and every word whose pronunciation or meaning here differs from its most common one (pinyin and meaning used in THIS context); exactly 3 questions about the content, correct answer first, wrong options that fit the topic.`;
+{"paras":["the same paragraphs, split into words/chunks with | between EVERY token (punctuation is its own token)"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}
+Rules: keep every character exactly as given; gl covers slang, names, HSK7+ words, and every word whose pronunciation or meaning here differs from its most common one (pinyin and meaning used in THIS context).
+Questions: ${QS_RULES}`;
     try {
       const j = await AI.json(prompt, { modelTier: "default", cache: false });
       if (!j || !Array.isArray(j.qs)) throw { code: "invalid_json" };
@@ -2454,7 +2519,7 @@ Rules: keep every character exactly as given; gl covers slang, names, HSK7+ word
       if (same) p.paras = j.paras.map(String); // Claude's word splitting, only if the text is unchanged
       p.gl = j.gl && typeof j.gl === "object" ? j.gl : {};
       p.en = String(j.en || "");
-      p.qs = j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) }));
+      p.qs = toQs(j.qs);
       save();
     } catch (e) { failed = e; break; }
     MINE_Q.done++; if (VIEW === "read" && READ && READ.grp === g[0].grp) { const q = $("#qst"); if (q) q.innerHTML = `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…`; }
@@ -2570,6 +2635,248 @@ function sentWaitHtml() {
     ${!AI || !ONLINE ? `<span class="small muted">需要 Claude，联网后会自动写 · Needs Claude; written automatically once you're online.</span>` : `<span class="small muted">${SENT_FAIL === "limit" ? "Claude 暂时用不了（可能到了用量上限），以后会再试 · Claude isn't available right now (maybe your usage limit); it'll try again later." : SENT_FAIL ? "上次没写成，以后会再试 · The last try didn't work; it'll try again later." : `今天自动写的已经到 ${SENT_DAY_MAX} 个 · Today's automatic ${SENT_DAY_MAX} are done.`} They still work as plain word cards meanwhile.</span><button class="btn soft" id="sentnow">现在写 Write them now (about ${req} request${req > 1 ? "s" : ""})</button>`}</div>`;
 }
 
+/* ============ listening (听力): native audio, from a file on this device or a link ============
+   An item is audio (a file kept on this device, or a link that plays in its own app) plus an optional transcript.
+   With timings (.lrc / .srt / .vtt) lines can follow the audio and be replayed one by one; with a plain transcript you
+   get questions (online, written by Claude from the transcript) and a transcript to check against; with neither,
+   just the player and your "lost it" marks. Audio files stay on the device they were added on (too big to sync);
+   the item, transcript, questions and your listening history sync like everything else.
+   Shared with the karaoke mode planned next (lyrics = timed transcript). */
+const LISTEN_TR_MAX = 15000, LISTEN_TR_TOTAL = 120000;
+let LST = null, AUD = null, AUD_URL = null, AUD_ID = null;
+const MEM_AUDIO = new Map(); // fallback when this page can't use on-device storage
+/* ---- on-device audio storage (IndexedDB) ---- */
+let IDB_P = null;
+function idb() {
+  if (IDB_P) return IDB_P;
+  IDB_P = new Promise((res, rej) => {
+    try { const r = indexedDB.open("zwlgf-audio", 1); r.onupgradeneeded = () => r.result.createObjectStore("a"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }
+    catch (e) { rej(e); }
+  }).catch(e => { IDB_P = null; throw e; });
+  return IDB_P;
+}
+async function audioPut(id, blob) { MEM_AUDIO.set(id, blob); try { const db = await idb(); await new Promise((res, rej) => { const t = db.transaction("a", "readwrite"); t.objectStore("a").put(blob, id); t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); return true; } catch (e) { return false; } }
+async function audioGet(id) { if (MEM_AUDIO.has(id)) return MEM_AUDIO.get(id); try { const db = await idb(); return await new Promise(res => { const r = db.transaction("a").objectStore("a").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
+async function audioDel(id) { MEM_AUDIO.delete(id); try { const db = await idb(); db.transaction("a", "readwrite").objectStore("a").delete(id); } catch (e) {} }
+function stopAudio() { if (AUD) { AUD.pause(); AUD.removeAttribute("src"); AUD.load(); } if (AUD_URL) URL.revokeObjectURL(AUD_URL); AUD_URL = null; AUD_ID = null; }
+/* ---- transcripts: .lrc, .srt/.vtt, or plain text ---- */
+function parseCues(text) {
+  const t = String(text || "").replace(/\r/g, "").replace(/^﻿/, "");
+  const tm = (h, m, sec) => (+h || 0) * 3600 + (+m) * 60 + parseFloat(String(sec).replace(",", "."));
+  if (/^\s*\[\d{1,3}:\d{1,2}([.:]\d{1,3})?\]/m.test(t)) { // LRC: [mm:ss.xx] line (several stamps per line allowed)
+    const out = [];
+    for (const line of t.split("\n")) {
+      const stamps = [...line.matchAll(/\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]/g)];
+      if (!stamps.length) continue;
+      const txt = line.replace(/\[[^\]]*\]/g, "").trim(); if (!txt) continue;
+      for (const m of stamps) out.push([+(tm(0, m[1], m[2].replace(":", "."))).toFixed(2), txt]);
+    }
+    return { cues: out.sort((a, b) => a[0] - b[0]), timed: true };
+  }
+  if (/\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->/.test(t) || /\d{1,2}:\d{2}[,.]\d{1,3}\s*-->/.test(t)) { // SRT / VTT
+    const out = [];
+    for (const block of t.split(/\n\s*\n/)) {
+      const m = block.match(/(?:(\d{1,2}):)?(\d{1,2}):(\d{2}[,.]\d{1,3})\s*-->/); if (!m) continue;
+      const lines = block.split("\n"), i = lines.findIndex(l => l.includes("-->"));
+      const txt = lines.slice(i + 1).join(" ").replace(/<[^>]+>/g, "").trim(); if (!txt) continue;
+      out.push([+tm(m[1], m[2], m[3]).toFixed(2), txt]);
+    }
+    return { cues: out, timed: true };
+  }
+  return { cues: t.split("\n").map(x => x.trim()).filter(Boolean).map(x => [null, x]), timed: false };
+}
+const cueChars = cues => (cues || []).reduce((a, c) => a + charCount(c[1]), 0);
+const isTimed = it => (it.cues || []).length > 0 && it.cues[0][0] != null;
+const fmtT = x => { x = Math.max(0, Math.floor(x || 0)); return Math.floor(x / 60) + ":" + String(x % 60).padStart(2, "0"); };
+function cueAt(it, t) { let i = -1; for (let k = 0; k < it.cues.length; k++) { if (it.cues[k][0] <= t + 0.05) i = k; else break; } return i; }
+/* ---- views ---- */
+function renderListen(main) {
+  if (LST && LST.add) return renderListenAdd(main);
+  if (LST && LST.id) { const it = S.gen.listen.find(x => x.id === LST.id); if (!it) { LST = null; return renderListen(main); } return LST.review ? renderListenReview(main, it) : renderListenItem(main, it); }
+  const list = (S.gen.listen || []).slice().sort((a, b) => b.t - a.t);
+  main.innerHTML = `<div class="top"><div><h1>听力</h1><p class="date">Native audio: a file on this phone, or a link to Bilibili, a podcast app, YouTube…</p></div></div>
+    <button class="btn wide" id="ladd">+ 添加 Add audio</button>
+    ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
+      : `<div class="card"><p class="small muted">还没有音频 · Nothing yet. Add a podcast episode you've downloaded (with its transcript if it has one), or a link to a video. Transcripts with timings (.srt, .vtt or .lrc files) unlock line-by-line follow and replay.</p></div>`}`;
+  $("#ladd", main).onclick = () => { LST = { add: true, kind: "file" }; render(); };
+  $$("[data-l]", main).forEach(b => b.onclick = () => { LST = { id: b.dataset.l, mode: "hide", lost: [] }; render(); window.scrollTo(0, 0); });
+}
+function renderListenAdd(main) {
+  const f = LST;
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><h2>添加音频 · Add audio</h2></div>
+    <div class="card stack">
+      <input class="inp" id="lt" placeholder="标题 Title" value="${esc(f.title || "")}">
+      <div class="row"><button class="goal ${f.kind === "file" ? "on" : ""}" data-kind="file">🎧 文件 File</button><button class="goal ${f.kind === "link" ? "on" : ""}" data-kind="link">🔗 链接 Link</button></div>
+      ${f.kind === "file" ? `<label class="small">音频文件 Audio file (mp3, m4a…; it stays on this device)<input type="file" id="lf" accept="audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus" style="display:block;margin-top:6px;font-size:16px"></label>${f.fileName ? `<span class="small muted">已选 ${esc(f.fileName)}</span>` : ""}`
+        : `<input class="inp" id="lu" placeholder="链接 Link (https://…)" value="${esc(f.url || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">`}
+      <span class="label">文字 · Transcript (optional)</span>
+      <label class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)<input type="file" id="ltf" accept=".srt,.vtt,.lrc,.txt,text/plain" style="display:block;margin-top:6px;font-size:16px"></label>
+      <textarea class="inp" id="ltr" rows="5" lang="zh-CN" placeholder="或者粘贴文字 Or paste the transcript (with or without [00:12.30] / SRT timings)" style="font-family:var(--f-zh)">${esc(f.tr || "")}</textarea>
+      ${tagInput("ltag", f.tags || "")}
+      <div id="lerr" class="small" style="color:var(--bad)"></div>
+      <button class="btn" id="lsave">保存 Save</button></div>`;
+  const keep = () => Object.assign(f, { title: $("#lt", main).value, url: $("#lu", main) ? $("#lu", main).value : f.url, tr: $("#ltr", main).value, tags: $("#ltag", main).value });
+  $("#lback", main).onclick = () => { LST = null; render(); };
+  $$("[data-kind]", main).forEach(b => b.onclick = () => { keep(); f.kind = b.dataset.kind; render(); });
+  bindTagInput(main);
+  const lf = $("#lf", main); if (lf) lf.onchange = () => { const file = lf.files[0]; if (!file) return; keep(); f.file = file; f.fileName = file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); render(); };
+  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); f.tr = await file.text(); if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); render(); };
+  $("#lsave", main).onclick = async () => {
+    keep(); const err = m => { $("#lerr", main).textContent = m; };
+    if (f.kind === "file" && !f.file) return err("先选一个音频文件 · Choose an audio file first.");
+    if (f.kind === "link" && !/^https?:\/\/\S+$/i.test((f.url || "").trim())) return err("链接要以 https:// 开头 · The link should start with https://");
+    const { cues } = parseCues(f.tr);
+    const n = cueChars(cues);
+    if (n > LISTEN_TR_MAX) return err(`文字太长（${n} 字，最多 ${LISTEN_TR_MAX}）· Transcript too long (${n} characters; max ${LISTEN_TR_MAX}). Use part of it.`);
+    const total = (S.gen.listen || []).reduce((a, x) => a + cueChars(x.cues), 0);
+    if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了（${LISTEN_TR_TOTAL} 字）· Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
+    const id = "A" + now().toString(36) + uid4();
+    const it = { id, title: (f.title || "").trim() || "无标题", kind: f.kind, t: now() };
+    if (f.kind === "link") it.url = f.url.trim(); else { it.fname = f.file.name; it.size = f.file.size; }
+    if (cues.length) it.cues = cues;
+    const tags = parseTags(f.tags); if (tags.length) it.tags = tags;
+    if (f.kind === "file") { const kept = await audioPut(id, f.file); if (!kept) toast("这个页面不能长期保存音频，这次可以听 · This page can't keep the file; it plays this time only. The offline copy keeps it.", 4500); }
+    S.gen.listen.push(it); save();
+    LST = { id, mode: "hide", lost: [] }; render(); window.scrollTo(0, 0);
+  };
+}
+function renderListenItem(main, it) {
+  const timed = isTimed(it), hasTr = (it.cues || []).length > 0;
+  if (!timed && LST.mode === "follow") LST.mode = "hide";
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="chip">${it.kind === "link" ? "🔗 链接" : "🎧 文件"}</span></div>
+    <div class="card stack"><h2 class="zh">${esc(it.title)}</h2>
+      <div id="lplay"></div>
+      <button class="btn soft lostbtn" id="llost">没跟上 · Lost it${LST.lost.length ? ` <span class="small">(${LST.lost.length})</span>` : ""}</button>
+      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. It doesn't rewind; afterwards you'll see where it happened${timed ? "" : " (with a timed transcript, the exact line)"}.</p>
+      ${hasTr ? `<div class="row" style="gap:6px"><span class="small">文字 Text:</span>${[["hide", "隐藏 Hidden"], ...(timed ? [["follow", "跟着看 Follow"]] : []), ["all", "全文 All"]].map(([m, l]) => `<button class="tagc ${LST.mode === m ? "on" : ""}" data-mode="${m}">${l}</button>`).join("")}</div>
+        <div class="cues" id="lcues" ${LST.mode === "hide" ? "hidden" : ""}>${it.cues.map((c, i) => `<button class="cue" data-ci="${i}">${esc(c[1])}</button>`).join("")}</div>` : ""}
+      <button class="btn wide" id="ldone">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
+    <div class="card stack"><span class="label">这一条 · This item</span>
+      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>`) : ""}
+      ${!hasTr ? `<span class="small muted">没有文字：只有播放和“没跟上”记录。 No transcript: player and "lost it" marks only. Add one to get questions and a transcript check.</span>` : ""}
+      <div id="lqs" class="small muted"></div>
+      <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
+  $("#lback", main).onclick = () => { stopAudio(); LST = null; render(); };
+  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; syncCue(it); });
+  $("#llost", main).onclick = () => {
+    LST.lost.push(it.kind === "file" && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null);
+    const b = $("#llost", main); b.innerHTML = `没跟上 · Lost it <span class="small">(${LST.lost.length})</span>`; b.classList.remove("pop"); void b.offsetWidth; b.classList.add("combo", "pop"); setTimeout(() => b.classList.remove("combo"), 400);
+  };
+  $$("[data-ci]", main).forEach(b => b.onclick = () => { const c = it.cues[+b.dataset.ci]; if (timed && AUD && AUD_ID === it.id && c[0] != null) { AUD.currentTime = c[0]; AUD.play(); } });
+  $("#ldone", main).onclick = () => {
+    if (AUD) AUD.pause();
+    (S.lsn = S.lsn || {})[it.id] = ((S.lsn || {})[it.id] || []).concat([{ t: now(), lost: LST.lost.slice() }]).slice(-20);
+    save();
+    Object.assign(LST, { review: true, quiz: !!(it.qs && it.qs.length), qi: 0, score: 0, looked: new Set() }); render(); window.scrollTo(0, 0);
+  };
+  const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
+  $("#ldel", main).onclick = () => {
+    const idx = S.gen.listen.indexOf(it); S.gen.listen.splice(idx, 1); stopAudio(); save(); LST = null; render();
+    let undone = false; setTimeout(() => { if (!undone && !S.gen.listen.includes(it)) audioDel(it.id); }, 6000);
+    toastAction("已删除 · Deleted", "撤销 Undo", () => { undone = true; S.gen.listen.splice(idx, 0, it); save(); render(); }, 5000);
+  };
+  drawPlayer(it);
+}
+async function drawPlayer(it) {
+  const box = $("#lplay"); if (!box) return;
+  if (it.kind === "link") {
+    box.innerHTML = `<a class="btn wide" href="${esc(it.url)}" target="_blank" rel="noopener">打开 Open ↗</a><p class="small muted">It plays in its own app or site; come back here to tap "Lost it" and Done.</p>`;
+    return;
+  }
+  if (AUD_ID !== it.id) {
+    stopAudio();
+    const blob = await audioGet(it.id);
+    if (!$("#lplay") || !LST || LST.id !== it.id) return;
+    if (!blob) {
+      box.innerHTML = `<p class="small">这台设备上没有这个音频 · The audio isn't on this device${it.fname ? ` (${esc(it.fname)})` : ""}. Choose the same file to add it here.</p><input type="file" id="lre" accept="audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus" style="font-size:16px">`;
+      $("#lre").onchange = async e => { const f = e.target.files[0]; if (!f) return; await audioPut(it.id, f); drawPlayer(it); };
+      return;
+    }
+    if (!AUD) { AUD = document.createElement("audio"); AUD.preload = "metadata"; AUD.hidden = true; document.body.append(AUD); }
+    AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; AUD.playbackRate = LST.rate || 1;
+  }
+  const rates = [0.75, 0.9, 1, 1.25];
+  box.innerHTML = `<div class="stack" style="gap:8px">
+    <input type="range" id="lseek" min="0" max="1000" value="0" aria-label="Position">
+    <div class="spread small muted"><span id="lpos">0:00</span><span id="ldur"></span></div>
+    <div class="row" style="justify-content:center;gap:8px"><button class="btn ghost" id="lb5">⟲ 5s</button><button class="btn" id="lpp" style="min-width:96px">▶ 播放</button><button class="btn ghost" id="lf5">5s ⟳</button></div>
+    <div class="row" style="justify-content:center;gap:6px">${rates.map(r => `<button class="tagc ${(LST.rate || 1) === r ? "on" : ""}" data-rate="${r}">${r}×</button>`).join("")}</div></div>`;
+  const pp = $("#lpp"), seek = $("#lseek");
+  const draw = () => {
+    if (!$("#lpp")) return;
+    pp.textContent = AUD.paused ? "▶ 播放" : "❚❚ 暂停";
+    if (isFinite(AUD.duration)) { $("#ldur").textContent = fmtT(AUD.duration); if (!seek.matches(":active")) seek.value = Math.round(AUD.currentTime / AUD.duration * 1000); }
+    $("#lpos").textContent = fmtT(AUD.currentTime); syncCue(it);
+  };
+  AUD.ontimeupdate = draw; AUD.onplay = draw; AUD.onpause = draw; AUD.onloadedmetadata = draw; AUD.onended = draw;
+  pp.onclick = () => { if (AUD.paused) { LST.play = true; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
+  $("#lb5").onclick = () => { AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
+  $("#lf5").onclick = () => { AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };
+  seek.oninput = () => { if (isFinite(AUD.duration)) AUD.currentTime = seek.value / 1000 * AUD.duration; };
+  $$("[data-rate]").forEach(b => b.onclick = () => { LST.rate = +b.dataset.rate; AUD.playbackRate = LST.rate; $$("[data-rate]").forEach(x => x.classList.toggle("on", x === b)); });
+  draw();
+}
+let LAST_CUE = -1;
+function syncCue(it) {
+  if (!LST || !isTimed(it) || !AUD || LST.mode !== "follow") return;
+  const i = cueAt(it, AUD.currentTime); if (i === LAST_CUE && $(".cue.now")) return; LAST_CUE = i;
+  $$(".cue").forEach(c => c.classList.toggle("now", +c.dataset.ci === i));
+  const el = $(`.cue[data-ci="${i}"]`), box = $("#lcues");
+  if (el && box) box.scrollTop = el.offsetTop - box.offsetTop - box.clientHeight / 3; // scroll the list, never the page
+}
+// lines near each "lost it" (the line playing, and the one before it: you usually notice a moment late)
+function lostLines(it, lost) {
+  const out = new Set(); if (!isTimed(it)) return out;
+  for (const t of lost) { if (t == null) continue; const i = cueAt(it, t); if (i >= 0) out.add(i); if (i > 0) out.add(i - 1); }
+  return out;
+}
+function renderListenReview(main, it) {
+  if (LST.quiz && LST.qi < it.qs.length) {
+    const q = it.qs[LST.qi], right = q.opts[0], opts = shuffle(q.opts);
+    main.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${LST.qi + 1}/${it.qs.length} · ${esc(it.title)}</span><p class="prompt-en">${esc(q.q)}</p>
+      <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
+    bindOpts(main, b => {
+      const ok = opts[+b.dataset.i] === right; if (ok) LST.score++;
+      $$(".opt", main).forEach(x => { x.disabled = true; const o = opts[+x.dataset.i]; if (o === right) x.classList.add("right"); const why = (q.ex || [])[q.opts.indexOf(o)]; if (why) x.insertAdjacentHTML("beforeend", `<span class="small muted" style="display:block;margin-top:4px">${esc(why)}</span>`); });
+      if (!ok) b.classList.add("wrong");
+      nextButton($("#cc"), () => { LST.qi++; render(); window.scrollTo(0, 0); });
+    });
+    return;
+  }
+  if (LST.quiz && LST.score != null && !LST.saved) { const h = S.lsn[it.id]; if (h && h.length) { h[h.length - 1].score = LST.score; h[h.length - 1].nq = it.qs.length; save(); } LST.saved = true; }
+  const marks = lostLines(it, LST.lost), timed = isTimed(it), file = it.kind === "file";
+  const pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags };
+  LST.paras = (it.cues || []).map(c => segmentText(c[1], it.gl || {}));
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="small muted">没跟上 ${LST.lost.length} 次${LST.quiz ? ` · 问题 ${LST.score}/${it.qs.length}` : ""}</span></div>
+    <div class="card stack"><span class="label">对一下 · Check against the text</span>
+      ${(it.cues || []).length ? `<p class="small muted">${marks.size ? "黄色 = 你没跟上的地方 · Yellow = where you lost it. " : ""}Tap any word you didn't catch or know: it's looked up and can go into review.${timed && file ? " ▶ replays a line." : ""}</p>
+        <div class="reading" id="lrd" style="gap:4px">${LST.paras.map((toks, li) => `<p class="${marks.has(li) ? "cue lost" : "cue"}" style="margin:0">${timed && file ? `<button class="tagc" data-rl="${li}" style="margin-right:6px">▶</button>` : ""}${toks.map((t, ti) => tokHtml(t, li + ":" + ti, LST.looked.has(li + ":" + ti))).join("")}</p>`).join("")}</div>`
+      : `<p class="small muted">没有文字，没法对 · No transcript to check against. You lost the thread ${LST.lost.length} time${LST.lost.length === 1 ? "" : "s"}${LST.lost.some(x => x != null) ? " at " + LST.lost.filter(x => x != null).map(fmtT).join(", ") : ""}.</p>`}
+      <button class="btn wide" id="lagain">再听一遍 Listen again</button><button class="btn ghost wide" id="llist">回到列表 Back to list</button></div>`;
+  $("#lback", main).onclick = $("#llist", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
+  $("#lagain", main).onclick = () => { closeSheet(); LST = { id: it.id, mode: LST.mode, lost: [], rate: LST.rate }; if (AUD) AUD.currentTime = 0; render(); window.scrollTo(0, 0); };
+  $$(".tk", main).forEach(el => el.onclick = () => { const [pi, ti] = el.dataset.k.split(":").map(Number); LST.looked.add(el.dataset.k); el.classList.add("looked"); openSheet(pp, LST.paras, pi, ti, el); });
+  $$("[data-rl]", main).forEach(b => b.onclick = async () => {
+    const i = +b.dataset.rl, start = it.cues[i][0], end = i + 1 < it.cues.length ? it.cues[i + 1][0] : null;
+    if (AUD_ID !== it.id) { const blob = await audioGet(it.id); if (!blob) return toast("这台设备上没有这个音频 · The audio isn't on this device"); if (!AUD) { AUD = document.createElement("audio"); AUD.hidden = true; document.body.append(AUD); } stopAudio(); AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; }
+    AUD.playbackRate = LST.rate || 1; AUD.currentTime = start;
+    AUD.ontimeupdate = () => { if (end != null && AUD.currentTime >= end) AUD.pause(); };
+    AUD.play().catch(() => {});
+  });
+}
+async function listenQuestions(it) {
+  if (!AI) return;
+  const st = $("#lqs"), btn = $("#lq"); if (btn) btn.disabled = true;
+  if (st) st.innerHTML = `<span class="spin"></span> Claude 在出题… Writing questions`;
+  let text = (it.cues || []).map(c => c[1]).join("\n"); const cut = text.length > 6000; if (cut) text = text.slice(0, 6000);
+  try {
+    const j = await AI.json(`This is the transcript of a Chinese audio clip (podcast, video or conversation) that an advanced learner (knows HSK 1–6 well) will LISTEN to without reading.${cut ? " Only the first part is given; ask only about it." : ""}\n${text}\nReply with only JSON: {"qs":[{"q":"English question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}],"gl":{"word":["pinyin","short English gloss"]}}\nQuestions: ${QS_RULES} Ask about what a listener should take away (main points, who did what, reasons, contrasts), not tiny details you'd only catch by reading. In "why", quote the transcript words that decide it.\ngl: slang, names and HSK7+ words in the transcript, and words whose reading or meaning here differs from the most common one.`, { modelTier: "default", cache: false });
+    const qs = toQs(j && j.qs); if (qs.length < 2) throw { code: "invalid_json" };
+    it.qs = qs; if (j.gl && typeof j.gl === "object") it.gl = j.gl; if (cut) it.qcut = true; save();
+    toast("问题加好了 · Questions added"); if (VIEW === "listen" && LST && LST.id === it.id && !LST.review) render();
+  } catch (e) { if (st) st.textContent = aiErr(e); if (btn) btn.disabled = false; }
+}
+
 /* ============ export saved words for Anki / Pleco ============ */
 function exportWords(format, scope) {
   let list = Object.values(S.bank).sort((a, b) => a.t - b.t);
@@ -2606,6 +2913,9 @@ async function saveTextFile(name, text) {
     toast("没能保存文件 · Couldn't save the file"); return false;
   }
 }
+// Rules for comprehension questions Claude writes (generated passages and your own texts).
+const QS_RULES = `exactly 3 questions in English about the content; each has 4 options in English with the correct one FIRST, plus "why": 4 one-line reasons in the same order (for the correct option quote the Chinese words that decide it; for each wrong option say exactly what it gets wrong, quoting the text where useful). Make the questions hard to answer by elimination: every wrong option must be built from details that really are in the text (a detail from a different sentence, the wrong person or place, cause and effect reversed, a missed 不/没/并非/未必 or contrast like 但/却/反而/而是, an overstatement such as all vs some or already vs expected, or a true statement that doesn't answer the question), so it sounds right to someone who only skimmed; never use options that general knowledge alone rules out. At least one question must hinge on a structure word or phrase (negation, contrast, condition, degree, time). Options roughly the same length.`;
+const toQs = qs => (Array.isArray(qs) ? qs : []).slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => { const o = { q: String(q.q), opts: q.opts.slice(0, 4).map(String) }; if (Array.isArray(q.why) && q.why.length === o.opts.length) o.ex = q.why.map(String); return o; });
 function targetWords(n) {
   const pool = [];
   for (const [w, d] of DICT) if ((d.tier === "l" || d.tier === "f" || d.tier === "k") && w.length >= 2) pool.push(w);
@@ -2618,13 +2928,14 @@ async function genPassage(kind, quiet) {
   const prompt = `Write a short Chinese reading passage for an advanced learner (knows HSK 1–6 well; struggles to parse running text quickly). Genre: ${genre}. 140–220 characters, simplified Chinese.
 Naturally include at least 5 of these words the learner keeps forgetting: ${targets.join("、")}.
 Reply with only JSON:
-{"title":"Chinese title","paras":["token|token|token|…"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"]}]}
-Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | between EVERY token (punctuation is its own token, e.g. 我|今天|去|了|上海|。); gl must cover every slang word, name, HSK7+ word, each target word you used, and every word whose pronunciation or meaning here differs from its most common one (give the pinyin and meaning used in THIS context); exactly 3 questions with the correct answer first, and wrong options that fit the topic.`;
+{"title":"Chinese title","paras":["token|token|token|…"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}
+Questions: ${QS_RULES}
+Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | between EVERY token (punctuation is its own token, e.g. 我|今天|去|了|上海|。); gl must cover every slang word, name, HSK7+ word, each target word you used, and every word whose pronunciation or meaning here differs from its most common one (give the pinyin and meaning used in THIS context).`;
   genStatus("passage", `<span class="spin"></span> 生成中…（通常 20–60 秒）`, true);
   try {
     const j = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("passage", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
     if (!j || !Array.isArray(j.paras) || !j.paras.length || !Array.isArray(j.qs) || j.qs.length < 2) throw { code: "invalid_json" };
-    const p = { id: "G" + now().toString(36) + uid4(), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: j.qs.slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => ({ q: String(q.q), opts: q.opts.map(String) })), gen: true };
+    const p = { id: "G" + now().toString(36) + uid4(), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: toQs(j.qs), gen: true };
     S.gen.passages.push(p); PSG.set(p.id, p); save(); loadCedict();
     if (quiet) return 1;
     genStatus("passage", `✓ 新短文已生成：<b>${esc(p.title)}</b>（在下面“没读过”里）`, false);
@@ -2874,9 +3185,10 @@ async function genLadder(quiet) {
   const prompt = `Create 8 English→Chinese production drills for an advanced Mandarin learner (HSK 6+ recognition) whose weakness is producing natural Chinese: they use English word order, long modifiers before nouns, literal word choices, and miss natural chunks (结果, 下起…来, 说得通, V得 complements, 把, 连…都).
 Patterns/words they recently got wrong: ${missed.join("; ") || "none yet"}.
 Words they keep forgetting (use some as the key chunk): ${targets.join("、")}.
-Mix everyday speech, travel in China, and expressing opinions. Each drill is one sentence.
+Mix everyday speech, travel in China, and expressing opinions; written-register words (news, notices, reports) go in written-register sentences. Each drill is one sentence.
+Rules: write NEW sentences — never reuse or paraphrase the English examples above. The Chinese must be exactly what a native speaker would write. Choose a context where the key chunk is clearly the most natural choice, in the register it belongs to (a formal word like 当前/从事/便利 in a formal sentence, not in casual talk); avoid contexts where a common everyday synonym would fit just as well. Every "alt" answer must also contain the key chunk.
 Reply with only a JSON array of 8 objects:
-{"en":"natural English sentence","zh":"natural Chinese split into chunks with |, with exactly ONE key chunk in square brackets, e.g. 我|本来|打算|去|，|[结果]|下雨了|。","alt":["2–4 other natural full Chinese answers"],"cx":["3 wrong but tempting fillers for the key slot"],"bad":["2 full Chinese sentences that are English-shaped or wrong, the kind this learner would write"],"why":"one or two English sentences explaining the key chunk and the trap","tag":"pattern|chunk|word|travel|express|leech"}`;
+{"en":"natural English sentence","zh":"natural Chinese split into chunks with |, with exactly ONE key chunk in square brackets, e.g. 我|本来|打算|去|，|[结果]|下雨了|。","alt":["2–4 other natural full Chinese answers"],"cx":["3 wrong but tempting fillers for the key slot"],"bad":["2 full Chinese sentences that are English-shaped or wrong, the kind this learner would write"],"near":["common equally-natural substitutes for the key chunk in this sentence, if any (often none)"],"why":"one or two English sentences explaining the key chunk and the trap","tag":"pattern|chunk|word|travel|express|leech"}`;
   genStatus("lad", `<span class="spin"></span> 生成中…（通常 30–90 秒）`, true);
   try {
     const arr = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("lad", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
@@ -2885,6 +3197,7 @@ Reply with only a JSON array of 8 objects:
     arr.forEach((x, i) => {
       if (!x || typeof x.zh !== "string" || (x.zh.match(/\[/g) || []).length !== 1 || !x.en || !Array.isArray(x.cx) || x.cx.length < 3 || !Array.isArray(x.bad) || x.bad.length < 2) return;
       const item = { id: "G" + now().toString(36) + uid4() + i, en: String(x.en), zh: x.zh, alt: (x.alt || []).map(String), cx: x.cx.slice(0, 3).map(String), bad: x.bad.slice(0, 2).map(String), why: String(x.why || ""), tag: String(x.tag || "ai"), gen: true };
+      if (Array.isArray(x.near) && x.near.length) item.near = x.near.slice(0, 5).map(String);
       S.gen.ladder.push(item); LADDER.set(item.id, item); added++;
     });
     save();
