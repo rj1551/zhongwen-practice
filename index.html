@@ -2956,7 +2956,7 @@ async function provCall(p, path, body) {
   try { r = await fetch(p.base.replace(/\/+$/, "") + path, body ? { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + p.key }, body: JSON.stringify(body) } : { headers: { Authorization: "Bearer " + p.key } }); }
   catch (e) { throw { code: "network", message: "连不上 · Can't reach it (offline, blocked, or the service doesn't allow calls from web pages)" }; }
   if (r.status === 401 || r.status === 403) throw { code: "auth", message: "钥匙不对 · The key was refused (" + r.status + ")" };
-  if (r.status === 429) throw { code: "rate_limited", message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
+  if (r.status === 429) throw { code: "rate_limited", wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
   if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch (e) {} throw { code: "http", message: "出错了 · Error " + r.status + (m ? ": " + m : "") }; }
   return r.json();
 }
@@ -2993,7 +2993,7 @@ function provCard() {
     <input class="inp" id="pvkey" type="password" placeholder="API key" value="${esc(p.key)}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <div class="stack" style="gap:8px"><button class="btn soft" id="pvload" ${u.busy ? "disabled" : ""}>载入模型 Load models</button>
       ${u.models ? `<select class="inp" id="pvmodel" style="width:100%">${u.models.map(m => `<option ${m === p.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>` : p.model ? `<span class="small">${esc(p.model)}</span>` : ""}</div>
-    <div class="row" style="gap:8px"><button class="btn" id="pvrun" ${u.busy || !p.model || !p.key ? "disabled" : ""}>${u.busy ? `<span class="spin"></span> ${res.length}/${PROV_TEST.length}` : "开始比较 Run the comparison"}</button>${u.busy ? `<button class="btn ghost" id="pvstop">停 Stop</button>` : ""}</div>
+    <div class="row" style="gap:8px"><button class="btn" id="pvrun" ${u.busy || !p.model || !p.key ? "disabled" : ""}>${u.busy ? `<span class="spin"></span> ${res.length}/${PROV_TEST.length}${u.wait ? ` · 等 ${u.wait} 秒 waiting ${u.wait}s` : ""}` : "开始比较 Run the comparison"}</button>${u.busy ? `<button class="btn ghost" id="pvstop">停 Stop</button>` : ""}</div>
     ${u.err ? `<span class="small" style="color:var(--bad)">${esc(u.err)}</span>` : ""}
     ${n ? `<div class="stack" style="gap:2px"><span class="small"><b>${esc(u.ranModel || p.model)}</b> vs Claude, ${n} 句：</span>
       <span class="small">分数一样 Same score: <b>${same}/${n}</b> · 差 1 分以内 Within 1: <b>${near}/${n}</b></span>
@@ -3032,16 +3032,26 @@ function bindProv() {
       if (PROV_UI.stop) break;
       const item = LADDER.get(id); if (!item) continue;
       const row = { id, raw, c, ch, src }, t0 = performance.now();
+      // free tiers limit requests and tokens per minute: on 429 wait as long as the service asks (or 8 s, 16 s, 24 s…)
+      // and try the same answer again, up to 5 times; a short gap between answers keeps us under the limit
       try {
-        const g = await provJson(p, gradePrompt(item, raw));
+        let g = null;
+        for (let k = 0; ; k++) {
+          try { const t1 = performance.now(); g = await provJson(p, gradePrompt(item, raw)); row.ms = performance.now() - t1; break; }
+          catch (e) {
+            if (e.code !== "rate_limited" || k >= 5 || PROV_UI.stop) throw e;
+            const w = Math.min(60, Math.max(e.wait || 0, 8 * (k + 1)));
+            PROV_UI.wait = w; if ($("#provcard")) redraw(); await new Promise(z => setTimeout(z, w * 1000)); PROV_UI.wait = 0;
+          }
+        }
         const [score, chunk] = gradeValue(g);
         row.g = { score, chunk, fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String) };
       } catch (e) {
         row.err = e.message || e.code || "error";
         if (e.code === "auth" || e.code === "network") { PROV_UI.err = row.err; PROV_UI.res.push(row); break; }
-        if (e.code === "rate_limited") await new Promise(z => setTimeout(z, 5000));
       }
-      row.ms = performance.now() - t0; PROV_UI.res.push(row);
+      if (row.ms == null) row.ms = performance.now() - t0; PROV_UI.res.push(row);
+      await new Promise(z => setTimeout(z, 2500));
       if ($("#provcard")) redraw();
     }
     PROV_UI.busy = false; if ($("#provcard")) redraw();
