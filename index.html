@@ -470,7 +470,18 @@ let PERSISTED = null;
 let AI = null;
 // Who grades typed answers: Claude in the hosted version; in the offline copy, the other AI from Progress when it's
 // switched on, has a key and model, and we're online. null = nobody (self-grade).
-function provReady() { if (HOSTED) return false; const p = provGet(); return !!(p.use && p.key && p.model); }
+function provReady() { if (HOSTED) return false; const p = provGet(); return !!(p.use && p.key && p.model && p.gone !== p.model); }
+// called when a request says the model is retired: stop using it (self-grade) and say so until another is picked
+function provGone(e) {
+  const p = provGet(); if (p.gone === p.model) return; p.gone = p.model; provSet(p);
+  toast(e.message, 9000); if (VIEW === "home" || VIEW === "me") render();
+}
+function provGoneCard() {
+  if (HOSTED) return ""; const p = provGet(); if (!p.use || !p.model || p.gone !== p.model) return "";
+  return `<div class="card stack" style="border-color:var(--bad)"><span class="label">需要换模型 · Pick a new model</span>
+    <p class="small">「${esc(p.model)}」用不了了，可能已经停用。在换模型之前，写的句子由你自己判断。<br>${esc(p.model)} isn't available any more (probably retired). Until you pick another one, you grade your own answers.</p>
+    <button class="btn" id="prov-fix">去换模型 Pick a new model</button></div>`;
+}
 const provName = m => String(m || "").split("/").pop().replace(/^qwen/i, "Qwen");
 // the offline copy's queued grades (other AI): retried a moment after start and whenever the app comes back
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !HOSTED) processPending(); });
@@ -1003,7 +1014,7 @@ function renderHome(main) {
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
   ${syncWarn()}
-  ${gradedCard()}
+  ${provGoneCard()}${gradedCard()}
   ${offwCard()}
   ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
   ${backupNudge()}
@@ -1028,6 +1039,7 @@ function renderHome(main) {
   const oo = $("#offw-ok", main); if (oo) oo.onclick = () => { S.offwSummary = null; save(); render(); };
   const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
   const bk = $("#backup-go", main); if (bk) bk.onclick = () => setView("me");
+  const pf = $("#prov-fix", main); if (pf) pf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
   const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
 }
@@ -1405,7 +1417,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
           if (answered) return;
           if (g && g.fits) return soft(g.note);
           return finish(0, yours + (g && g.note ? `<span class="small">${esc(g.note)}</span>` : ""));
-        } catch (e) { if (answered) return; }
+        } catch (e) { if (e && e.code === "model_gone") provGone(e); if (answered) return; }
       }
       finish(0, yours, undefined, "unk"); // couldn't be judged (offline, or Claude unavailable)
     };
@@ -1474,7 +1486,12 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
           if (cancelled || answered) return;
           // the other AI: busy / too fast → it grades this later (home card); unreachable (e.g. blocked) or broken →
           // self-grade, kept for a Claude check later like any offline answer
-          if (G.prov) { if (e && (e.code === "rate_limited" || e.code === "busy")) noClaude(raw, queue(), false); else { toast(`${G.name} 用不了 · Can't use ${G.name} right now: ${e && e.message || "error"}`, 4000); noClaude(raw); } return; }
+          if (G.prov) {
+            if (e && (e.code === "rate_limited" || e.code === "busy")) noClaude(raw, queue(), false);
+            else if (e && e.code === "model_gone") { provGone(e); noClaude(raw); }
+            else { toast(`${G.name} 用不了 · Can't use ${G.name} right now: ${e && e.message || "error"}`, 4000); noClaude(raw); }
+            return;
+          }
           const transient = !ONLINE || !e || !e.code || e.code === "upstream_error" || e.code === "rate_limited";
           if (transient && AI) noClaude(raw, queue(), false);
           else { toast(aiErr(e)); noClaude(raw); }
@@ -1616,8 +1633,8 @@ const gradeValue = g => [Math.max(0, Math.min(3, Math.round(+(g && g.score) || 0
 // v29: 1 vs 2 made explicit (a wrong word or collocation is 1 even when the meaning gets through), and natural
 // answers keep their 3 even when a "more idiomatic" option exists. Same rules for Claude and the other AI.
 const GRADE_RUBRIC = `3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = wrong meaning or ungrammatical.
-A wrong word or a wrong collocation is a word-choice error, so score it 1 even when the meaning is still clear: a verb–object or adjective–noun pair a native speaker wouldn't use, a word whose meaning doesn't fit, or a word-for-word rendering of an English expression. Score 2 only when every word is right but the phrasing, word order or register is off.
-Give 3 to anything a native speaker would naturally say, even if it differs from the reference or a more idiomatic option exists; mention such options in the notes without lowering the score. Do not penalize punctuation.`;
+A wrong word or a wrong collocation is a word-choice error, so score it 1 even when the meaning is still clear: a verb–object or adjective–noun pair a native speaker wouldn't use, a word whose meaning doesn't fit, or a word-for-word rendering of an English expression. Score 2 when every word is right but the phrasing or word order is off, or a correct word is too casual or too formal for the context (register is 2, not 1).
+Give 3 to anything a native speaker would naturally say, even if it differs from the reference or a more idiomatic option exists; mention such options in the notes without lowering the score. Score the sentence on its own: whether the practiced chunk was used is judged only in "chunk", so a natural answer without the chunk still scores 3 with "chunk": "missing". Do not penalize punctuation.`;
 async function gradeBatch(entries) {
   const list = entries.map((e, i) => { const item = LADDER.get(e.id), p = ladParts(item); return `${i + 1}. English: ${item.en}\n   Reference translations (any natural equivalent is fine): ${[p.model, ...(item.alt || [])].join(" / ")}\n   Chunk being practiced: ${p.key}\n   Learner's answer: ${e.raw}`; }).join("\n\n");
   const prompt = `You are a precise, encouraging Mandarin tutor grading English→Chinese translations by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks. The learner wrote these offline.
@@ -1674,7 +1691,7 @@ async function processPending() {
       const item = LADDER.get(entry.id);
       if (!item) { S.pending = S.pending.filter(x => x.k !== entry.k); continue; }
       try { settleGrade(entry, await gradeAI(item, entry.raw, G)); }
-      catch (e) { if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
+      catch (e) { if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; if (e && e.code === "model_gone") provGone(e); break; }
     }
   } finally { GRADING = false; }
 }
@@ -2987,6 +3004,12 @@ async function listenQuestions(it) {
 const PROV_KEY = "zwlgf:prov";
 function provGet() { try { return Object.assign({ base: "https://api.groq.com/openai/v1", key: "", model: "" }, JSON.parse(localStorage.getItem(PROV_KEY) || "{}")); } catch (e) { return { base: "https://api.groq.com/openai/v1", key: "", model: "" }; } }
 function provSet(p) { try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {} }
+const PROV_PRESETS = [["Groq", "https://api.groq.com/openai/v1"], ["Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"], ["OpenRouter", "https://openrouter.ai/api/v1"]];
+function provSwitch(base) {
+  const p = provGet(); p.keys = p.keys || {}; p.models = p.models || {};
+  if (p.key) p.keys[p.base] = p.key; if (p.model) p.models[p.base] = p.model;
+  p.base = base; p.key = p.keys[base] || ""; p.model = p.models[base] || ""; provSet(p);
+}
 // pull the first JSON object/array out of a reply (models sometimes add ```json fences or <think> blocks)
 function parseLooseJson(t) {
   t = String(t || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```(?:json)?/g, "").trim();
@@ -3002,7 +3025,15 @@ async function provCall(p, path, body) {
   if (r.status === 401 || r.status === 403) throw { code: "auth", message: "钥匙不对 · The key was refused (" + r.status + ")" };
   if (r.status === 429) throw { code: "rate_limited", wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
   if (r.status === 503) throw { code: "busy", wait: +r.headers.get("retry-after") || 0, message: "服务现在太忙 · The model is over capacity right now (503)" };
-  if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch (e) {} throw { code: "http", message: "出错了 · Error " + r.status + (m ? ": " + m : "") }; }
+  if (!r.ok) {
+    let m = "", c = "";
+    try { let j = await r.json(); if (Array.isArray(j)) j = j[0]; const er = (j && j.error) || {}; m = String(er.message || ""); c = String(er.code || er.status || ""); } catch (e) {}
+    // a retired or unknown model (Groq: 400 model_decommissioned / 404 model_not_found; Gemini: 404 "… is not found")
+    if (body && (/decommission|model_not_found/i.test(c) || r.status === 404 || /decommission|no longer supported|does not exist|not found|unknown model|invalid model/i.test(m)))
+      throw { code: "model_gone", message: `模型「${p.model}」用不了了（可能已停用）· The model ${p.model} isn't available any more (probably retired). Pick a new one in Progress → 其他 AI.` };
+    if (/api key not valid|invalid api key/i.test(m)) throw { code: "auth", message: "钥匙不对 · The key was refused" };
+    throw { code: "http", message: "出错了 · Error " + r.status + (m ? ": " + m : "") };
+  }
   return r.json();
 }
 async function provJson(p, prompt) {
@@ -3016,13 +3047,13 @@ const PROV_TEST = [
   ["L20", "今晚月亮格外的亮", 2, null, "app"], ["L12", "如果破了，那就算了别逼迫。", 1, null, "app"],
   ["L11", "难怪这么便宜，不是新鲜的", 2, null, "app"], ["L42", "我最近忙得连饭都没时间吃", 3, null, "app"],
   ["L38", "倒不是我不想帮忙，我就实在没办法帮上。", 2, null, "app"],
-  ["L01", "我本来打算昨天去，结果下雨了，所以我就在家待着了。", 3, "ok", "chat"], ["L02", "我越想越不明白它。", 2, "ok", "chat"],
+  ["L01", "我本来打算昨天去，结果下雨了，所以我就在家待着了。", 3, "ok", "chat"], ["L02", "我越想越不明白它。", 1, "ok", "chat"],
   ["L05", "我差点儿错过了火车。", 3, "ok", "chat"], ["L06", "用了很多努力，我终于买到了票。", 1, "missing", "chat"],
   ["L09", "他连煮一个鸡蛋都不能。", 1, "ok", "chat"], ["L10", "与其在这里等，我们不如坐出租车。", 3, "ok", "chat"],
   ["L18", "大雨造成了严重的交通。", 1, "ok", "chat"], ["L23", "因为现在的经济情况，公司决定推迟扩张计划。", 2, "missing", "chat"],
   ["L29", "我们最后有了一致。", 1, "wrong", "chat"], ["L39", "我不必然同意他。", 1, "missing", "chat"],
   ["L40", "毕竟他还是一个小孩子。", 3, "ok", "chat"], ["L27", "尽管下着大雨，比赛被照常进行了。", 1, "ok", "chat"],
-  ["L44", "突然开始下大雨了。", 3, "missing", "chat"], ["L30", "运动在缓解压力方面扮演很大的角色。", 2, "missing", "chat"]
+  ["L44", "突然开始下大雨了。", 3, "missing", "chat"], ["L30", "运动在缓解压力方面扮演很大的角色。", 1, "missing", "chat"]
 ];
 let PROV_UI = { models: null, busy: false, err: "", res: null, stop: false };
 function provCard() {
@@ -3037,6 +3068,7 @@ function provCard() {
     <label class="row" style="gap:8px;align-items:center;flex-wrap:nowrap"><input type="checkbox" id="pvuse" ${p.use ? "checked" : ""} ${ready ? "" : "disabled"} style="width:22px;height:22px;flex:none">
       <span class="small" style="flex:1;min-width:0"><b>练习时用它批改</b> · Grade practice answers with ${ready ? esc(provName(p.model)) : "it"} when online${ready ? "" : " (load models first)"}</span></label>
     <p class="small muted">${(S.ovr || []).length ? `你改判过 ${S.ovr.length} 次 · You've overridden ${S.ovr.length} grade${S.ovr.length > 1 ? "s" : ""}. ` : ""}比较测试：它给 ${PROV_TEST.length} 个已经由 Claude 批改过的句子打分，和 Claude 的分数并排比较。钥匙只存在这个浏览器里。<br>Comparison test: it grades ${PROV_TEST.length} answers Claude already graded, side by side. The key stays in this browser (never synced or put in a code).</p>
+    <div class="row" style="gap:6px">${PROV_PRESETS.map(([n, b]) => `<button class="tagc ${p.base.replace(/\/+$/, "") === b ? "on" : ""}" data-pv="${esc(b)}">${n}</button>`).join("")}</div>
     <input class="inp" id="pvbase" placeholder="API 地址 Address" value="${esc(p.base)}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="pvkey" type="password" placeholder="API key" value="${esc(p.key)}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <div class="stack" style="gap:8px"><button class="btn soft" id="pvload" ${u.busy ? "disabled" : ""}>载入模型 Load models</button>
@@ -3047,6 +3079,7 @@ function provCard() {
       <span class="small">分数一样 Same score: <b>${same}/${n}</b> · 差 1 分以内 Within 1: <b>${near}/${n}</b></span>
       <span class="small">对/不对一致 Same pass/fail (2+ = pass): <b>${pass}/${n}</b>${ch.length ? ` · 词块判断一致 Same chunk verdict: <b>${chSame}/${ch.length}</b>` : ""}</span>
       <span class="small muted">平均 ${secs} 秒一句 · ${secs} s per answer</span></div>` : ""}
+    ${(p.runs || []).length > 1 && !u.busy ? `<div class="stack" style="gap:2px"><span class="small"><b>之前的比较 · Earlier runs</b> (same score · same pass/fail · stricter · more lenient)</span>${p.runs.map(r => `<span class="small muted">${new Date(r.t).getMonth() + 1}/${new Date(r.t).getDate()} ${esc(r.m)}: ${r.same}/${r.n} · ${r.pass}/${r.n} · ↓${r.lo} · ↑${r.hi}</span>`).join("")}</div>` : ""}
     ${res.length ? `<div class="stack" style="gap:8px">${res.map(x => { const it = LADDER.get(x.id); const d = x.g ? x.g.score - x.c : null; return `<div style="border-top:1px solid var(--line);padding-top:8px" class="stack small">
       <span class="muted">${esc(it ? it.en : x.id)} · 练「${esc(it ? ladParts(it).key : "")}」</span>
       <span class="zh" style="font-size:17px">${esc(x.raw)}</span>
@@ -3060,6 +3093,7 @@ function bindProv() {
   const card = $("#provcard"), redraw = () => { card.innerHTML = provCard(); bindProv(); };
   const keep = () => { const p = provGet(); p.base = $("#pvbase").value.trim(); p.key = $("#pvkey").value.trim(); const m = $("#pvmodel"); if (m) p.model = m.value; provSet(p); return p; };
   $("#pvbase").onchange = $("#pvkey").onchange = () => { keep(); redraw(); };
+  $$("[data-pv]", card).forEach(b => b.onclick = () => { keep(); provSwitch(b.dataset.pv); PROV_UI.models = null; PROV_UI.err = ""; redraw(); });
   $("#pvuse").onchange = e => { const p = keep(); p.use = e.target.checked; provSet(p); redraw(); if (p.use) processPending(); };
   const sel = $("#pvmodel"); if (sel) sel.onchange = () => { keep(); redraw(); };
   $("#pvload").onclick = async () => {
@@ -3067,10 +3101,10 @@ function bindProv() {
     PROV_UI.busy = true; PROV_UI.err = ""; redraw();
     try {
       const j = await provCall(p, "/models");
-      const list = ((j && j.data) || []).map(m => m.id).filter(id => !/whisper|tts|guard|embed|playai|orpheus|prompt-guard|vision/i.test(id)).sort();
+      const list = ((j && j.data) || []).map(m => m.id).map(id => id.replace(/^models\//, "")).filter(id => !/whisper|tts|guard|embed|playai|orpheus|vision|image|imagen|veo|audio|live|aqa|compound/i.test(id)).sort();
       if (!list.length) throw { message: "没有可用的模型 · No models listed" };
       PROV_UI.models = list;
-      if (!list.includes(p.model)) { p.model = list.find(m => /gpt-oss-120b/.test(m)) || list.find(m => /qwen/i.test(m)) || list[0]; provSet(p); }
+      if (!list.includes(p.model)) { p.model = list.find(m => /qwen/i.test(m)) || list.find(m => /flash/i.test(m) && !/lite/i.test(m)) || list.find(m => /gpt-oss-120b/.test(m)) || list[0]; provSet(p); }
     } catch (e) { PROV_UI.err = e.message || String(e); }
     PROV_UI.busy = false; redraw();
   };
@@ -3097,13 +3131,19 @@ function bindProv() {
         row.g = { score, chunk, fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String) };
       } catch (e) {
         row.err = e.message || e.code || "error";
-        if (e.code === "auth" || e.code === "network") { PROV_UI.err = row.err; PROV_UI.res.push(row); break; }
+        if (e.code === "auth" || e.code === "network" || e.code === "model_gone") { PROV_UI.err = row.err; PROV_UI.res.push(row); break; }
       }
       if (row.ms == null) row.ms = performance.now() - t0; PROV_UI.res.push(row);
       await new Promise(z => setTimeout(z, 2500));
       if ($("#provcard")) redraw();
     }
-    PROV_UI.busy = false; if ($("#provcard")) redraw();
+    PROV_UI.busy = false;
+    const done = PROV_UI.res.filter(x => x.g);
+    if (done.length >= 10) { // keep the last 6 summaries, to compare services and rule changes side by side
+      const sm = { m: PROV_UI.ranModel, t: now(), n: done.length, same: done.filter(x => x.g.score === x.c).length, pass: done.filter(x => (x.g.score >= 2) === (x.c >= 2)).length, lo: done.filter(x => x.g.score < x.c).length, hi: done.filter(x => x.g.score > x.c).length };
+      const q = provGet(); q.runs = [sm].concat(q.runs || []).slice(0, 6); provSet(q);
+    }
+    if ($("#provcard")) redraw();
   };
 }
 
