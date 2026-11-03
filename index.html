@@ -2957,6 +2957,7 @@ async function provCall(p, path, body) {
   catch (e) { throw { code: "network", message: "连不上 · Can't reach it (offline, blocked, or the service doesn't allow calls from web pages)" }; }
   if (r.status === 401 || r.status === 403) throw { code: "auth", message: "钥匙不对 · The key was refused (" + r.status + ")" };
   if (r.status === 429) throw { code: "rate_limited", wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
+  if (r.status === 503) throw { code: "busy", wait: +r.headers.get("retry-after") || 0, message: "服务现在太忙 · The model is over capacity right now (503)" };
   if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch (e) {} throw { code: "http", message: "出错了 · Error " + r.status + (m ? ": " + m : "") }; }
   return r.json();
 }
@@ -3039,7 +3040,7 @@ function bindProv() {
         for (let k = 0; ; k++) {
           try { const t1 = performance.now(); g = await provJson(p, gradePrompt(item, raw)); row.ms = performance.now() - t1; break; }
           catch (e) {
-            if (e.code !== "rate_limited" || k >= 5 || PROV_UI.stop) throw e;
+            if ((e.code !== "rate_limited" && e.code !== "busy") || k >= 5 || PROV_UI.stop) throw e;
             const w = Math.min(60, Math.max(e.wait || 0, 8 * (k + 1)));
             PROV_UI.wait = w; if ($("#provcard")) redraw(); await new Promise(z => setTimeout(z, w * 1000)); PROV_UI.wait = 0;
           }
