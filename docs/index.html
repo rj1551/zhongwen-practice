@@ -1635,9 +1635,10 @@ async function processPending() {
     }
   } finally { GRADING = false; }
 }
-async function gradeAI(item, answer) {
+async function gradeAI(item, answer) { return AI.json(gradePrompt(item, answer), { modelTier: "default", effort: "low" }); }
+function gradePrompt(item, answer) {
   const p = ladParts(item);
-  const prompt = `You are a precise, encouraging Mandarin tutor grading an English→Chinese translation by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks.
+  return `You are a precise, encouraging Mandarin tutor grading an English→Chinese translation by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks.
 
 English: ${item.en}
 Reference translations (any natural equivalent is fine): ${[p.model, ...(item.alt || [])].join(" / ")}
@@ -1647,7 +1648,6 @@ Learner's answer: ${answer}
 Score: 3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = wrong meaning or ungrammatical. Do not penalize a different but natural phrasing, or punctuation.
 Also judge the practiced chunk separately: "ok" if the learner used it (or a form of it) correctly, "wrong" if they used it incorrectly, "missing" if it isn't in the answer (even if the sentence is otherwise fine).
 Reply with only JSON: {"score": 0-3, "chunk": "ok" | "wrong" | "missing", "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "good": "one short note on what they did right, or empty string", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
-  return AI.json(prompt, { modelTier: "default", effort: "low" });
 }
 const SEG_HOW = `<div class="how"><b>怎么切 · How it's scored</b>
   <p class="zh how-ex">解放碑<i class="must"></i>附近<i class="must"></i>那家<i class="may"></i>小面<i class="must"></i>真的<i class="may"></i>绝</p>
@@ -2936,6 +2936,119 @@ async function listenQuestions(it) {
   } catch (e) { if (st) st.textContent = aiErr(e); if (btn) btn.disabled = false; }
 }
 
+
+/* ============ other AI providers (test, offline copy only; 2026-11-02) ============
+   Any OpenAI-compatible chat API (Groq, OpenRouter, Gemini's compatible endpoint…). The key stays in this
+   browser's localStorage: it is never synced, never put in a progress code. For now this only runs a side-by-side
+   test against answers Claude already graded; nothing in practice uses it yet. */
+const PROV_KEY = "zwlgf:prov";
+function provGet() { try { return Object.assign({ base: "https://api.groq.com/openai/v1", key: "", model: "" }, JSON.parse(localStorage.getItem(PROV_KEY) || "{}")); } catch (e) { return { base: "https://api.groq.com/openai/v1", key: "", model: "" }; } }
+function provSet(p) { try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {} }
+// pull the first JSON object/array out of a reply (models sometimes add ```json fences or <think> blocks)
+function parseLooseJson(t) {
+  t = String(t || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```(?:json)?/g, "").trim();
+  try { return JSON.parse(t); } catch (e) {}
+  const a = t.search(/[\[{]/), b = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
+  if (a >= 0 && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch (e) {} }
+  throw { code: "invalid_json", message: t.slice(0, 200) };
+}
+async function provCall(p, path, body) {
+  let r;
+  try { r = await fetch(p.base.replace(/\/+$/, "") + path, body ? { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + p.key }, body: JSON.stringify(body) } : { headers: { Authorization: "Bearer " + p.key } }); }
+  catch (e) { throw { code: "network", message: "连不上 · Can't reach it (offline, blocked, or the service doesn't allow calls from web pages)" }; }
+  if (r.status === 401 || r.status === 403) throw { code: "auth", message: "钥匙不对 · The key was refused (" + r.status + ")" };
+  if (r.status === 429) throw { code: "rate_limited", message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
+  if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch (e) {} throw { code: "http", message: "出错了 · Error " + r.status + (m ? ": " + m : "") }; }
+  return r.json();
+}
+async function provJson(p, prompt) {
+  const j = await provCall(p, "/chat/completions", { model: p.model, temperature: 0.2, messages: [{ role: "system", content: "You reply with only valid JSON, no other text." }, { role: "user", content: prompt }] });
+  return parseLooseJson(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content);
+}
+// test set: [drill, answer, Claude's score, Claude's chunk verdict or null, where the verdict came from]
+// "app" = graded by Claude inside the app (your real answers); "chat" = written and graded by Claude in the build chat
+const PROV_TEST = [
+  ["L30", "运动对缓解压力可以有大影响", 1, null, "app"], ["L16", "前往上海的旅客，请去5号门登机", 2, null, "app"],
+  ["L20", "今晚月亮格外的亮", 2, null, "app"], ["L12", "如果破了，那就算了别逼迫。", 1, null, "app"],
+  ["L11", "难怪这么便宜，不是新鲜的", 2, null, "app"], ["L42", "我最近忙得连饭都没时间吃", 3, null, "app"],
+  ["L38", "倒不是我不想帮忙，我就实在没办法帮上。", 2, null, "app"],
+  ["L01", "我本来打算昨天去，结果下雨了，所以我就在家待着了。", 3, "ok", "chat"], ["L02", "我越想越不明白它。", 2, "ok", "chat"],
+  ["L05", "我差点儿错过了火车。", 3, "ok", "chat"], ["L06", "用了很多努力，我终于买到了票。", 1, "missing", "chat"],
+  ["L09", "他连煮一个鸡蛋都不能。", 1, "ok", "chat"], ["L10", "与其在这里等，我们不如坐出租车。", 3, "ok", "chat"],
+  ["L18", "大雨造成了严重的交通。", 1, "ok", "chat"], ["L23", "因为现在的经济情况，公司决定推迟扩张计划。", 2, "missing", "chat"],
+  ["L29", "我们最后有了一致。", 1, "wrong", "chat"], ["L39", "我不必然同意他。", 1, "missing", "chat"],
+  ["L40", "毕竟他还是一个小孩子。", 3, "ok", "chat"], ["L27", "尽管下着大雨，比赛被照常进行了。", 1, "ok", "chat"],
+  ["L44", "突然开始下大雨了。", 3, "missing", "chat"], ["L30", "运动在缓解压力方面扮演很大的角色。", 2, "missing", "chat"]
+];
+let PROV_UI = { models: null, busy: false, err: "", res: null, stop: false };
+function provCard() {
+  const p = provGet(), u = PROV_UI;
+  const res = u.res || [], done = res.filter(x => x.g), n = done.length;
+  const same = done.filter(x => x.g.score === x.c).length, near = done.filter(x => Math.abs(x.g.score - x.c) <= 1).length;
+  const pass = done.filter(x => (x.g.score >= 2) === (x.c >= 2)).length;
+  const ch = done.filter(x => x.ch), chSame = ch.filter(x => x.g.chunk === x.ch).length;
+  const secs = n ? (done.reduce((a, x) => a + x.ms, 0) / n / 1000).toFixed(1) : 0;
+  return `<span class="label">其他 AI · Another AI (test)</span>
+    <p class="small muted">试一个免费的模型：它给 ${PROV_TEST.length} 个已经由 Claude 批改过的句子打分，和 Claude 的分数并排比较。现在只是测试，练习里还不会用它。钥匙只存在这个浏览器里。<br>Try a free model: it grades ${PROV_TEST.length} answers Claude already graded, side by side. Test only; practice doesn't use it yet. The key stays in this browser (never synced or put in a code).</p>
+    <input class="inp" id="pvbase" placeholder="API 地址 Address" value="${esc(p.base)}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input class="inp" id="pvkey" type="password" placeholder="API key" value="${esc(p.key)}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="stack" style="gap:8px"><button class="btn soft" id="pvload" ${u.busy ? "disabled" : ""}>载入模型 Load models</button>
+      ${u.models ? `<select class="inp" id="pvmodel" style="width:100%">${u.models.map(m => `<option ${m === p.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>` : p.model ? `<span class="small">${esc(p.model)}</span>` : ""}</div>
+    <div class="row" style="gap:8px"><button class="btn" id="pvrun" ${u.busy || !p.model || !p.key ? "disabled" : ""}>${u.busy ? `<span class="spin"></span> ${res.length}/${PROV_TEST.length}` : "开始比较 Run the comparison"}</button>${u.busy ? `<button class="btn ghost" id="pvstop">停 Stop</button>` : ""}</div>
+    ${u.err ? `<span class="small" style="color:var(--bad)">${esc(u.err)}</span>` : ""}
+    ${n ? `<div class="stack" style="gap:2px"><span class="small"><b>${esc(u.ranModel || p.model)}</b> vs Claude, ${n} 句：</span>
+      <span class="small">分数一样 Same score: <b>${same}/${n}</b> · 差 1 分以内 Within 1: <b>${near}/${n}</b></span>
+      <span class="small">对/不对一致 Same pass/fail (2+ = pass): <b>${pass}/${n}</b>${ch.length ? ` · 词块判断一致 Same chunk verdict: <b>${chSame}/${ch.length}</b>` : ""}</span>
+      <span class="small muted">平均 ${secs} 秒一句 · ${secs} s per answer</span></div>` : ""}
+    ${res.length ? `<div class="stack" style="gap:8px">${res.map(x => { const it = LADDER.get(x.id); const d = x.g ? x.g.score - x.c : null; return `<div style="border-top:1px solid var(--line);padding-top:8px" class="stack small">
+      <span class="muted">${esc(it ? it.en : x.id)} · 练「${esc(it ? ladParts(it).key : "")}」</span>
+      <span class="zh" style="font-size:17px">${esc(x.raw)}</span>
+      <span>Claude: <b>${x.c}</b>${x.ch ? " · " + x.ch : ""} <span class="muted">(${x.src === "app" ? "在 app 里批的 graded in the app" : "这次聊天里批的 graded in the build chat"})</span></span>
+      ${x.g ? `<span style="color:${d === 0 ? "var(--good)" : Math.abs(d) === 1 ? "var(--ink)" : "var(--bad)"}">新模型 New: <b>${x.g.score}</b> · ${esc(x.g.chunk)}${d ? ` (${d > 0 ? "+" : ""}${d})` : " ✓"}</span>
+        ${x.g.fixed ? `<span>改 <span class="zh">${esc(x.g.fixed)}</span></span>` : ""}
+        ${(x.g.notes || []).length ? `<ul style="margin:0;padding-left:18px">${x.g.notes.map(t => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}`
+      : `<span style="color:var(--bad)">${esc(x.err || "")}</span>`}</div>`; }).join("")}</div>` : ""}`;
+}
+function bindProv() {
+  const card = $("#provcard"), redraw = () => { card.innerHTML = provCard(); bindProv(); };
+  const keep = () => { const p = provGet(); p.base = $("#pvbase").value.trim(); p.key = $("#pvkey").value.trim(); const m = $("#pvmodel"); if (m) p.model = m.value; provSet(p); return p; };
+  $("#pvbase").onchange = $("#pvkey").onchange = () => { keep(); redraw(); };
+  const sel = $("#pvmodel"); if (sel) sel.onchange = () => { keep(); redraw(); };
+  $("#pvload").onclick = async () => {
+    const p = keep(); if (!p.key) { PROV_UI.err = "先填 API key · Enter the key first"; return redraw(); }
+    PROV_UI.busy = true; PROV_UI.err = ""; redraw();
+    try {
+      const j = await provCall(p, "/models");
+      const list = ((j && j.data) || []).map(m => m.id).filter(id => !/whisper|tts|guard|embed|playai|orpheus|prompt-guard|vision/i.test(id)).sort();
+      if (!list.length) throw { message: "没有可用的模型 · No models listed" };
+      PROV_UI.models = list;
+      if (!list.includes(p.model)) { p.model = list.find(m => /gpt-oss-120b/.test(m)) || list.find(m => /qwen/i.test(m)) || list[0]; provSet(p); }
+    } catch (e) { PROV_UI.err = e.message || String(e); }
+    PROV_UI.busy = false; redraw();
+  };
+  const st = $("#pvstop"); if (st) st.onclick = () => { PROV_UI.stop = true; };
+  $("#pvrun").onclick = async () => {
+    const p = keep(); Object.assign(PROV_UI, { busy: true, err: "", res: [], stop: false, ranModel: p.model }); redraw();
+    for (const [id, raw, c, ch, src] of PROV_TEST) {
+      if (PROV_UI.stop) break;
+      const item = LADDER.get(id); if (!item) continue;
+      const row = { id, raw, c, ch, src }, t0 = performance.now();
+      try {
+        const g = await provJson(p, gradePrompt(item, raw));
+        const [score, chunk] = gradeValue(g);
+        row.g = { score, chunk, fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String) };
+      } catch (e) {
+        row.err = e.message || e.code || "error";
+        if (e.code === "auth" || e.code === "network") { PROV_UI.err = row.err; PROV_UI.res.push(row); break; }
+        if (e.code === "rate_limited") await new Promise(z => setTimeout(z, 5000));
+      }
+      row.ms = performance.now() - t0; PROV_UI.res.push(row);
+      if ($("#provcard")) redraw();
+    }
+    PROV_UI.busy = false; if ($("#provcard")) redraw();
+  };
+}
+
 /* ============ export saved words for Anki / Pleco ============ */
 function exportWords(format, scope) {
   let list = Object.values(S.bank).sort((a, b) => a.t - b.t);
@@ -3032,6 +3145,7 @@ function renderMe(main) {
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
   ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><div id="syncinfo">${syncInfo()}</div></div>` : ""}
+  ${HOSTED ? "" : `<div class="card" id="provcard">${provCard()}</div>`}
   ${stockCard()}
   ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
   ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad" data-genkey="lad" ${GEN.ladBusy ? "disabled" : ""}>生成 8 道新题 Generate</button><div id="st-lad" class="small muted">${GEN.lad || ""}</div></div>` : ""}
@@ -3042,7 +3156,7 @@ function renderMe(main) {
     ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
     <p class="small muted"><b>iPhone / iPad:</b> add this page to your home screen and always open it from there. Paste codes inside the home-screen app, not a Safari tab: the two keep separate data, and Safari tabs lose their data after 7 days unused.</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
-  bindBank();
+  bindBank(); if ($("#provcard")) bindProv();
   $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
