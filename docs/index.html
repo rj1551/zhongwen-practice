@@ -3024,7 +3024,12 @@ async function provCall(p, path, body) {
   try { r = await fetch(p.base.replace(/\/+$/, "") + path, body ? { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + p.key }, body: JSON.stringify(body) } : { headers: { Authorization: "Bearer " + p.key } }); }
   catch (e) { throw { code: "network", message: "连不上 · Can't reach it (offline, blocked, or the service doesn't allow calls from web pages)" }; }
   if (r.status === 401 || r.status === 403) throw { code: "auth", message: "钥匙不对 · The key was refused (" + r.status + ")" };
-  if (r.status === 429) throw { code: "rate_limited", wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
+  if (r.status === 429) {
+    let m = ""; try { let j = await r.clone().json(); if (Array.isArray(j)) j = j[0]; m = JSON.stringify((j && j.error) || j || ""); } catch (e) {}
+    // Gemini answers a model your free tier doesn't include with 429 "… free_tier … limit: 0": waiting never helps
+    if (body && /limit:\s*0\b/i.test(m)) throw { code: "model_gone", message: `「${p.model}」不在你的免费额度里 · ${p.model} isn't included in your free tier. Pick another model in Progress → 其他 AI.` };
+    throw { code: "rate_limited", wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
+  }
   if (r.status === 503) throw { code: "busy", wait: +r.headers.get("retry-after") || 0, message: "服务现在太忙 · The model is over capacity right now (503)" };
   if (!r.ok) {
     let m = "", c = "";
@@ -3038,7 +3043,9 @@ async function provCall(p, path, body) {
   return r.json();
 }
 async function provJson(p, prompt) {
-  const j = await provCall(p, "/chat/completions", { model: p.model, temperature: 0.2, messages: [{ role: "system", content: "You reply with only valid JSON, no other text." }, { role: "user", content: prompt }] });
+  // Gemini 3 models always think first; "low" keeps that short (grading doesn't need long thinking)
+  const extra = /generativelanguage\.googleapis/.test(p.base) ? { reasoning_effort: "low" } : {};
+  const j = await provCall(p, "/chat/completions", { model: p.model, temperature: 0.2, ...extra, messages: [{ role: "system", content: "You reply with only valid JSON, no other text." }, { role: "user", content: prompt }] });
   return parseLooseJson(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content);
 }
 // test set: [drill, answer, Claude's score, Claude's chunk verdict or null, where the verdict came from]
@@ -3105,7 +3112,7 @@ function bindProv() {
       const list = ((j && j.data) || []).map(m => m.id).map(id => id.replace(/^models\//, "")).filter(id => !/whisper|tts|guard|embed|playai|orpheus|vision|image|imagen|veo|audio|live|aqa|compound/i.test(id)).sort();
       if (!list.length) throw { message: "没有可用的模型 · No models listed" };
       PROV_UI.models = list;
-      if (!list.includes(p.model)) { p.model = list.find(m => /qwen/i.test(m)) || list.find(m => /flash/i.test(m) && !/lite/i.test(m)) || list.find(m => /gpt-oss-120b/.test(m)) || list[0]; provSet(p); }
+      if (!list.includes(p.model)) { p.model = list.find(m => /qwen/i.test(m)) || list.filter(m => /^gemini-[\d.]+-flash$/.test(m)).sort((a, b) => parseFloat(b.slice(7)) - parseFloat(a.slice(7)))[0] || list.find(m => /flash/i.test(m) && !/lite/i.test(m)) || list.find(m => /gpt-oss-120b/.test(m)) || list[0]; provSet(p); }
     } catch (e) { PROV_UI.err = e.message || String(e); }
     PROV_UI.busy = false; redraw();
   };
