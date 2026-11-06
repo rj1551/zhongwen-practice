@@ -3019,10 +3019,10 @@ function parseLooseJson(t) {
   if (a >= 0 && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch (e) {} }
   throw { code: "invalid_json", message: t.slice(0, 200) };
 }
-async function provCall(p, path, body) {
+async function provCall(p, path, body, signal) {
   let r;
-  try { r = await fetch(p.base.replace(/\/+$/, "") + path, body ? { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + p.key }, body: JSON.stringify(body) } : { headers: { Authorization: "Bearer " + p.key } }); }
-  catch (e) { throw { code: "network", message: "连不上 · Can't reach it (offline, blocked, or the service doesn't allow calls from web pages)" }; }
+  try { r = await fetch(p.base.replace(/\/+$/, "") + path, body ? { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + p.key }, body: JSON.stringify(body), signal } : { headers: { Authorization: "Bearer " + p.key }, signal }); }
+  catch (e) { if (e && e.name === "AbortError") throw { code: "aborted", message: "停了 · Stopped" }; throw { code: "network", message: "连不上 · Can't reach it (offline, blocked, or the service doesn't allow calls from web pages)" }; }
   if (r.status === 401 || r.status === 403) throw { code: "auth", message: "钥匙不对 · The key was refused (" + r.status + ")" };
   if (r.status === 429) {
     let m = ""; try { let j = await r.clone().json(); if (Array.isArray(j)) j = j[0]; m = JSON.stringify((j && j.error) || j || ""); } catch (e) {}
@@ -3042,10 +3042,10 @@ async function provCall(p, path, body) {
   }
   return r.json();
 }
-async function provJson(p, prompt) {
+async function provJson(p, prompt, signal) {
   // Gemini 3 models always think first; "low" keeps that short (grading doesn't need long thinking)
   const extra = /generativelanguage\.googleapis/.test(p.base) ? { reasoning_effort: "low" } : {};
-  const j = await provCall(p, "/chat/completions", { model: p.model, temperature: 0.2, ...extra, messages: [{ role: "system", content: "You reply with only valid JSON, no other text." }, { role: "user", content: prompt }] });
+  const j = await provCall(p, "/chat/completions", { model: p.model, temperature: 0.2, ...extra, messages: [{ role: "system", content: "You reply with only valid JSON, no other text." }, { role: "user", content: prompt }] }, signal);
   return parseLooseJson(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content);
 }
 // test set: [drill, answer, Claude's score, Claude's chunk verdict or null, where the verdict came from]
@@ -3097,8 +3097,15 @@ function provCard() {
         ${(x.g.notes || []).length ? `<ul style="margin:0;padding-left:18px">${x.g.notes.map(t => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}`
       : `<span style="color:var(--bad)">${esc(x.err || "")}</span>`}</div>`; }).join("")}</div>` : ""}`;
 }
+// a wait the Stop button can cut short
+const provNap = ms => new Promise(z => { const t = setTimeout(z, ms); PROV_UI.wake = () => { clearTimeout(t); z(); }; });
+function provStop() {
+  if (!PROV_UI.busy || PROV_UI.stop) return;
+  PROV_UI.stop = true; PROV_UI.stoppedAt = Date.now(); if (PROV_UI.ac) PROV_UI.ac.abort(); if (PROV_UI.wake) PROV_UI.wake();
+}
 function bindProv() {
-  const card = $("#provcard"), redraw = () => { card.innerHTML = provCard(); bindProv(); };
+  // always redraw the card that's on screen now (the run outlives a trip to another tab and back)
+  const card = $("#provcard"), redraw = () => { const c = $("#provcard"); if (c) { c.innerHTML = provCard(); bindProv(); } };
   const keep = () => { const p = provGet(); p.base = $("#pvbase").value.trim(); p.key = $("#pvkey").value.trim(); const m = $("#pvmodel"); if (m) p.model = m.value; provSet(p); return p; };
   $("#pvbase").onchange = $("#pvkey").onchange = () => { keep(); redraw(); };
   $$("[data-pv]", card).forEach(b => b.onclick = () => { keep(); provSwitch(b.dataset.pv); PROV_UI.models = null; PROV_UI.err = ""; redraw(); });
@@ -3116,9 +3123,12 @@ function bindProv() {
     } catch (e) { PROV_UI.err = e.message || String(e); }
     PROV_UI.busy = false; redraw();
   };
-  const st = $("#pvstop"); if (st) st.onclick = () => { PROV_UI.stop = true; };
+  // on pointerdown, not click: the card redraws during a run, and a redraw between finger-down and finger-up loses the click
+  const st = $("#pvstop"); if (st) st.onpointerdown = st.onclick = e => { e.preventDefault(); provStop(); st.disabled = true; st.textContent = "停了 · Stopped"; };
   $("#pvrun").onclick = async () => {
-    const p = keep(); Object.assign(PROV_UI, { busy: true, err: "", res: [], stop: false, ranModel: p.model }); redraw();
+    // the same tap that pressed Stop can land on Run once the card redraws: ignore it
+    if (Date.now() - (PROV_UI.stoppedAt || 0) < 800) return;
+    const p = keep(); Object.assign(PROV_UI, { busy: true, err: "", res: [], stop: false, ranModel: p.model, ac: new AbortController() }); redraw();
     for (const [id, raw, c, ch, src] of PROV_TEST) {
       if (PROV_UI.stop) break;
       const item = LADDER.get(id); if (!item) continue;
@@ -3128,30 +3138,31 @@ function bindProv() {
       try {
         let g = null;
         for (let k = 0; ; k++) {
-          try { const t1 = performance.now(); g = await provJson(p, gradePrompt(item, raw)); row.ms = performance.now() - t1; break; }
+          try { const t1 = performance.now(); g = await provJson(p, gradePrompt(item, raw), PROV_UI.ac.signal); row.ms = performance.now() - t1; break; }
           catch (e) {
             if ((e.code !== "rate_limited" && e.code !== "busy") || k >= 5 || PROV_UI.stop) throw e;
             const w = Math.min(60, Math.max(e.wait || 0, 8 * (k + 1)));
-            PROV_UI.wait = w; if ($("#provcard")) redraw(); await new Promise(z => setTimeout(z, w * 1000)); PROV_UI.wait = 0;
+            PROV_UI.wait = w; redraw(); await provNap(w * 1000); PROV_UI.wait = 0;
           }
         }
         const [score, chunk] = gradeValue(g);
         row.g = { score, chunk, fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String) };
       } catch (e) {
+        if (PROV_UI.stop) break;
         row.err = e.message || e.code || "error";
         if (e.code === "auth" || e.code === "network" || e.code === "model_gone") { PROV_UI.err = row.err; PROV_UI.res.push(row); break; }
       }
       if (row.ms == null) row.ms = performance.now() - t0; PROV_UI.res.push(row);
-      await new Promise(z => setTimeout(z, 2500));
-      if ($("#provcard")) redraw();
+      redraw();
+      await provNap(2500);
     }
-    PROV_UI.busy = false;
+    PROV_UI.busy = false; PROV_UI.wait = 0;
     const done = PROV_UI.res.filter(x => x.g);
     if (done.length >= 10) { // keep the last 6 summaries, to compare services and rule changes side by side
-      const sm = { m: PROV_UI.ranModel, t: now(), n: done.length, same: done.filter(x => x.g.score === x.c).length, pass: done.filter(x => (x.g.score >= 2) === (x.c >= 2)).length, lo: done.filter(x => x.g.score < x.c).length, hi: done.filter(x => x.g.score > x.c).length };
+      const sm = { m: PROV_UI.ranModel + (PROV_UI.stop ? " (stopped)" : ""), t: now(), n: done.length, same: done.filter(x => x.g.score === x.c).length, pass: done.filter(x => (x.g.score >= 2) === (x.c >= 2)).length, lo: done.filter(x => x.g.score < x.c).length, hi: done.filter(x => x.g.score > x.c).length };
       const q = provGet(); q.runs = [sm].concat(q.runs || []).slice(0, 6); provSet(q);
     }
-    if ($("#provcard")) redraw();
+    redraw();
   };
 }
 
