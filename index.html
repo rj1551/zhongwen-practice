@@ -255,7 +255,8 @@ function save() {
   for (const k in GEN_CAP) if ((S.gen[k] || []).length > GEN_CAP[k]) S.gen[k] = S.gen[k].slice(-GEN_CAP[k]);
   const json = JSON.stringify(S);
   try { localStorage.setItem(LS_KEY, json); } catch (e) { LOCAL_FULL = true; }
-  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); }
+  // GitHub: one commit per write, so wait for a pause (15 s after the last answer; also written when the app is put away)
+  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, COL.gh ? 15000 : 2500); }
 }
 /* ---------- account sync: progress split across several documents ----------
    Storage layout only. Your progress is still one state object in the app and merging still works on whole
@@ -341,43 +342,64 @@ function pushRemote() {
   if (!COL || !PULLED || remoteBusy) return;
   remoteBusy = true;
   queueSync(async () => {
+    let conflicts = 0, stop = false;
     while (remoteDirty) {
       remoteDirty = false;
       const docs = splitState(S);
       let full = false, biggest = 0, total = 0, n = 0;
+      const changed = {};
       for (const id in docs) {
         const st = stable(docs[id]), b = bytesOf(st);
         if (!emptyDoc(docs[id])) { biggest = Math.max(biggest, b); total += b; n++; }
         if (REMOTE[id] === st) continue;
         if (REMOTE[id] === undefined && emptyDoc(docs[id])) continue; // don't create empty documents
-        if (b > SYNC_LIMIT - 2048) { full = true; continue; }
+        if (!COL.gh && b > SYNC_LIMIT - 2048) { full = true; continue; }
+        if (COL.gh) { changed[id] = st; continue; }
         try { await COL.doc(id).set(JSON.parse(JSON.stringify(docs[id]))); REMOTE[id] = st; }
         catch (e) {
           if (e && (e.code === "invalid_argument" || e.code === "quota_exceeded")) { full = true; continue; }
           remoteDirty = true; break; // offline or busy: try again shortly
         }
       }
+      // GitHub: every changed part in one commit, accepted only if nobody else wrote since our last read
+      if (COL.gh && (Object.keys(changed).length || COL.extraDirty())) {
+        try { await COL.setMany(changed, docs); for (const id in changed) REMOTE[id] = changed[id]; }
+        catch (e) {
+          if (e && e.code === "conflict" && conflicts++ < 5) {
+            // the other device wrote first: read its changes, merge them in, then write again
+            try { await pullInner(); } catch (e2) {}
+            remoteDirty = true; continue;
+          }
+          remoteDirty = true; stop = true; // try again on the next save, Sync now, reconnect or return to the app (never a fast loop)
+        }
+      }
+      if (stop) break;
       SYNC_BYTES = biggest; SYNC_TOTAL = total; SYNC_DOCS = n;
       const si = document.getElementById("syncinfo"); if (si) si.innerHTML = syncInfo();
       if (full !== SYNC_FULL) { SYNC_FULL = full; if (VIEW === "home" || VIEW === "me") render(); }
       if (remoteDirty) { await new Promise(r => setTimeout(r, 4000)); if (!ONLINE) break; }
     }
-  }).then(() => { remoteBusy = false; if (remoteDirty && ONLINE) { clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 2500); } });
+    if (!remoteDirty && COL && COL.gh) GH.synced();
+  }).then(() => { remoteBusy = false; if (remoteDirty && ONLINE && !(COL && COL.gh && GH.fatal())) { clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, COL && COL.gh ? 15000 : 2500); } });
 }
 let SYNC_TOTAL = 0;
 function syncInfo() {
   if (!PULLED) return `<p class="small muted"><span class="spin"></span> 正在连接… Connecting…</p>`;
+  if (COL && COL.gh) return `<p class="small muted">同步记录 Sync record: ${Math.round(SYNC_TOTAL / 1024)} KB in ${SYNC_DOCS} parts</p>`;
   return `<p class="small">同步记录 Sync record: <b>${Math.round(SYNC_TOTAL / 1024)} KB</b> in ${SYNC_DOCS} parts · biggest part ${Math.round(SYNC_BYTES / 1024)} KB / 256 KB${SYNC_FULL ? ' · <b style="color:var(--bad)">a part is full: not syncing</b>' : ""}</p><div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, SYNC_BYTES / SYNC_LIMIT * 100)}%;background:${SYNC_BYTES > 0.8 * SYNC_LIMIT ? "var(--bad)" : "var(--accent)"}"></i></div>`;
 }
 // Read every document, merge them into what this device has, then write back whatever differs.
 function pullRemote() {
   if (!COL) return SYNCQ;
-  return queueSync(async () => {
+  return queueSync(pullInner).then(() => { remoteDirty = true; pushRemote(); processSentences(); });
+}
+async function pullInner() {
+  {
     const snap = await COL.get();
     const list = snap.docs.filter(d => d.exists).map(d => ({ id: d.id, data: JSON.parse(JSON.stringify(d.data())) }));
     LAST_PULL = now(); PULLED = true;
     const legacy = list.find(d => d.id === "state" && !d.data.layout && d.data.items);
-    if (legacy && !list.some(d => d.id === "state-v1-backup")) { try { await COL.doc("state-v1-backup").set(legacy.data); } catch (e) {} }
+    if (legacy && !COL.gh && !list.some(d => d.id === "state-v1-backup")) { try { await COL.doc("state-v1-backup").set(legacy.data); } catch (e) {} }
     REMOTE = {};
     for (const d of list) if (d.id !== "state-v1-backup") REMOTE[d.id] = stable(d.data);
     const remote = joinDocs(list.filter(d => d.id !== "state-v1-backup"));
@@ -387,9 +409,10 @@ function pullRemote() {
       try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
       if (stable(S) !== before && !busyView()) render();
     }
-  }).then(() => { remoteDirty = true; pushRemote(); processSentences(); });
+  }
 }
 async function connectRemote() {
+  if (!HOSTED) { const c = ghCfg(); if (c && c.token && c.branch) ghStart(c); return; }
   if (!window.claude || !window.claude.use) return;
   try {
     const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
@@ -404,6 +427,216 @@ async function connectRemote() {
 // Coming back to the app (other device may have practised meanwhile): fetch and merge, unless mid-card.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && COL && ONLINE && !busyView() && now() - LAST_PULL > 20000) pullRemote(); });
 let syncNote = window.claude ? "正在连接同步…" : "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
+
+/* ============ GitHub sync (offline copy only, 2026-11-06) ============
+   Same parts as account sync (state, items-0…7, gen-<kind>-0…7), stored as files progress/<part>.json in your
+   private repo; merging is unchanged (pullInner → mergeStates). Each write is ONE commit holding every changed part,
+   and GitHub only accepts it if nobody else wrote since this device last read ("fast-forward"); otherwise the app
+   reads the other device's changes, merges, and writes again. The token lives only in this browser (never synced,
+   never in a code). settings/keys.json carries the other-AI keys so each device needs only the token. */
+const GH_KEY = "zwlgf:gh", GH_DEF_REPO = "rj1551/zhongwen-data";
+function ghCfg() { try { return JSON.parse(localStorage.getItem(GH_KEY) || "null"); } catch (e) { return null; } }
+function ghSetCfg(c) { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch (e) {} }
+function ghPatchCfg(f) { const c = ghCfg(); if (c) { f(c); ghSetCfg(c); } }
+const GH = {
+  err: null, lastOk: 0, busy: 0, manual: false, connecting: false, editing: false, formErr: "", confirmOff: false,
+  fatal() { return !!(this.err && (this.err.code === "auth" || this.err.code === "noaccess")); },
+  synced() { this.lastOk = now(); this.err = null; ghPatchCfg(c => c.lastOk = this.lastOk); ghDraw(); }
+};
+const ghDevice = () => { const u = navigator.userAgent; return /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Android/.test(u) ? "Android" : /Macintosh/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows" : "device"; };
+const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(String(s).replace(/\s/g, "")), c => c.charCodeAt(0)));
+const b64enc = s => { const b = new TextEncoder().encode(s); let t = ""; for (let i = 0; i < b.length; i += 0x8000) t += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(t); };
+async function ghApi(cfg, path, method, body) {
+  let r;
+  try {
+    r = await fetch("https://api.github.com/repos/" + cfg.repo + path, {
+      method: method || "GET", cache: "no-store",
+      headers: Object.assign({ Authorization: "Bearer " + cfg.token, Accept: "application/vnd.github+json" }, body ? { "Content-Type": "application/json" } : {}),
+      body: body ? JSON.stringify(body) : undefined });
+  } catch (e) { throw { code: "network", message: "连不上 GitHub · Can't reach GitHub" }; }
+  if (r.ok) return r.status === 204 ? null : r.json();
+  let m = ""; try { m = String((await r.json()).message || ""); } catch (e) {}
+  if (r.status === 401) throw { code: "auth", message: "GitHub 不接受这个钥匙（可能过期了）· GitHub refused the token (expired or revoked?). Paste a new one in Progress → 同步 Sync." };
+  if ((r.status === 403 || r.status === 429) && /rate limit|secondary/i.test(m)) throw { code: "rate", message: "GitHub 说请求太多 · GitHub says too many requests; trying again later" };
+  if (r.status === 403 || r.status === 404) throw { code: "noaccess", message: `这个钥匙打不开 ${cfg.repo}，或者不能写 · The token can't open ${cfg.repo}, or can't write to it. It needs access to that repo with Contents: Read and write.` };
+  if (r.status === 409 && /empty/i.test(m)) throw { code: "empty" };
+  if (r.status === 422 && method === "PATCH") throw { code: "conflict" };
+  throw { code: "http", message: "GitHub 出错 · GitHub error " + r.status + (m ? ": " + m : "") };
+}
+// ---- other-AI keys (settings/keys.json). Rule: if this device didn't change its keys since the last sync, take the
+// repo's; if it did, the repo's keys fill in only services this device has none for, and the result is uploaded.
+function keysOf(p) {
+  const keys = {}, models = {};
+  for (const k in p.keys || {}) if (p.keys[k]) keys[k] = p.keys[k];
+  for (const k in p.models || {}) if (p.models[k]) models[k] = p.models[k];
+  if (p.key) keys[p.base] = p.key; if (p.model) models[p.base] = p.model;
+  return { base: p.base, keys, models, use: !!p.use };
+}
+function ghKeysPlan(file, cfg) {
+  const local = keysOf(provGet()), lfp = stable(local), hasKey = !!Object.keys(local.keys).length;
+  const remote = file && file.prov;
+  if (!remote) return { take: null, send: hasKey ? local : null, fp: lfp };
+  const rfp = stable(remote);
+  if (rfp === lfp) return { take: null, send: null, fp: lfp };
+  const changed = cfg.keysFp === undefined ? hasKey : lfp !== cfg.keysFp;
+  if (!changed) return { take: remote, send: null, fp: rfp };
+  const m = { base: local.base || remote.base, keys: Object.assign({}, remote.keys, local.keys), models: Object.assign({}, remote.models, local.models), use: local.use };
+  const mfp = stable(m);
+  return { take: mfp !== lfp ? m : null, send: mfp !== rfp ? m : null, fp: mfp };
+}
+function ghKeysApply(m) {
+  const p = provGet();
+  p.keys = Object.assign({}, m.keys); p.models = Object.assign({}, m.models); p.base = m.base || p.base;
+  p.key = p.keys[p.base] || ""; p.model = p.models[p.base] || ""; p.use = !!m.use;
+  try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {}
+  if (typeof PROV_UI !== "undefined") PROV_UI.models = null;
+  const pc = $("#provcard"); if (pc) { pc.innerHTML = provCard(); bindProv(); }
+}
+// called whenever the other-AI settings are saved: if the keys part changed, write it to the repo soon
+function ghKeysTouched() {
+  const c = ghCfg(); if (!c || !COL || !COL.gh || !PULLED) return;
+  if (stable(keysOf(provGet())) === c.keysFp) return;
+  remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 3000);
+}
+function ghCollection(cfg) {
+  const st = { head: null, headTree: null, tree: {}, cache: {} }; // tree: path → blob sha; cache: blob sha → parsed file
+  const KEYS = "settings/keys.json";
+  const keysFile = () => st.tree[KEYS] ? st.cache[st.tree[KEYS]] : null;
+  const track = async f => { GH.busy++; ghDraw(); try { const v = await f(); return v; } catch (e) { if (e.code !== "conflict") { GH.err = e; } throw e; } finally { GH.busy--; ghDraw(); } };
+  return {
+    gh: true, cfg,
+    extraDirty() { return !!ghKeysPlan(keysFile(), ghCfg() || cfg).send; },
+    get: () => track(async () => {
+      let head = null;
+      try { head = (await ghApi(cfg, "/git/ref/heads/" + cfg.branch)).object.sha; } catch (e) { if (e.code !== "empty") throw e; }
+      if (head !== st.head || !head) {
+        const tree = {}; let headTree = null;
+        if (head) {
+          headTree = (await ghApi(cfg, "/git/commits/" + head)).tree.sha;
+          const t = await ghApi(cfg, "/git/trees/" + headTree + "?recursive=1");
+          for (const e of t.tree || []) if (e.type === "blob" && (/^progress\/[\w-]+\.json$/.test(e.path) || e.path === KEYS)) tree[e.path] = e.sha;
+        }
+        const need = [...new Set(Object.values(tree))].filter(s => !(s in st.cache));
+        for (let i = 0; i < need.length; i += 6) await Promise.all(need.slice(i, i + 6).map(async sha => {
+          const j = await ghApi(cfg, "/git/blobs/" + sha);
+          try { st.cache[sha] = JSON.parse(b64dec(j.content)); } catch (e) { st.cache[sha] = null; } // an unreadable file is skipped, never overwritten blindly
+        }));
+        const live = new Set(Object.values(tree)); for (const s in st.cache) if (!live.has(s)) delete st.cache[s];
+        st.head = head; st.headTree = headTree; st.tree = tree;
+      }
+      // keys: take the repo's when this device didn't change its own
+      const c = ghCfg() || cfg, plan = ghKeysPlan(keysFile(), c);
+      if (plan.take) ghKeysApply(plan.take);
+      if (!plan.send) ghPatchCfg(x => x.keysFp = plan.fp);
+      GH.err = null;
+      const docs = Object.keys(st.tree).filter(p => p.startsWith("progress/") && st.cache[st.tree[p]]).map(p => { const v = st.cache[st.tree[p]]; return { id: p.slice(9, -5), exists: true, data: () => v }; });
+      return { docs };
+    }),
+    setMany: changed => track(async () => {
+      const files = Object.keys(changed).map(id => ({ path: "progress/" + id + ".json", content: changed[id] })); // stable JSON (sorted keys)
+      const plan = ghKeysPlan(keysFile(), ghCfg() || cfg);
+      if (plan.take) ghKeysApply(plan.take);
+      if (plan.send) files.push({ path: KEYS, content: JSON.stringify({ v: 1, t: now(), from: ghDevice(), note: "Keys for the other AI (Groq/Gemini…). Written by the app. Scheduled Claude runs must never read this file.", prov: plan.send }, null, 1) });
+      if (!files.length) return;
+      if (!st.head) { // brand-new empty repo: Git's data API needs a first commit to build on
+        await ghApi(cfg, "/contents/README.md", "PUT", { message: "start", content: b64enc("# zhongwen-data\n\nPrivate progress for 中文练功房.\n") });
+        throw { code: "conflict" }; // read again (no longer empty), then write
+      }
+      const tree = await ghApi(cfg, "/git/trees", "POST", { base_tree: st.headTree, tree: files.map(f => ({ path: f.path, mode: "100644", type: "blob", content: f.content })) });
+      const parts = files.filter(f => f.path !== KEYS).length;
+      const commit = await ghApi(cfg, "/git/commits", "POST", { message: `sync · ${ghDevice()} · ${parts} part${parts === 1 ? "" : "s"}${plan.send ? " + keys" : ""}`, tree: tree.sha, parents: [st.head] });
+      await ghApi(cfg, "/git/refs/heads/" + cfg.branch, "PATCH", { sha: commit.sha, force: false }); // refused (422) if another device wrote first
+      const shas = {}; for (const e of tree.tree || []) shas[e.path] = e.sha;
+      for (const f of files) { const s = shas[f.path]; if (s) { st.tree[f.path] = s; st.cache[s] = JSON.parse(f.content); } else delete st.tree[f.path]; }
+      st.head = commit.sha; st.headTree = tree.sha;
+      if (plan.send) ghPatchCfg(x => x.keysFp = stable(plan.send));
+      GH.err = null;
+    })
+  };
+}
+function ghStart(cfg) {
+  COL = ghCollection(cfg); PULLED = false; REMOTE = {}; GH.err = null; GH.lastOk = cfg.lastOk || 0;
+  syncNote = "进度通过你的 GitHub 自动同步（手机和电脑通用）· Progress syncs automatically through your GitHub";
+  return pullRemote();
+}
+async function ghConnect(token, repo) {
+  repo = String(repo || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/, "").replace(/\/+$/, "");
+  token = String(token || "").trim();
+  if (!token) { GH.formErr = "先贴钥匙 · Paste the token first"; return ghDraw(); }
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { GH.formErr = "repo 要写成 owner/name · Write the repo as owner/name"; return ghDraw(); }
+  const old = ghCfg() || {}, cfg = { token, repo, keysFp: old.repo === repo ? old.keysFp : undefined };
+  GH.connecting = true; GH.formErr = ""; ghDraw();
+  try {
+    const info = await ghApi(cfg, "");
+    if (info.private === false) throw { message: `${repo} 是公开的。进度和钥匙只能放在私有 repo 里 · ${repo} is public. Progress and keys must go in a private repo.` };
+    cfg.branch = info.default_branch || "main";
+    ghSetCfg(cfg); GH.editing = false; GH.connecting = false;
+    await ghStart(cfg); await SYNCQ;
+    if (VIEW === "me") render();
+    toast(GH.err ? GH.err.message : "已连接并同步 · Connected and synced", GH.err ? 8000 : 3000);
+  } catch (e) { GH.connecting = false; GH.formErr = e.message || String(e); ghDraw(); }
+}
+function ghDisconnect() {
+  ghSetCfg(null); COL = null; PULLED = false; REMOTE = {}; GH.err = null; GH.lastOk = 0; GH.confirmOff = false; GH.editing = false;
+  syncNote = "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
+  render();
+}
+async function ghSyncNow() {
+  if (!COL || !COL.gh || GH.manual) return;
+  GH.manual = true; ghDraw();
+  try { await pullRemote(); await SYNCQ; } finally { GH.manual = false; ghDraw(); }
+  toast(GH.err ? GH.err.message : "已同步 · Synced", GH.err ? 8000 : 2500);
+}
+function ghAgo(t) {
+  const m = Math.floor((now() - t) / 60000);
+  return m < 1 ? "刚刚 just now" : m < 60 ? `${m} 分钟前 ${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} 小时前 ${Math.floor(m / 60)} h ago` : ago(t);
+}
+function ghCard() {
+  const c = ghCfg(), u = GH;
+  if (!c || u.editing) return `<span class="label">同步 · Sync (GitHub)</span>
+    <p class="small muted">手机和电脑自动同步：进度存在你的私有 GitHub repo 里。每台设备贴一次钥匙（token）就行；钥匙只存在这台设备上。其他 AI 的钥匙会跟着同步。<br>Automatic phone ↔ computer sync through your private GitHub repo. Paste the token once on each device; it stays on that device (never synced, never in a code). Your other-AI keys come along automatically.</p>
+    <input class="inp" id="ghtok" type="password" placeholder="GitHub token (github_pat_…)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input class="inp" id="ghrepo" placeholder="owner/repo" value="${esc((c && c.repo) || GH_DEF_REPO)}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="row" style="gap:8px"><button class="btn" id="ghgo" ${u.connecting ? "disabled" : ""}>${u.connecting ? '<span class="spin"></span> 连接中 Connecting…' : "连接 Connect"}</button>${c ? `<button class="btn ghost" id="ghcancel">取消 Cancel</button>` : ""}</div>
+    ${u.formErr ? `<span class="small" style="color:var(--bad)">${esc(u.formErr)}</span>` : ""}`;
+  const busy = u.busy > 0 || u.manual;
+  let line;
+  if (busy) line = `<span class="spin"></span> 正在同步… Syncing…`;
+  else if (u.err && (u.err.code === "network" || u.err.code === "rate" || u.err.code === "http")) line = ONLINE ? `${esc(u.err.message)}。稍后自动再试 · Will try again automatically.` : `离线中：联网后自动同步 · Offline: syncs by itself when you're back online.`;
+  else if (u.err) line = `<b style="color:var(--bad)">同步停了 · Sync stopped:</b> ${esc(u.err.message || "")}`;
+  else if (u.lastOk) line = `✓ 已同步 · Synced ${ghAgo(u.lastOk)}`;
+  else line = ONLINE ? `<span class="spin"></span> 正在连接… Connecting…` : `离线中：联网后自动同步 · Offline: syncs by itself when you're back online.`;
+  return `<span class="label">同步 · Sync (GitHub)</span>
+    <p class="small">${line}</p>
+    <p class="small muted">${esc(c.repo)} · 答完题约 15 秒后自动保存，离开 app 时马上保存。<br>Saves about 15 s after your last answer, and right away when you leave the app.</p>
+    ${PULLED ? `<div id="syncinfo">${syncInfo()}</div>` : ""}
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn soft" id="ghnow" ${busy ? "disabled" : ""}>立即同步 Sync now</button><button class="btn ghost" id="ghtoken">换钥匙 New token</button><button class="btn ghost" id="ghoff">${u.confirmOff ? "确定断开？Tap again" : "断开 Disconnect"}</button></div>
+    ${u.confirmOff ? `<p class="small muted">断开只影响这台设备：进度留在这里，也留在 GitHub。之后要再贴一次钥匙。<br>Only this device stops syncing. Progress stays here and in the repo; you'd paste the token again to reconnect.</p>` : ""}`;
+}
+function bindGh() {
+  const go = $("#ghgo"); if (go) go.onclick = () => ghConnect($("#ghtok").value, $("#ghrepo").value);
+  const tok = $("#ghtok"); if (tok) tok.onkeydown = e => { if (e.key === "Enter") ghConnect(tok.value, $("#ghrepo").value); };
+  const cn = $("#ghcancel"); if (cn) cn.onclick = () => { GH.editing = false; GH.formErr = ""; ghDraw(); };
+  const nw = $("#ghnow"); if (nw) nw.onclick = ghSyncNow;
+  const tk = $("#ghtoken"); if (tk) tk.onclick = () => { GH.editing = true; GH.formErr = ""; ghDraw(); };
+  const off = $("#ghoff"); if (off) off.onclick = () => { if (GH.confirmOff) ghDisconnect(); else { GH.confirmOff = true; ghDraw(); } };
+}
+let GH_FATAL_SHOWN = false;
+function ghDraw() {
+  const c = document.getElementById("ghcard"); if (c) { c.innerHTML = ghCard(); bindGh(); }
+  const f = GH.fatal() && !!ghCfg();
+  if (f !== GH_FATAL_SHOWN) { GH_FATAL_SHOWN = f; if (VIEW === "home") render(); }
+}
+function ghHomeCard() {
+  if (HOSTED || !GH.fatal() || !ghCfg()) return "";
+  return `<div class="card stack" style="border-color:var(--bad)"><span class="label">同步停了 · Sync stopped</span>
+    <p class="small">${esc(GH.err.message || "")}<br>练习照常，进度先存在这台设备上 · Practice works as usual; progress is kept on this device until sync works again.</p>
+    <button class="btn" id="gh-fix">去同步设置 Open sync settings</button></div>`;
+}
+// putting the app away: write now instead of waiting the 15 s (the phone may suspend the page soon)
+const ghFlush = () => { if (COL && COL.gh && PULLED && ONLINE && (remoteDirty || COL.extraDirty())) { clearTimeout(remoteTimer); remoteDirty = true; pushRemote(); } };
+document.addEventListener("visibilitychange", () => { if (document.hidden) ghFlush(); });
+addEventListener("pagehide", ghFlush);
 
 /* ============ merge two saved states (sync + import never lose work) ============ */
 function mergeStates(a, b) {
@@ -1014,7 +1247,7 @@ function renderHome(main) {
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
   ${syncWarn()}
-  ${provGoneCard()}${gradedCard()}
+  ${ghHomeCard()}${provGoneCard()}${gradedCard()}
   ${offwCard()}
   ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
   ${backupNudge()}
@@ -1039,6 +1272,7 @@ function renderHome(main) {
   const oo = $("#offw-ok", main); if (oo) oo.onclick = () => { S.offwSummary = null; save(); render(); };
   const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
   const bk = $("#backup-go", main); if (bk) bk.onclick = () => setView("me");
+  const gf = $("#gh-fix", main); if (gf) gf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#ghcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const pf = $("#prov-fix", main); if (pf) pf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
   const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
@@ -1066,6 +1300,7 @@ function syncWarn() {
 }
 function backupNudge() {
   if (HOSTED) return "";
+  if (COL && COL.gh && GH.lastOk && now() - GH.lastOk < 4 * DAY) return ""; // GitHub holds a copy already
   const practicedSince = (S.updatedAt || 0) > (S.lastExport || 0) + MIN;
   if (!practicedSince || now() - (S.lastExport || 0) < 4 * DAY || !Object.keys(S.items).length) return "";
   return `<div class="card"><span class="label">备份 · Backup</span><p class="small">This offline copy only keeps progress on this device. Last copied out: <b>${ago(S.lastExport)}</b>. Copy a code (and merge it into the online version when you can).</p>
@@ -2998,12 +3233,12 @@ async function listenQuestions(it) {
 
 
 /* ============ other AI providers (test, offline copy only; 2026-11-02) ============
-   Any OpenAI-compatible chat API (Groq, OpenRouter, Gemini's compatible endpoint…). The key stays in this
-   browser's localStorage: it is never synced, never put in a progress code. For now this only runs a side-by-side
+   Any OpenAI-compatible chat API (Groq, OpenRouter, Gemini's compatible endpoint…). The key is in this browser's
+   localStorage, never in a progress code; with GitHub sync on it also goes to settings/keys.json in the private repo. For now this only runs a side-by-side
    test against answers Claude already graded; nothing in practice uses it yet. */
 const PROV_KEY = "zwlgf:prov";
 function provGet() { try { return Object.assign({ base: "https://api.groq.com/openai/v1", key: "", model: "" }, JSON.parse(localStorage.getItem(PROV_KEY) || "{}")); } catch (e) { return { base: "https://api.groq.com/openai/v1", key: "", model: "" }; } }
-function provSet(p) { try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {} }
+function provSet(p) { try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {} if (!HOSTED) ghKeysTouched(); }
 const PROV_PRESETS = [["Groq", "https://api.groq.com/openai/v1"], ["Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"], ["OpenRouter", "https://openrouter.ai/api/v1"]];
 function provSwitch(base) {
   const p = provGet(); p.keys = p.keys || {}; p.models = p.models || {};
@@ -3074,7 +3309,7 @@ function provCard() {
   return `<span class="label">其他 AI · Another AI</span>
     <label class="row" style="gap:8px;align-items:center;flex-wrap:nowrap"><input type="checkbox" id="pvuse" ${p.use ? "checked" : ""} ${ready ? "" : "disabled"} style="width:22px;height:22px;flex:none">
       <span class="small" style="flex:1;min-width:0"><b>练习时用它批改</b> · Grade practice answers with ${ready ? esc(provName(p.model)) : "it"} when online${ready ? "" : " (load models first)"}</span></label>
-    <p class="small muted">${(S.ovr || []).length ? `你改判过 ${S.ovr.length} 次 · You've overridden ${S.ovr.length} grade${S.ovr.length > 1 ? "s" : ""}. ` : ""}比较测试：它给 ${PROV_TEST.length} 个已经由 Claude 批改过的句子打分，和 Claude 的分数并排比较。钥匙只存在这个浏览器里。<br>Comparison test: it grades ${PROV_TEST.length} answers Claude already graded, side by side. The key stays in this browser (never synced or put in a code).</p>
+    <p class="small muted">${(S.ovr || []).length ? `你改判过 ${S.ovr.length} 次 · You've overridden ${S.ovr.length} grade${S.ovr.length > 1 ? "s" : ""}. ` : ""}比较测试：它给 ${PROV_TEST.length} 个已经由 Claude 批改过的句子打分，和 Claude 的分数并排比较。钥匙存在这台设备上；开了 GitHub 同步的话，也存在你的私有 repo 里，别的设备自动拿到。<br>Comparison test: it grades ${PROV_TEST.length} answers Claude already graded, side by side. The key stays on this device and, with GitHub sync on, in your private repo so your other devices get it (never in a code).</p>
     <div class="row" style="gap:6px">${PROV_PRESETS.map(([n, b]) => `<button class="tagc ${p.base.replace(/\/+$/, "") === b ? "on" : ""}" data-pv="${esc(b)}">${n}</button>`).join("")}</div>
     <input class="inp" id="pvbase" placeholder="API 地址 Address" value="${esc(p.base)}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="pvkey" type="password" placeholder="API key" value="${esc(p.key)}" autocapitalize="off" autocorrect="off" spellcheck="false">
@@ -3261,6 +3496,7 @@ function renderMe(main) {
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
   ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><div id="syncinfo">${syncInfo()}</div></div>` : ""}
+  ${HOSTED ? "" : `<div class="card" id="ghcard">${ghCard()}</div>`}
   ${HOSTED ? "" : `<div class="card" id="provcard">${provCard()}</div>`}
   ${stockCard()}
   ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
@@ -3272,7 +3508,7 @@ function renderMe(main) {
     ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
     <p class="small muted"><b>iPhone / iPad:</b> add this page to your home screen and always open it from there. Paste codes inside the home-screen app, not a Safari tab: the two keep separate data, and Safari tabs lose their data after 7 days unused.</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
-  bindBank(); if ($("#provcard")) bindProv();
+  bindBank(); if ($("#provcard")) bindProv(); if ($("#ghcard")) bindGh();
   $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
