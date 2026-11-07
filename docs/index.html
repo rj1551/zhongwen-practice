@@ -621,7 +621,7 @@ async function ghSyncNow() {
   if (!COL || !COL.gh || GH.manual) return;
   GH.manual = true; ghDraw();
   try { await pullRemote(); await SYNCQ; } finally { GH.manual = false; ghDraw(); }
-  toast(GH.err ? GH.err.message : "已同步 · Synced", GH.err ? 8000 : 2500);
+  if (GH.err) toast(GH.err.message, 8000); else if (!$$(".toast").length) toast("已同步 · Synced", 2500); // don't cover a "new material" toast
 }
 function ghAgo(t) {
   const m = Math.floor((now() - t) / 60000);
@@ -677,7 +677,7 @@ function changedDocs() {
 }
 // a few seconds after each answer: build the next commit ahead of time (1.5 s later) (see prepare/flush in ghCollection)
 let ghPrepTimer = null;
-function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
+function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (OUTBOX && COL && COL.gh && stable(outboxRequests()) !== stable(OUTBOX.requests)) { try { computeOutbox(); } catch (e) {} } if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
 // putting the app away: write now instead of waiting the 15 s. If the commit is ready, one keepalive request finishes
 // the job even if the tab is closed or the app killed; otherwise the normal write starts (and may be cut off).
 const ghFlush = () => {
@@ -723,6 +723,8 @@ function mergeStates(a, b) {
   // listening history: union of sessions from both sides
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
   m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
+  m.reqDone = [...new Set([...(m.reqDone || []), ...(o.reqDone || [])])].slice(-500);
+  { const rd = new Set(m.reqDone); m.req = byId(m.req || [], o.req || [], "rid").filter(x => !rd.has(x.rid)); }
   m.packLog = byId(m.packLog || [], o.packLog || [], "id").sort((p, q) => q.t - p.t).slice(0, 20);
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
@@ -1313,7 +1315,8 @@ function candidates(cat, done = doneToday()) {
   if (cat === "lad") {
     for (const [id] of LADDER) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "lad", id, r: startRung() }); else if (it.due <= t) due.push({ t: "lad", id, r: drillRung(it), due: it.due, k0: dueKey(it) }); }
   } else if (cat === "sen") {
-    for (const [id] of SEN) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "sen", id }); else if (it.due <= t) (it.b >= 5 ? reuse : due).push(it.b >= 5 ? { t: "sen", id, re: it.due } : { t: "sen", id, due: it.due }); }
+    const held = heldSentences();
+    for (const [id] of SEN) { if (done(id)) continue; const it = S.items[id]; if (!it) { if (!held.has(id)) fresh.push({ t: "sen", id }); } else if (it.due <= t) (it.b >= 5 ? reuse : due).push(it.b >= 5 ? { t: "sen", id, re: it.due } : { t: "sen", id, due: it.due }); }
     reuse.sort((a, b) => a.re - b.re);
   } else if (cat === "seg") {
     for (const [id] of SEG) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "seg", id }); else if (it.due <= t) due.push({ t: "seg", id, due: it.due }); }
@@ -1366,6 +1369,7 @@ function renderHome(main) {
   ${ghHomeCard()}${provGoneCard()}${gradedCard()}
   ${offwCard()}
   ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
+  ${reqWaitCard()}
   ${backupNudge()}
   <div class="card"><div class="spread"><h2>练习 · Practice</h2></div>
     <button class="btn wide start" id="start">开始 Start</button>
@@ -1398,9 +1402,11 @@ function gradedCard() {
   const waiting = (S.pending || []).length;
   if (!g.length && !waiting) return "";
   const lab = sc => sc >= 3 ? "对了 ✓" : sc === 2 ? "意思对，可以更地道" : "还不对";
-  return `<div class="card"><span class="label">离线答案的批改 · Feedback on answers you wrote offline</span>
+  const byC = g.some(x => x.by === "Claude");
+  return `<div class="card"><span class="label">${byC ? "Claude 的批改 · Claude's regrades" : "离线答案的批改 · Feedback on answers you wrote offline"}</span>
     ${waiting ? `<p class="small muted">${waiting} 条等待批改 waiting for ${esc(graderName())}${ONLINE ? "" : " (offline)"}</p>` : ""}
     ${g.map(x => `<div class="fb ${x.score >= 3 ? "ok" : x.score === 2 ? "mid" : "no"}"><span class="small muted">${esc(x.en)}</span>
+      ${x.by === "Claude" && x.wasBy ? `<span class="small">${esc(x.wasBy)}: <b>${x.was}</b> → Claude: <b>${x.score}</b> · ${x.was === x.score ? "Claude 同意 · Claude agrees" : `Claude 不同意，按 Claude 的算 · Claude disagrees; the schedule follows Claude`}</span>` : ""}
       <span class="verdict">${lab(x.score)}${x.self != null && (x.self >= 2) !== (x.score >= 2) ? ` <span class="small">(你自评 ${x.self >= 2 ? "对" : "不对"}; level adjusted)</span>` : ""}</span>
       <span>你的：<span class="zh">${esc(x.raw)}</span></span>
       ${x.fixed && norm(x.fixed) !== norm(x.raw) ? `<span>改一改：<span class="zh">${esc(x.fixed)}</span></span>` : ""}
@@ -1873,11 +1879,23 @@ function addOverride(fbEl, item, raw, sc, name) {
   const box = document.createElement("div"); box.className = "row"; box.style.cssText = "gap:6px;margin-top:6px;align-items:center";
   box.innerHTML = `<span class="small muted" id="ovl">不同意？改判 · Disagree with ${esc(name)}?</span>` + [[3, "对了"], [2, "意思对"], [0, "不对"]].map(([v, l]) => `<button class="tagc" data-ov="${v}">${l}</button>`).join("");
   ($(".fb", fbEl) || fbEl).append(box);
+  if (!HOSTED && name !== "Claude") box.append(askClaudeButton(item.id, raw, name, sc));
   $$("[data-ov]", box).forEach(b => b.onclick = () => {
     const v = +b.dataset.ov; if (!overrideLast(item.id, v, { raw, by: name, was: sc })) return;
     $$("[data-ov]", box).forEach(x => x.classList.toggle("on", x === b));
     $("#ovl", box).textContent = v === sc ? "保持原判 · Kept the grade" : `已改判为「${b.textContent}」· Changed; the schedule follows your grade`;
   });
+}
+// 问 Claude: the next daily run regrades this answer (the answer's time in the log identifies it)
+function askClaudeButton(id, raw, by, score, at, chunk) {
+  const it = S.items[id], e = it && it.h && it.h.length ? it.h[it.h.length - 1] : null;
+  at = at || (e ? e[0] : Math.round(now() / 1000));
+  const rid = "r:" + id + ":" + at, b = document.createElement("button");
+  b.className = "tagc"; b.dataset.ask = "1";
+  const sent = () => { b.textContent = "已问 Claude ✓ Asked"; b.disabled = true; b.title = "Claude answers on its next daily run"; };
+  if (reqWaiting(rid) || (S.reqDone || []).includes(rid)) sent(); else b.textContent = "问 Claude · Ask Claude";
+  b.onclick = () => { if (addReq({ rid, kind: "regrade", id, at, raw, by, score, chunk: chunk || (e && Array.isArray(e[2]) ? e[2][1] : null) })) { sent(); toast("问了 Claude，下次运行时回复 · Asked; Claude answers on its next daily run", 3500); } };
+  return b;
 }
 function overrideLast(id, v, info) {
   const it = S.items[id]; if (!it || !it.h || !it.h.length) return false;
@@ -2084,6 +2102,7 @@ function renderOfflineFb(k, el, done) {
       ${f.notes.length ? `<ul>${f.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
       <span class="small muted">参考：<span class="zh">${esc(p.model)}</span></span></div>
       <div class="row"><button class="btn ghost" id="again">再写一次 Write it again</button><button class="btn" id="ok">知道了 Next</button></div>`;
+    if (!HOSTED && f.by && f.by !== "Claude") { const row = document.createElement("div"); row.className = "row"; row.append(askClaudeButton(f.id, f.raw, f.by, f.score, Math.round(f.t / 1000))); $("#ofb", el).append(row); }
     $("#again", el).onclick = () => done({ t: "lad", id: f.id, r: Math.min(5, Math.max(4, (S.items[f.id] || {}).r || 4)) });
     $("#ok", el).onclick = () => done();
   };
@@ -2284,6 +2303,15 @@ function addFragment(item, optIdx) {
   return id;
 }
 function dropFragment(id) { delete S.items[id]; save(); }
+// 4c: new sentences that contain a structure you're reviewing are kept for that structure's reviews (fragSentence),
+// so you don't meet it several times in a few days as plain new sentences. Released once the structure's next
+// review is more than 60 days away (it's learned) or it's dropped.
+function heldSentences() {
+  const t = now(), frags = Object.values(S.items).filter(it => it.t === "frag" && it.p && (it.due || 0) < t + 60 * DAY), out = new Set();
+  if (!frags.length) return out;
+  for (const [id, x] of SEN) if (!S.items[id] && frags.some(f => x.id !== f.src && senHas(x, f.p))) out.add(id);
+  return out;
+}
 function fragSentence(it) {
   const t = now(), list = [...SEN.values()].filter(x => x.id !== it.src && senHas(x, it.p));
   const fresh = list.filter(x => !S.items[x.id]);
@@ -2876,7 +2904,7 @@ function renderMineAdd(main) {
       <input class="inp" id="mtitle" placeholder="标题 Title (optional)">
       ${tagInput("mtags", "")}
       <button class="btn" id="msave">保存 Save</button><div id="merr"></div>
-      <p class="small muted">Long texts are read in parts of about ${MINE_PART} characters, up to ${MINE_PARTS} parts per text; anything longer becomes further texts. ${AI ? "You can add comprehension questions afterwards (加问题)." : "Comprehension questions can be added in the online version."}</p></div>`;
+      <p class="small muted">Long texts are read in parts of about ${MINE_PART} characters, up to ${MINE_PARTS} parts per text; anything longer becomes further texts. ${AI ? "You can add comprehension questions afterwards (加问题)." : HOSTED ? "Comprehension questions can be added in the online version." : "Afterwards you can ask Claude for comprehension questions (请 Claude 出题); they come with its next daily run."}</p></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
   const t = $("#mtext");
@@ -2904,7 +2932,7 @@ function renderMineText(main) {
       <button class="btn" id="go">${next ? (S.reads[g[0].id] ? `继续读 Continue: 第${next.part + 1}部分` : g.length > 1 ? "开始读 Start: 第1部分" : "开始读 Start") : "全部读过 ✓ Read again from part 1"}</button>
       ${g.length > 1 ? `<div class="stack" style="gap:6px">${g.map(p => { const r = S.reads[p.id]; return `<button class="pitem ${r ? "done" : ""}" data-part="${esc(p.id)}" style="padding:10px 14px"><div class="row"><b>第${p.part + 1}部分</b><span class="small muted">${charCount(p.paras.join("").replace(/[|\/]/g, ""))} 字${r ? ` · ✓ ${r.cpm} 字/分` : ""}${p.qs && p.qs.length ? " · 有问题" : ""}</span></div><span class="small muted zh">${esc(p.paras.join("").replace(/[|\/]/g, "").slice(0, 24))}…</span></button>`; }).join("")}</div>` : ""}
       ${AI ? `<div class="stack" style="gap:6px"><button class="btn soft" id="addq" ${MINE_Q || !needQ.length ? "disabled" : ""}>${needQ.length ? `加问题和注释 Add questions & notes (${needQ.length} part${needQ.length > 1 ? "s" : ""} = ${needQ.length} Claude request${needQ.length > 1 ? "s" : ""})` : "问题和注释都有了 ✓ Questions added"}</button><div id="qst" class="small muted">${MINE_Q && MINE_Q.grp === p0.grp ? `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…` : ""}</div>
-        <p class="small muted">Claude writes 3 comprehension questions, a translation, and the right reading of words used in an unusual way. Without it the text still works: tap words for the dictionary.</p></div>` : ""}
+        <p class="small muted">Claude writes 3 comprehension questions, a translation, and the right reading of words used in an unusual way. Without it the text still works: tap words for the dictionary.</p></div>` : !HOSTED && needQ.length ? (needQ.every(p => reqWaiting("q:mine:" + p.id)) ? `<p class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude for questions; they arrive with its next daily run.</p>` : `<div class="stack" style="gap:6px"><button class="btn soft" id="askq">请 Claude 出题 · Ask Claude for questions (${needQ.length} part${needQ.length > 1 ? "s" : ""})</button><p class="small muted">Claude's next daily run writes 3 questions, a translation and readings in context for each part. The text works meanwhile.</p></div>`) : ""}
       <button class="btn ghost" id="del">删除这篇 Delete this text</button></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
@@ -2913,6 +2941,7 @@ function renderMineText(main) {
   $("#go").onclick = () => next ? open(next) : open(g[0], true);
   $$("[data-part]", main).forEach(b => b.onclick = () => { const p = PSG.get(b.dataset.part); open(p, !!S.reads[p.id]); });
   const aq = $("#addq"); if (aq) aq.onclick = () => mineQuestions(g);
+  const ak = $("#askq"); if (ak) ak.onclick = () => { needQ.forEach(p => addReq({ rid: "q:mine:" + p.id, kind: "questions", target: "mine", id: p.id })); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
   $("#del").onclick = () => {
     const ids = new Set(g.map(p => p.id)), saved = g.slice();
     S.gen.mine = S.gen.mine.filter(p => !ids.has(p.id)); ids.forEach(id => PSG.delete(id)); save();
@@ -3250,7 +3279,7 @@ function renderListenItem(main, it) {
         <div class="cues" id="lcues" ${LST.mode === "hide" ? "hidden" : ""}>${it.cues.map((c, i) => `<button class="cue" data-ci="${i}">${esc(c[1])}</button>`).join("")}</div>` : ""}
       <button class="btn wide" id="ldone">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
     <div class="card stack"><span class="label">这一条 · This item</span>
-      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>`) : ""}
+      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : HOSTED ? `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>` : reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : `<button class="btn soft" id="lqask">请 Claude 出题 · Ask Claude for questions</button>${(it.cues || []).map(c => c[1]).join("\n").length > 6000 ? `<span class="small muted">文字很长：问题只会问前面大约 6,000 字（大约前 25 分钟）· Long transcript: questions cover only the first ~6,000 characters (roughly the first 25 minutes).</span>` : ""}`) : ""}
       ${LST.edit ? `<div class="stack" style="gap:8px">${trEditorHtml(LST.edit)}<div id="lerr" class="small" style="color:var(--bad)"></div>
           <div class="row"><button class="btn" id="ltrsave">保存文字 Save transcript</button><button class="btn ghost" id="ltrcancel">取消 Cancel</button></div>
           ${hasTr ? `<span class="small muted">换文字会删掉根据旧文字出的问题 · Replacing it removes questions made from the old transcript.</span>` : ""}</div>`
@@ -3271,6 +3300,7 @@ function renderListenItem(main, it) {
     Object.assign(LST, { review: true, quiz: !!(it.qs && it.qs.length), qi: 0, score: 0, looked: new Set() }); render(); window.scrollTo(0, 0);
   };
   const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
+  const lqa = $("#lqask", main); if (lqa) lqa.onclick = () => { addReq({ rid: "q:listen:" + it.id, kind: "questions", target: "listen", id: it.id }); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
   const te = $("#ltredit", main); if (te) te.onclick = () => { LST.edit = { title: it.title, tr: "", dur: it.dur || (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : null) }; renderListenItem(main, it); };
   if (LST.edit) {
     const f = LST.edit, keep = () => { f.tr = $("#ltr", main).value; };
@@ -3944,6 +3974,7 @@ const STOCKERS = [
   { key: "sen", name: "短句", cap: "sen", run: () => genSen(true) },
 ];
 const PSG_KINDS = ["xhs", "news", "travel", "book"];
+const PSG_GENRES = [["xhs", "小红书"], ["news", "新闻"], ["book", "书面"], ["travel", "对话"]];
 // minutes/day × days, or trip dates (from/to, "YYYY-MM-DD"): with both dates set they decide the number of days
 // average minutes on the days you practised in the last 2 weeks (never below 15; 30 if there's no history yet)
 function autoMins() {
@@ -3997,7 +4028,7 @@ function forecast(days, mins) {
       covered = d;
     }
     const perDay = { lad: +(used0.lad / Math.max(1, simDays)).toFixed(1), sen: +(used0.sen / Math.max(1, simDays)).toFixed(1) };
-    return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days / 2), t: keepS.updatedAt, perDay };
+    return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days * readPerDay()), t: keepS.updatedAt, perDay };
   } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; BUDGET_MINS = null; }
 }
 let STOCK = null;
@@ -4081,6 +4112,82 @@ async function stockUp() {
    id made from the pack's id and its position, so the same pack applied on two devices can't make duplicates.
    Applied pack ids are kept in S.packsDone (synced), so a pack is never applied twice. Packs arrive from packs/*.json
    in the private repo on every sync, or pasted in Progress → 备货. */
+/* ---------- requests for Claude's daily run (step 4c, offline copy) ----------
+   S.req = [{ rid, kind, t, … }] (synced; union by rid); answered ones move to S.reqDone (so they never come back).
+   Kinds: "questions" (rid q:mine:<partId> / q:listen:<id>), "regrade" (r:<drill>:<answer time s>), "passage"
+   (p:<time>). Example sentences aren't stored as requests: every saved word without a sentence is asked for
+   (rid w:<word>), and a sentence arriving answers it. The note to Claude lists them; the run reads texts and
+   transcripts from the progress files by id, so the note stays small. */
+function addReq(r) {
+  if ((S.reqDone || []).includes(r.rid) || (S.req || []).some(x => x.rid === r.rid)) return false;
+  (S.req = S.req || []).push(Object.assign({ t: now() }, r)); save(); outboxSoon(true); return true;
+}
+function doneReq(rid) { S.req = (S.req || []).filter(x => x.rid !== rid); S.reqDone = (S.reqDone || []).concat([rid]).slice(-500); }
+const reqWaiting = rid => (S.req || []).some(x => x.rid === rid);
+function outboxRequests() {
+  const out = wordsNeedingSentence().sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 150).map(b => ({ rid: "w:" + b.zh, kind: "sentence", w: b.zh, py: b.py || "", gl: String(b.gl || "").slice(0, 120) }));
+  for (const q of S.req || []) {
+    if (q.kind === "regrade") { const it = LADDER.get(q.id); if (!it) continue; const lp = ladParts(it); out.push({ rid: q.rid, kind: "regrade", drill: q.id, en: it.en, ref: [lp.model, ...(it.alt || [])], key: lp.key, answer: q.raw, model: q.by, modelScore: q.score, modelChunk: q.chunk || null }); }
+    else if (q.kind === "questions") out.push({ rid: q.rid, kind: "questions", target: q.target, id: q.id });
+    else if (q.kind === "passage") out.push({ rid: q.rid, kind: "passage", genre: q.genre || null, topic: q.topic || "" });
+  }
+  return out;
+}
+// answers in a pack: sentences {word: "…" | {s, py, gl}}, questions [{rid, qs, gl, en, paras}], regrades [{rid, score, chunk, fixed, notes}]
+function applyAnswers(pk, r) {
+  const sents = pk.sentences && typeof pk.sentences === "object" && !Array.isArray(pk.sentences) ? pk.sentences : {};
+  for (const w in sents) {
+    const cur = S.bank[w], v = sents[w], x = typeof v === "string" ? { s: v } : v;
+    if (!cur || (cur.s && !cur.needS)) continue; // gone, or has a sentence already
+    if (!x || typeof x.s !== "string" || !x.s.includes(w)) { r.bad++; continue; }
+    cur.s = x.s; cur.needS = false; cur.sAI = true; r.ws++;
+    if (!cur.py && x.py) cur.py = String(x.py); if (!cur.gl && x.gl) cur.gl = String(x.gl);
+  }
+  for (const a of Array.isArray(pk.questions) ? pk.questions : []) {
+    const rid = String(a && a.rid || ""), m = rid.match(/^q:(mine|listen):(.+)$/); if (!m) { r.bad++; continue; }
+    const qs = toQs(a.qs); if (qs.length < 2) { r.bad++; continue; }
+    if (m[1] === "mine") {
+      const part = (S.gen.mine || []).find(x => x.id === m[2]); if (!part) { doneReq(rid); continue; }
+      const plain = part.paras.map(x => x.replace(/[|\/]/g, ""));
+      if (Array.isArray(a.paras) && a.paras.length === plain.length && a.paras.every((x, i) => String(x).replace(/[|\/\s]/g, "") === plain[i].replace(/\s/g, ""))) part.paras = a.paras.map(String);
+      part.qs = qs; if (a.gl && typeof a.gl === "object") part.gl = a.gl; if (a.en) part.en = String(a.en);
+    } else {
+      const it = (S.gen.listen || []).find(x => x.id === m[2]); if (!it) { doneReq(rid); continue; }
+      it.qs = qs; if (a.gl && typeof a.gl === "object") it.gl = a.gl;
+      if ((it.cues || []).map(c => c[1]).join("\n").length > 6000) it.qcut = true;
+    }
+    doneReq(rid); r.qs++;
+  }
+  for (const a of Array.isArray(pk.regrades) ? pk.regrades : []) {
+    const rid = String(a && a.rid || ""), q = (S.req || []).find(x => x.rid === rid);
+    if (!q) continue; // answered already (another device, or an earlier pack)
+    const score = Math.round(+a.score);
+    if (!(score >= 0 && score <= 3) || !LADDER.has(q.id)) { r.bad++; continue; }
+    const g = { score, chunk: ["ok", "wrong", "missing"].includes(a.chunk) ? a.chunk : "ok", fixed: String(a.fixed || ""), notes: (Array.isArray(a.notes) ? a.notes : []).slice(0, 3).map(String) };
+    // Claude's grade replaces whatever the answer has now (the model's, or your override): learner's choice, 2026-11-06
+    const it = S.items[q.id];
+    if (it && it.h) { let best = null; for (const e of it.h) if (Math.abs(e[0] - q.at) <= 5 && (!best || Math.abs(e[0] - q.at) < Math.abs(best[0] - q.at))) best = e; if (best) { best[4] = [g.score, g.chunk]; if (FSRS_KINDS.has(it.t)) fsrsReplay(it); } }
+    const item = LADDER.get(q.id);
+    (S.graded = S.graded || []).unshift({ k: rid, id: q.id, en: item.en, raw: q.raw, score: g.score, self: null, fixed: g.fixed, good: "", notes: g.notes, model: ladParts(item).model, t: now(), seen: false, by: "Claude", was: q.score, wasBy: q.by });
+    S.graded = S.graded.slice(0, 20);
+    // a problem the model missed → the usual spot-it-first card
+    if ((g.score < 3 || g.chunk !== "ok") && q.score >= 3) (S.offfb = S.offfb || []).unshift({ k: rid, id: q.id, raw: q.raw, score: g.score, self: null, by: "Claude", fixed: g.fixed, notes: g.notes, t: q.at * 1000, seen: false });
+    doneReq(rid); r.rg++;
+  }
+}
+// home card (offline copy): what's waiting for Claude's next daily run
+function reqWaitCard() {
+  if (HOSTED || !COL || !COL.gh) return "";
+  const ws = wordsNeedingSentence().length, rq = S.req || [];
+  const n = { questions: rq.filter(x => x.kind === "questions").length, regrade: rq.filter(x => x.kind === "regrade").length, passage: rq.filter(x => x.kind === "passage").length };
+  if (!ws && !n.questions && !n.regrade && !n.passage) return "";
+  const parts = [ws ? `${ws} 个生词等例句 · word${ws > 1 ? "s" : ""} waiting for an example sentence` : "", n.questions ? `${n.questions} 份等出题 · waiting for questions` : "", n.regrade ? `${n.regrade} 句等 Claude 看 · answer${n.regrade > 1 ? "s" : ""} for Claude to regrade` : "", n.passage ? `${n.passage} 篇短文 · passage${n.passage > 1 ? "s" : ""} requested` : ""].filter(Boolean);
+  return `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>
+    <p class="small">${parts.join("<br>")}</p>
+    <p class="small muted">Claude 每天的任务会处理（大约凌晨 3:40）；等不及可以在定时任务里点 Run now。<br>Claude's daily run handles these (about 3:40 am); Run now in your scheduled tasks if you can't wait. Words work as plain word cards meanwhile.</p></div>`;
+}
+const readPerDay = () => +(((S.settings || {}).reading || {}).perDay) || 0.5;
+const readGenres = () => { const g = ((S.settings || {}).reading || {}).genres; return Array.isArray(g) && g.length ? g : null; }; // null = auto
 function packIdOk(id) { return typeof id === "string" && /^[\w.-]{1,60}$/.test(id); }
 function parsePack(text) {
   let pk; try { pk = typeof text === "string" ? parseLooseJson(text) : text; } catch (e) { pk = null; }
@@ -4089,7 +4196,7 @@ function parsePack(text) {
 }
 function applyPack(pk, src) {
   if ((S.packsDone || []).includes(pk.id)) return { dup: true, lad: 0, sen: 0, psg: 0, bad: 0 };
-  const pre = "K" + pk.id.replace(/[^\w]/g, "") + "-", r = { lad: 0, sen: 0, psg: 0, bad: 0 };
+  const pre = "K" + pk.id.replace(/[^\w]/g, "") + "-", r = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0 };
   (Array.isArray(pk.ladder) ? pk.ladder : []).forEach((x, i) => {
     const id = pre + "L" + i; if (LADDER.has(id)) return;
     const it = makeLadder(x, id); if (!it) { r.bad++; return; }
@@ -4104,17 +4211,19 @@ function applyPack(pk, src) {
     const id = pre + "P" + i; if (PSG.has(id)) return;
     const it = makePassage(x, x && x.kind, id); if (!it) { r.bad++; return; }
     S.gen.passages.push(it); PSG.set(id, it); r.psg++;
+    if (x.rid) doneReq(String(x.rid));
   });
+  applyAnswers(pk, r);
   S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
-  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
+  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
-  const tot = { lad: 0, sen: 0, psg: 0, bad: 0 }; let n = 0;
+  const tot = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0 }; let n = 0;
   for (const pk of COL.packs()) {
     if ((S.packsDone || []).includes(pk.id)) continue;
     try { const r = applyPack(pk, "repo"); n++; for (const k in tot) tot[k] += r[k] || 0; } catch (e) {}
@@ -4154,7 +4263,8 @@ function computeOutbox() {
   OUTBOX = { v: 1, day: dayKey(), target: cfg.trip ? { mode: "trip", from: cfg.from, to: cfg.to, days: cfg.days, mins: cfg.mins } : { mode: "ahead", days: cfg.days, mins: cfg.mins },
     covered: f.days, unreadPassages: f.unread, perDay: f.perDay, short: shortage(f, cfg),
     room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
-    hints: genHints(), requests: [], packsDone: (S.packsDone || []).slice(-60) };
+    reading: { perDay: readPerDay(), genres: readGenres() || "auto" },
+    hints: genHints(), requests: outboxRequests(), packsDone: (S.packsDone || []).slice(-60) };
   OUTBOX_AT = now(); OUTBOX_DIRTY = true;
   return OUTBOX;
 }
@@ -4182,7 +4292,13 @@ function packCard() {
     <div class="row small" style="gap:6px">行程日期 Trip dates:
       <input type="date" id="pk-from" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.from || "")}"> → <input type="date" id="pk-to" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.to || "")}">
       ${cfg.from || cfg.to ? `<button class="btn ghost" id="pk-clr" style="min-height:34px;padding:6px 10px">清除 Clear</button>` : ""}</div>
+    <div class="row small" style="gap:6px">阅读量 Reading: ${sel("pk-read", [[0.5, "两天一篇 1 every 2 days"], [1, "每天一篇 1 a day"], [2, "每天两篇 2 a day"]], readPerDay())}</div>
+    <div class="row small" style="gap:10px;flex-wrap:wrap">体裁 Genres: ${PSG_GENRES.map(([k, n]) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-genre="${k}" ${!readGenres() || readGenres().includes(k) ? "checked" : ""}> ${n}</label>`).join("")}${readGenres() ? "" : ` <span class="muted">(自动 auto: mostly 新闻 and 小红书)</span>`}</div>
     <div id="st-body">${status}</div>
+    <details><summary class="small" style="cursor:pointer">多来一篇 · One more passage</summary>
+      <div class="row small" style="gap:6px;margin-top:6px">${sel("pk-g1", [["", "任何体裁 Any genre"], ...PSG_GENRES], "")}</div>
+      <input class="inp" id="pk-topic" placeholder="话题（可以不填）Topic (optional), e.g. 坐高铁" style="width:100%">
+      <button class="btn soft" id="pk-more">请 Claude 写 · Ask Claude</button><span class="small muted"> 下次运行时送到 · arrives with the next daily run${(S.req || []).filter(x => x.kind === "passage").length ? ` (${(S.req || []).filter(x => x.kind === "passage").length} waiting)` : ""}</span></details>
     ${log.length ? `<p class="small">上次到货 Last delivery: <b>${new Date(log[0].t).getMonth() + 1}月${new Date(log[0].t).getDate()}日</b> · ${esc(packSummary(log[0]))}${log[0].bad ? ` <span class="muted">(${log[0].bad} 个格式不对，没用 · ${log[0].bad} malformed, skipped)</span>` : ""}</p>` : ""}
     <details><summary class="small" style="cursor:pointer">粘贴内容包 · Paste a pack</summary>
       <p class="small muted">从任何一个 Claude 聊天里拿到的内容包，贴在这里。Paste a pack from any Claude chat.</p>
@@ -4197,6 +4313,10 @@ function bindPackCard() {
     setTimeout(() => { if (COL && COL.gh) outboxSoon(true); else { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); } }, 30);
   };
   const a = $("#pk-ahead"); if (a) a.onchange = () => setStock({ ahead: +a.value }, false);
+  const setReading = patch => { S.settings = Object.assign({}, S.settings, { reading: Object.assign({}, (S.settings || {}).reading, patch) }); save(); FORECAST = null; refreshStock(); setTimeout(() => outboxSoon(true), 30); };
+  $("#pk-read").onchange = e => setReading({ perDay: +e.target.value });
+  $$("[data-genre]", c).forEach(b => b.onchange = () => { const on = $$("[data-genre]", c).filter(x => x.checked).map(x => x.dataset.genre); setReading({ genres: on.length && on.length < PSG_GENRES.length ? on : null }); });
+  $("#pk-more").onclick = () => { const t = now(); addReq({ rid: "p:" + t.toString(36), kind: "passage", genre: $("#pk-g1").value || null, topic: $("#pk-topic").value.trim().slice(0, 80) }); toast("请 Claude 写了 · Asked; it arrives with the next daily run", 3500); refreshStock(); };
   $("#pk-mins").onchange = e => setStock(e.target.value === "auto" ? { minsSet: false } : { minsSet: true, mins: +e.target.value }, false);
   $("#pk-from").onchange = $("#pk-to").onchange = () => setStock({ from: $("#pk-from").value || undefined, to: $("#pk-to").value || undefined }, true);
   const clr = $("#pk-clr"); if (clr) clr.onclick = () => setStock({ from: undefined, to: undefined }, true);

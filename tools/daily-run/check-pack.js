@@ -13,7 +13,8 @@ const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const APP = path.resolve(opt("--app", path.join(__dirname, "..", "..")));
 const DATA = path.resolve(opt("--data", path.join(APP, "..", "zhongwen-data")));
-const CAP = { ladder: 40, sen: 60, passages: 6 }; // per run (agreed with the learner 2026-11-06)
+const CAP = { ladder: 40, sen: 60, passages: 6, questions: 10, regrades: 30 }; // per run (agreed with the learner 2026-11-06)
+const SENT_CAP = 100; // example sentences per run (the app's old daily limit)
 const readJson = f => JSON.parse(fs.readFileSync(f, "utf8"));
 const norm = s => String(s || "").replace(/[\s|\/\[\]，。！？、；：,.!?;:"“”'‘’（）()…—-]/g, "").toLowerCase();
 
@@ -108,7 +109,54 @@ const has = (s, frag) => norm(s).includes(norm(frag));
   if (have.title.has(norm(x.title)) || seen.title.has(norm(x.title))) problems.push(at + ": same title as an existing passage");
   seen.title.add(norm(x.title));
 });
-const counts = `${(pk.ladder || []).length} drills, ${(pk.sen || []).length} sentences, ${(pk.passages || []).length} passages`;
+// ---- answers to requests (4c) ----
+let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
+const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
+// misread structures: at most 2 parsing sentences each per pack (otherwise they bunch up)
+const pieces = z => String(z).split(/…|\.\.\./).map(norm).filter(Boolean);
+const senHas = (x, z) => { const t = norm(String(x.s || "").replace(/[|\/]/g, "")); let pos = 0; for (const pc of pieces(z)) { const i = t.indexOf(pc, pos); if (i < 0) return false; pos = i + pc.length; } return pieces(z).length > 0; };
+for (const z of (ob.hints || {}).misreadStructures || []) { const n = (pk.sen || []).filter(x => x && senHas(x, z)).length; if (n > 2) problems.push(`sen: ${n} sentences contain the misread structure 「${z}」; at most 2 per pack`); }
+(pk.passages || []).forEach((x, i) => { if (x && x.rid && (reqs.get(x.rid) || {}).kind !== "passage") problems.push(`passages[${i}]: rid "${x.rid}" isn't a passage request in outbox.json`); });
+if (pk.sentences !== undefined) {
+  if (typeof pk.sentences !== "object" || Array.isArray(pk.sentences)) problems.push('sentences: must be an object { "word": "sentence" }');
+  else {
+    const ws = Object.keys(pk.sentences);
+    if (ws.length > SENT_CAP) problems.push(`sentences: ${ws.length}, the per-run cap is ${SENT_CAP}`);
+    for (const w of ws) {
+      const v = pk.sentences[w], sx = typeof v === "string" ? v : v && v.s;
+      if (!reqs.has("w:" + w)) warn.push(`sentences: 「${w}」 wasn't requested (it'll be ignored if the word already has a sentence)`);
+      if (typeof sx !== "string" || !sx.includes(w)) problems.push(`sentences: the sentence for 「${w}」 must contain the word exactly as written`);
+      else if (norm(sx).length < 6 || norm(sx).length > 40) warn.push(`sentences: 「${w}」 sentence is ${norm(sx).length} characters (aim for 10–25)`);
+    }
+  }
+}
+if (pk.questions !== undefined) {
+  if (!Array.isArray(pk.questions)) problems.push("questions: must be an array");
+  else {
+    if (pk.questions.length > CAP.questions) problems.push(`questions: ${pk.questions.length}, the per-run cap is ${CAP.questions}`);
+    pk.questions.forEach((a, i) => {
+      const at = `questions[${i}]` + (a && a.rid ? ` ${a.rid}` : "");
+      if (!a || !reqs.has(a.rid) || reqs.get(a.rid).kind !== "questions") { problems.push(at + ": rid must be a questions request in outbox.json"); return; }
+      const qs = ctx.api.toQs ? ctx.api.toQs(a.qs) : a.qs;
+      if (!Array.isArray(a.qs) || a.qs.length !== 3) problems.push(at + ": needs exactly 3 questions");
+      (a.qs || []).forEach((q, j) => { if (!q || !Array.isArray(q.opts) || q.opts.length !== 4) problems.push(`${at}: question ${j + 1} needs 4 options`); if (!q || !Array.isArray(q.why) || q.why.length !== 4) problems.push(`${at}: question ${j + 1} needs "why" (4 reasons)`); });
+    });
+  }
+}
+if (pk.regrades !== undefined) {
+  if (!Array.isArray(pk.regrades)) problems.push("regrades: must be an array");
+  else {
+    if (pk.regrades.length > CAP.regrades) problems.push(`regrades: ${pk.regrades.length}, the per-run cap is ${CAP.regrades}`);
+    pk.regrades.forEach((a, i) => {
+      const at = `regrades[${i}]` + (a && a.rid ? ` ${a.rid}` : "");
+      if (!a || !reqs.has(a.rid) || reqs.get(a.rid).kind !== "regrade") { problems.push(at + ": rid must be a regrade request in outbox.json"); return; }
+      if (!Number.isInteger(a.score) || a.score < 0 || a.score > 3) problems.push(at + ": score must be 0, 1, 2 or 3");
+      if (!["ok", "wrong", "missing"].includes(a.chunk)) problems.push(at + ': chunk must be "ok", "wrong" or "missing"');
+      if (!Array.isArray(a.notes)) problems.push(at + ": notes must be an array (can be empty)");
+    });
+  }
+}
+const counts = `${(pk.ladder || []).length} drills, ${(pk.sen || []).length} sentences, ${(pk.passages || []).length} passages` + (pk.sentences ? `, ${Object.keys(pk.sentences).length} example sentences` : "") + (pk.questions ? `, ${pk.questions.length} question sets` : "") + (pk.regrades ? `, ${pk.regrades.length} regrades` : "");
 for (const w of warn) console.log("warning: " + w);
 if (problems.length) { for (const p of problems) console.log("PROBLEM: " + p); console.log(`\n${problems.length} problem(s) in ${counts}. Fix or drop those pieces and check again.`); process.exit(1); }
 console.log(`OK: ${counts}${warn.length ? ` (${warn.length} warning${warn.length > 1 ? "s" : ""})` : ""}`);
