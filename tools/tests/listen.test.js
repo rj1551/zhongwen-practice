@@ -201,7 +201,11 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(purge.noBack, "an emptied bin entry doesn't come back from the other device");
   await page.evaluate(() => { trashListen(S.gen.listen.find(x => x.id === "Atrad")); S.gen.trash[0].t = now() - 31 * 864e5; housekeep(); });
   ok(await page.evaluate(() => S.gen.trash.length) === 0, "bin entries go by themselves after 30 days");
-  const cap = await page.evaluate(() => { for (let i = 0; i < 305; i++) trashAdd("word", "w" + i, { b: { zh: "w" + i, t: now() } }); const n = S.gen.trash.length, newest = S.gen.trash.some(e => e.title === "w304"), oldest = S.gen.trash.some(e => e.title === "w0"); S.gen.trash.slice().forEach(e => purgeTrash(e, true)); save(); return [n, newest, oldest]; });
+  const cap = await page.evaluate(() => { for (let i = 0; i < 305; i++) trashAdd("word", "w" + i, { b: { zh: "w" + i, t: now() } }); const n = S.gen.trash.length, newest = S.gen.trash.some(e => e.title === "w304"), oldest = S.gen.trash.some(e => e.title === "w0"); return [n, newest, oldest]; });
+  await page.evaluate(() => render()); await sleep(200);
+  const hgt = await page.evaluate(() => [$("#trashcard").offsetHeight, innerHeight]);
+  ok(hgt[0] < hgt[1] * 0.8, "300 entries: the bin card stays short and scrolls inside (" + hgt[0] + "px)");
+  await page.evaluate(() => { S.gen.trash.slice().forEach(e => purgeTrash(e, true)); save(); render(); });
   ok(cap[0] === 300 && cap[1] && !cap[2], "the bin keeps at most 300; the oldest go for good first: " + cap.join(" "));
   await page.evaluate(() => { S.gen.mine.push({ id: "Mx1p0", grp: "Mx1", part: 0, np: 1, title: "测试文章", mine: true, reg: "mine", t: now() - 1000, paras: ["你好"], gl: {}, en: "" }); indexGen(); save(); });
   const mine = await page.evaluate(() => { const other = JSON.parse(JSON.stringify(S)); trashMine([S.gen.mine.find(p => p.id === "Mx1p0")]); S = mergeStates(S, other); indexGen(); return [S.gen.mine.some(p => p.id === "Mx1p0"), PSG.has("Mx1p0")]; });
