@@ -167,6 +167,18 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .cgo{font-size:12px;color:var(--muted);padding:2px 6px;margin-right:4px;vertical-align:middle;border-radius:6px;border:1px solid var(--line);background:var(--surface)}
 .cues.fixing .cue{box-shadow:inset 0 0 0 1px var(--line);margin-bottom:3px;cursor:pointer} .cues.fixing .cgo{display:none}
 .cue.pop{animation:cueflash .6s ease} @keyframes cueflash{0%{background:var(--accent);color:var(--accent-ink)}}
+.lbar{position:fixed;left:0;right:0;z-index:6;display:flex;justify-content:center;pointer-events:none}
+.lbar .in{pointer-events:auto;width:100%;max-width:640px;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(0,0,0,.08);padding:6px 12px 8px;display:flex;flex-direction:column;gap:4px}
+.lbar input[type=range]{margin:2px 0}
+.lctl{display:flex;align-items:center;justify-content:center;gap:6px}
+.lctl .btn{padding:6px 12px;min-height:40px} .lctl #lpp{min-width:58px;font-size:17px} .lctl .lt{min-width:34px;text-align:center;font-variant-numeric:tabular-nums}
+.tpanel{display:flex;flex-direction:column;gap:6px;padding:4px 0 6px;border-bottom:1px solid var(--line);margin-bottom:2px}
+.tbtns{display:flex;flex-wrap:wrap;gap:6px} .tbtns .tagc{font-size:13px;padding:5px 10px} .tbtns .tagc:disabled{opacity:.4}
+.cue.fixed::before{content:"✓";font-size:.5em;color:var(--accent);margin-right:4px;vertical-align:middle}
+.cues.fixing .cue.sel{box-shadow:inset 0 0 0 2px var(--accent);background:var(--accent-soft)}
+.aapop{position:fixed;z-index:21;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.aarow{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:14px}
+#laa,#lfix{font-size:13px;padding:4px 10px}
 .fixbox{padding:10px 12px;border:1px solid var(--accent);border-radius:12px;background:var(--accent-soft)}
 .cue.now{background:var(--accent-soft)} .cue.lost{box-shadow:inset 3px 0 0 var(--gold);background:var(--gold-soft)}
 .cues{max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:2px}
@@ -1448,6 +1460,7 @@ const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read
 function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
 function render() {
   const main = $("#main");
+  dropBar(); // the listening player bar belongs to an item's page only; drawPlayer puts it back
   $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place";
   $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
   if (VIEW === "home") renderHome(main);
@@ -3230,7 +3243,7 @@ function sentWaitHtml() {
    the item, transcript, questions and your listening history sync like everything else.
    Shared with the karaoke mode planned next (lyrics = timed transcript). */
 const LISTEN_TR_MAX = 40000, LISTEN_TR_TOTAL = 400000; // 40,000 ≈ 2½ hours of speech (raised 2026-11-07)
-let LST = null, AUD = null, AUD_URL = null, AUD_ID = null;
+let LST = null, AUD = null, AUD_URL = null, AUD_ID = null, LFILT = "all";
 const MEM_AUDIO = new Map(); // fallback when this page can't use on-device storage
 /* ---- on-device audio storage (IndexedDB) ---- */
 let IDB_P = null;
@@ -3310,7 +3323,8 @@ function zhConv(s, dir) {
 const toTrad = s => zhConv(s, "s2t"), toSimp = s => zhConv(s, "t2s");
 // per-device display settings for transcripts and lyrics: size step, 简/繁, pinyin
 const CUE_FS = [19, 22, 25, 28, 32];
-function cuePref() { try { return Object.assign({ fs: 2, tr: false, py: false }, JSON.parse(localStorage.getItem("zwlgf:cuepref") || "{}")); } catch (e) { return { fs: 2, tr: false, py: false }; } }
+const CUE_DEF = { fs: 2, tr: false, py: false, lag: 0.3, carry: true }; // carry = "later lines follow" when fixing timing
+function cuePref() { try { return Object.assign({}, CUE_DEF, JSON.parse(localStorage.getItem("zwlgf:cuepref") || "{}")); } catch (e) { return Object.assign({}, CUE_DEF); } }
 function setCuePref(o) { try { localStorage.setItem("zwlgf:cuepref", JSON.stringify(Object.assign(cuePref(), o))); } catch (e) {} }
 // one line → words: s = simplified (split, looked up, saved), d = shown (your script; the file's own characters kept
 // where they already are in that script)
@@ -3331,30 +3345,46 @@ function lineHtml(it, i, toks, key, looked) {
     return `<span class="tk ${looked && looked.has(k) ? "looked" : ""}" data-k="${k}">${inner}</span>`;
   }).join("");
 }
-/* ---- timing fixes (file items): it.tm = {a, b, an: [[stamp in the file, heard at], …]} → a line starts at
-   a × stamp + b. One tapped line = everything shifts by the same amount (the usual LRCLIB problem: another release
-   with a longer or shorter intro); two tapped lines far apart also fix a slow drift. ±0.2 s nudges move b. */
-const TAP_LAG = 0.2; // people tap a little after they hear a line start
-const cueT = (it, i) => { const c = it.cues[i][0]; if (c == null) return null; const tm = it.tm; return tm ? Math.max(0, tm.a * c + tm.b) : c; };
-function fitTiming(it) {
-  const an = (it.tm && it.tm.an || []).slice().sort((p, q) => p[0] - q[0]); if (!an.length) { delete it.tm; return; }
-  const last = it.tm.last || an[an.length - 1], lo = an[0], hi = an[an.length - 1];
-  let a = 1, b = last[1] - last[0];
-  if (hi[0] - lo[0] >= 30) { const s = (hi[1] - lo[1]) / (hi[0] - lo[0]); if (s > 0.95 && s < 1.05) { a = s; b = lo[1] - s * lo[0]; } }
-  it.tm = { a: +a.toFixed(5), b: +b.toFixed(2), an, last };
+/* ---- timing fixes (file items with timings), all synced and all undoable; the file's own times stay in it.cues
+   it.tm = {a, b}: the whole song, start = a × stamp + b (a is 1; older fixes may have stretched it)
+   it.fix = {line: {t, c}}: a line you set by hand (t = seconds). c = "later lines follow": the lines after it move by
+   the same amount, up to the next line you set with c on; lines set with c off move alone and don't stop that.
+   Start times are worked out once per change (cueTimes, keyed on it.u) since Follow asks several times a second. */
+const TIMES = new WeakMap();
+function cueTimes(it) {
+  const k = (it.u || 0) + ":" + (it.cues || []).length, hit = TIMES.get(it);
+  if (hit && hit.k === k) return hit.v;
+  const tm = it.tm || { a: 1, b: 0 }, fix = it.fix || {}, v = []; let d = 0;
+  (it.cues || []).forEach((c, i) => {
+    if (c[0] == null) { v.push(null); return; }
+    const base = Math.max(0, (tm.a || 1) * c[0] + (tm.b || 0)), f = fix[i];
+    if (f) { v.push(f.t); if (f.c) d = f.t - base; } else v.push(Math.max(0, base + d));
+  });
+  TIMES.set(it, { k, v }); return v;
 }
-function anchorLine(it, i, heard) {
-  const x = it.cues[i][0]; if (x == null) return;
-  const an = ((it.tm && it.tm.an) || []).filter(p => Math.abs(p[0] - x) >= 20); // a new tap near an old one replaces it
-  const p = [x, +Math.max(0, heard - TAP_LAG).toFixed(2)]; an.push(p);
-  it.tm = { an, last: p }; fitTiming(it); it.u = now(); save();
+const cueT = (it, i) => { const v = cueTimes(it)[i]; return v == null ? null : v; };
+const tapLag = () => { const x = +cuePref().lag; return isFinite(x) ? x : 0.3; }; // people tap a little after they hear the start
+// how many lines after line i move with it (up to the next line set with "later lines follow")
+function carriedCount(it, i) { const fix = it.fix || {}; let n = 0; for (let k = i + 1; k < it.cues.length; k++) { if (fix[k] && fix[k].c) break; if (!fix[k]) n++; } return n; }
+function timingSnap(it) { (LST.tundo = LST.tundo || []).push(JSON.stringify({ fix: it.fix || null, tm: it.tm || null })); if (LST.tundo.length > 60) LST.tundo.shift(); }
+function timingUndo(it) { const s = (LST.tundo || []).pop(); if (!s) return false; const o = JSON.parse(s); if (o.fix) it.fix = o.fix; else delete it.fix; if (o.tm) it.tm = o.tm; else delete it.tm; it.u = now(); save(); return true; }
+function setLine(it, i, t, carry) { timingSnap(it); (it.fix = it.fix || {})[i] = { t: +Math.max(0, t).toFixed(2), c: !!carry }; it.u = now(); save(); }
+function nudgeLine(it, i, d, carry) { const cur = cueT(it, i); if (cur == null) return; setLine(it, i, cur + d, (it.fix && it.fix[i]) ? it.fix[i].c : carry); }
+function nudgeSong(it, d) { timingSnap(it); const tm = it.tm || { a: 1, b: 0 }; it.tm = { a: tm.a || 1, b: +((tm.b || 0) + d).toFixed(2) }; it.u = now(); save(); }
+function resetTiming(it) { timingSnap(it); delete it.fix; delete it.tm; it.u = now(); save(); }
+const fmtSec = x => fmtT(x) + "." + Math.floor((x % 1) * 10);
+const fmtD = d => (d >= 0 ? "晚 +" : "早 −") + Math.abs(d).toFixed(1) + " s";
+/* ---- songs and talk: what comes first on an item's page. Guessed when it's added, one tap to change (it.type).
+   Song: lyrics from LRCLIB or an .lrc file, or a timed text under 8 minutes; talk: .srt/.vtt subtitles, or longer.
+   Songs open in Follow and leave out "lost it" and questions (still there on request); talk has both. */
+const SONG_MAX_S = 480;
+function guessType(o) {
+  if (o.src === "lrclib" || o.fmt === "lrc") return "song";
+  if (o.fmt === "srt") return "talk";
+  return o.dur && o.dur <= SONG_MAX_S ? "song" : "talk";
 }
-function nudgeTiming(it, d) {
-  if (!it.tm) it.tm = { a: 1, b: 0, an: [] };
-  it.tm.b = +(it.tm.b + d).toFixed(2); it.tm.an = (it.tm.an || []).map(p => [p[0], +(p[1] + d).toFixed(2)]); if (it.tm.last) it.tm.last = [it.tm.last[0], +(it.tm.last[1] + d).toFixed(2)];
-  it.u = now(); save();
-}
-const fmtShift = it => { const b = it.tm ? it.tm.b : 0; return (b >= 0 ? "+" : "−") + Math.abs(b).toFixed(1) + " s"; };
+const itemType = it => it.type || guessType({ dur: it.dur || (isTimed(it) ? it.cues[it.cues.length - 1][0] : 0) });
+const trFormat = tr => /^\s*\[\d{1,3}:\d{1,2}([.:]\d{1,3})?\]/m.test(tr || "") ? "lrc" : /-->/.test(tr || "") ? "srt" : "text";
 /* ---- sections of long transcripts: about 20 minutes each (by time when timed, else ~5,000 characters, roughly
    20 minutes of speech). It still plays as one piece; each section gets its own 3 questions, and after listening
    you get the questions for the sections you heard this time. A short tail joins the section before it. */
@@ -3389,11 +3419,14 @@ function cueAt(it, t) { let i = -1; for (let k = 0; k < it.cues.length; k++) { i
 function renderListen(main) {
   if (LST && LST.add) return renderListenAdd(main);
   if (LST && LST.id) { const it = S.gen.listen.find(x => x.id === LST.id); if (!it) { LST = null; return renderListen(main); } return LST.review ? renderListenReview(main, it) : renderListenItem(main, it); }
-  const list = (S.gen.listen || []).slice().sort((a, b) => b.t - a.t);
+  const all = (S.gen.listen || []).slice().sort((a, b) => b.t - a.t), hasSong = all.some(it => itemType(it) === "song"), hasTalk = all.some(it => itemType(it) !== "song");
+  if (!(hasSong && hasTalk)) LFILT = "all";
+  const list = all.filter(it => LFILT === "all" || (LFILT === "song") === (itemType(it) === "song"));
   main.innerHTML = `<div class="top"><div><h1>听力</h1><p class="date">Native audio: a file on this phone, or a link to Bilibili, a podcast app, YouTube…</p></div></div>
     <button class="btn wide" id="ladd">+ 添加 Add audio</button>
+    ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
     <div id="r2list"></div>
-    ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
+    ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${itemType(it) === "song" ? "🎵" : "🎙"} ${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
       : `<div class="card"><p class="small muted">还没有音频 · Nothing yet. Add a podcast episode you've downloaded (with its transcript if it has one), or a link to a video. Transcripts with timings (.srt, .vtt or .lrc files) unlock line-by-line follow and replay.</p></div>`}`;
   $("#ladd", main).onclick = () => { LST = { add: true, kind: "file" }; render(); };
   if (!HOSTED && list.some(it => it.kind === "file")) audioKeys().then(have => {
@@ -3402,7 +3435,9 @@ function renderListen(main) {
     const dl = $("#r2dl"); if (dl) dl.onclick = r2DownloadAll;
     const ua = $("#r2upall"); if (ua) ua.onclick = () => { list.filter(it => it.kind === "file" && !it.r2 && !it.r2gone && have.has(it.id)).forEach(it => { it.r2want = true; it.u = now(); }); save(); render(); r2Kick(); };
   });
-  $$("[data-l]", main).forEach(b => b.onclick = () => { LST = { id: b.dataset.l, mode: "hide", lost: [] }; render(); window.scrollTo(0, 0); });
+  $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
+  // songs with timings open in Follow; everything else starts with the text hidden (as before)
+  $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
 }
 /* ---- transcript editor (new items and existing ones): subtitle file, paste, or LRCLIB lookup ----
    LRCLIB (lrclib.net) is a free database of timed lyrics. Searched straight from your browser; the results only
@@ -3435,7 +3470,7 @@ function trCount(tr) { if (!tr || !tr.trim()) return ""; const c = parseCues(tr)
 const LR_CACHE = new Map();
 function bindTrEditor(main, f, keep, redraw) {
   const lrKeep = () => { f.lr = Object.assign({}, f.lr, { q: $("#lrq", main).value, a: $("#lra", main).value }); };
-  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); f.trName = file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
+  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); f.trName = file.name; f.src = null; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
   // update the line count in place (a full redraw here would swallow a tap on Save made while the box is focused)
   $("#ltr", main).oninput = () => { const n = $("#ltrn", main); if (n) n.textContent = trCount($("#ltr", main).value); };
   $("#lrgo", main).onclick = async () => {
@@ -3460,7 +3495,7 @@ function bindTrEditor(main, f, keep, redraw) {
     Object.assign(f.lr, { busy: false, err: res ? "" : err, res: res ? res.slice(0, 20) : null }); // all kept; the 8 closest are shown
     redraw();
   };
-  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; f.trName = ""; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
+  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; f.trName = ""; f.src = "lrclib"; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
 }
 // the file's length (to match LRCLIB results); null if it can't be read
 function fileDuration(file) {
@@ -3498,23 +3533,116 @@ function renderListenAdd(main) {
     if (f.kind === "link") it.url = f.url.trim(); else { it.fname = f.file.name; it.size = f.file.size; if (f.dur) it.dur = Math.round(f.dur); }
     if (cues.length) it.cues = cues;
     const tags = parseTags(f.tags); if (tags.length) it.tags = tags;
+    it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: f.dur });
     if (f.kind === "file") { const kept = await audioPut(id, f.file); if (!kept) toast("这个页面不能长期保存音频，这次可以听 · This page can't keep the file; it plays this time only. The offline copy keeps it.", 4500); }
     if (f.kind === "file" && !HOSTED) it.r2want = true; // goes to the cloud (if set up), with a progress bar
     S.gen.listen.push(it); save();
-    LST = { id, mode: "hide", lost: [] }; render(); window.scrollTo(0, 0);
+    LST = { id, mode: isTimed(it) && it.type === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0);
     if (it.r2want) setTimeout(r2Kick, 300);
   };
 }
-// the transcript on an item's page: words tap for the dictionary; ▶ plays from a line (file + timings)
+// the transcript on an item's page: words tap for the dictionary; ▶ plays from a line (file + timings);
+// while fixing timing, lines you set show ✓ and the selected one is outlined
 function cuesHtml(it) {
-  const go = isTimed(it) && it.kind === "file";
+  const go = isTimed(it) && it.kind === "file", fix = it.fix || {};
   LST.ptoks = (it.cues || []).map((c, i) => lineToks(it, i));
-  return LST.ptoks.map((toks, i) => `<div class="cue" data-ci="${i}">${go ? `<button class="cgo" data-go="${i}" aria-label="从这句播放 Play from here">▶</button>` : ""}${lineHtml(it, i, toks, i, LST.looked)}</div>`).join("");
+  return LST.ptoks.map((toks, i) => `<div class="cue ${fix[i] ? "fixed" : ""} ${LST.sel === i ? "sel" : ""}" data-ci="${i}">${go ? `<button class="cgo" data-go="${i}" aria-label="从这句播放 Play from here">▶</button>` : ""}${lineHtml(it, i, toks, i, LST.looked)}</div>`).join("");
 }
-function fixHtml(it) {
-  return `<div class="fixbox stack" style="gap:6px"><span class="small"><b>对时间 · Fix timing</b>：边听边点——听到哪一句刚开始唱，就马上点那一句（点哪儿都行）。所有的句子会一起挪过去。<br>While it plays, tap a line the moment you hear it start (anywhere on the line). Every line moves to match. Tap a second line much later in the song if the timing drifts.</span>
-    <div class="row" style="gap:6px;align-items:center"><span class="small">现在 Now: <b>${fmtShift(it)}</b>${it.tm && it.tm.a !== 1 ? ` · ×${it.tm.a.toFixed(3)}` : ""}</span><button class="tagc" data-nudge="-0.2">早 0.2 s earlier</button><button class="tagc" data-nudge="0.2">晚 0.2 s later</button>${it.tm ? `<button class="tagc" id="fixreset">重置 Reset</button>` : ""}<button class="tagc on" id="fixdone">好了 Done</button></div></div>`;
+function refreshMarks(it) { const fix = it.fix || {}; $$("#lcues .cue").forEach(el => { const i = +el.dataset.ci; el.classList.toggle("fixed", !!fix[i]); el.classList.toggle("sel", LST.sel === i); }); }
+function redrawCues(it) {
+  const box = $("#lcues"); if (!box) return;
+  box.innerHTML = cuesHtml(it); box.style.setProperty("--cuefs", (CUE_FS[cuePref().fs] || 25) + "px"); box.classList.toggle("py", cuePref().py);
+  bindCues(it); LAST_CUE = -1; syncCue(it);
 }
+function bindCues(it) {
+  const main = $("#main"), pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags };
+  $$("#lcues .tk", main).forEach(el => el.onclick = e => {
+    if (LST.fix) return;
+    const [pi, ti] = el.dataset.k.split(":").map(Number); LST.looked.add(el.dataset.k); el.classList.add("looked");
+    openSheet(Object.assign(pp, { trad: cuePref().tr }), LST.ptoks.map(l => l.map(t => t.s)), pi, ti, el);
+  });
+  $$("#lcues [data-go]", main).forEach(b => b.onclick = () => { if (LST.fix) return; const t = cueT(it, +b.dataset.go); if (AUD && AUD_ID === it.id && t != null) { AUD.currentTime = t; AUD.play(); } });
+  $$("#lcues .cue", main).forEach(el => el.onclick = () => { if (LST.fix) timingTap(it, +el.dataset.ci, el); });
+}
+/* ---- fixing timing: what the next tap or button does is always spelled out in the bar (never over the lyrics).
+   Playing: tap a line = it starts now (minus your tap delay), later lines follow if that's on. Paused: tap a line
+   = select it (tap again or ✕ to unselect); 早/晚 move the selected line by 0.1 s, or the whole song if none is
+   selected; ↻ plays the selected line from 1 s before and stops at the next. */
+function timingStatus(it) {
+  const carry = cuePref().carry, sel = LST.sel;
+  if (LST.tmsg && now() < LST.tmsgT) return `<b>${LST.tmsg}</b>`;
+  if (sel != null) return `已选第 ${sel + 1} 句：早/晚 挪${carry ? "这句和后面的" : "这一句"}，↻ 听这句 · Line ${sel + 1} selected: 早/晚 move ${carry ? "it and the lines after it" : "only this line"}; ↻ hear it`;
+  if (AUD && AUD_ID === it.id && !AUD.paused) return carry ? "播放中：点一句 = 它现在开始，后面的跟着挪 · Tap a line as it starts; later lines follow" : "播放中：点一句 = 只有它现在开始 · Tap a line as it starts; only that line moves";
+  return "暂停中：点一句来微调它 · Paused: tap a line to fine-tune it. 早/晚 now move the whole song.";
+}
+function timingFlash(it, msg) { LST.tmsg = msg; LST.tmsgT = now() + 3500; drawTiming(it); clearTimeout(LST.tmsgTimer); LST.tmsgTimer = setTimeout(() => drawTiming(it), 3600); }
+function drawTiming(it) {
+  const box = $("#ltime"); if (!box) return;
+  if (!LST || !LST.fix) { box.innerHTML = ""; fitCues(); return; }
+  const carry = cuePref().carry, sel = LST.sel;
+  box.innerHTML = `<div class="tpanel">
+    <div class="spread" style="gap:8px;align-items:flex-start"><span class="small" id="tstat" style="min-height:2.6em">${timingStatus(it)}</span><button class="tagc on" id="tdone" style="flex:none">好了 Done</button></div>
+    <div class="tbtns"><button class="tagc" data-tn="-0.1">◀ 早 0.1</button><button class="tagc" id="tre" ${sel == null ? "disabled" : ""}>↻ 听这句</button><button class="tagc" data-tn="0.1">晚 0.1 ▶</button><button class="tagc ${carry ? "on" : ""}" id="tcarry">${carry ? "✓ " : ""}后面跟着</button>${sel != null ? `<button class="tagc" id="tunsel">✕ 不选</button>` : ""}<button class="tagc" id="tundo" ${(LST.tundo || []).length ? "" : "disabled"}>撤销 Undo</button><button class="tagc" id="treset" ${it.fix || it.tm ? "" : "disabled"}>重置 Reset</button></div></div>`;
+  const after = () => { refreshMarks(it); drawTiming(it); LAST_CUE = -1; syncCue(it); };
+  $("#tdone", box).onclick = () => { LST.fix = false; LST.sel = null; refreshMarks(it); $("#lcues").classList.remove("fixing"); const b = $("#lfix"); if (b) b.classList.remove("on"); drawTiming(it); };
+  $$("[data-tn]", box).forEach(b => b.onclick = () => {
+    const d = +b.dataset.tn;
+    if (LST.sel != null) { nudgeLine(it, LST.sel, d, cuePref().carry); const c = cuePref().carry, n = c ? carriedCount(it, LST.sel) : 0; timingFlash(it, `第 ${LST.sel + 1} 句 ${fmtD(d)} → ${fmtSec(cueT(it, LST.sel))}${c ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} too` : "") : " · 只这一句 · just this line"}`); }
+    else { nudgeSong(it, d); timingFlash(it, `整首 ${fmtD(d)} · Whole song moved`); }
+    after();
+  });
+  $("#tre", box).onclick = () => { const i = LST.sel; if (i == null || !AUD) return; const t = cueT(it, i), nx = i + 1 < it.cues.length ? cueT(it, i + 1) : null; LST.stopAt = nx != null ? nx + 0.05 : null; AUD.currentTime = Math.max(0, t - 1); AUD.play().catch(() => {}); };
+  $("#tcarry", box).onclick = () => { setCuePref({ carry: !cuePref().carry }); LST.tmsg = null; drawTiming(it); };
+  const un = $("#tunsel", box); if (un) un.onclick = () => { LST.sel = null; after(); };
+  $("#tundo", box).onclick = () => { if (timingUndo(it)) timingFlash(it, "撤销了 · Undone"); after(); };
+  $("#treset", box).onclick = () => { resetTiming(it); LST.sel = null; timingFlash(it, "回到原来的时间（撤销可以找回）· Back to the file's own times (Undo brings yours back)"); after(); };
+  fitCues();
+}
+function timingTap(it, i, el) {
+  if (!AUD || AUD_ID !== it.id) return toast("音频还没准备好 · The audio isn't ready yet", 2500);
+  if (!AUD.paused) {
+    const carry = cuePref().carry, before = cueT(it, i), t = Math.max(0, AUD.currentTime - tapLag());
+    setLine(it, i, t, carry); LST.sel = i;
+    const n = carry ? carriedCount(it, i) : 0;
+    timingFlash(it, `第 ${i + 1} 句 → ${fmtSec(t)}（${fmtD(t - before)}）${carry ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} follow` : "") : " · 只这一句 · only this line"}`);
+    el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+  } else { LST.sel = LST.sel === i ? null : i; LST.tmsg = null; drawTiming(it); }
+  refreshMarks(it); LAST_CUE = -1; syncCue(it);
+}
+// the transcript box fills the screen down to the player bar, so you never scroll the page while following
+function fitCues() {
+  const box = $("#lcues"); if (!box || box.hidden) return;
+  const bar = $("#lbar"), tabs = $("#tabs");
+  const bottom = innerHeight - (bar ? bar.offsetHeight : 0) - (tabs && !tabs.hidden ? tabs.offsetHeight : 0) - 10;
+  box.style.maxHeight = Math.max(220, bottom - Math.max(0, box.getBoundingClientRect().top)) + "px";
+}
+addEventListener("resize", () => { if ($("#lbar")) { placeBar(); fitCues(); } });
+// display settings: one small menu under Aa (stays open while you change things; a tap outside closes it)
+function aaHtml(it) {
+  const p = cuePref(), timedFile = isTimed(it) && it.kind === "file";
+  return `<div class="aarow"><span>字 Script</span><span class="row" style="gap:4px"><button class="tagc ${p.tr ? "" : "on"}" data-scr="s">简体</button><button class="tagc ${p.tr ? "on" : ""}" data-scr="t">繁體</button></span></div>
+    <div class="aarow"><span>拼音 Pinyin</span><button class="tagc ${p.py ? "on" : ""}" id="lpy">${p.py ? "开 On" : "关 Off"}</button></div>
+    <div class="aarow"><span>大小 Size</span><span class="row" style="gap:4px"><button class="tagc" data-fs="-1">字 −</button><button class="tagc" data-fs="1">字 +</button></span></div>
+    ${timedFile ? `<div class="aarow"><span>点击提前 Tap delay</span><span class="row" style="gap:4px;align-items:center"><button class="tagc" data-lag="-0.05">−</button><b class="small">${tapLag().toFixed(2)} s</b><button class="tagc" data-lag="0.05">+</button></span></div><span class="small muted">对时间时，你的点击算早这么多（大家都会点晚一点）· When fixing timing, a tap counts as this much earlier (everyone taps a little late).</span>` : ""}`;
+}
+function toggleAa(it, btn) {
+  let pop = $("#aapop"); if (pop) { pop.remove(); btn.classList.remove("on"); return; }
+  pop = document.createElement("div"); pop.id = "aapop"; pop.className = "aapop"; document.body.append(pop); btn.classList.add("on");
+  const draw = () => {
+    pop.innerHTML = aaHtml(it);
+    const r = btn.getBoundingClientRect(), w = Math.min(320, innerWidth - 24);
+    pop.style.width = w + "px"; pop.style.top = (r.bottom + 6) + "px"; pop.style.left = Math.max(12, Math.min(r.right - w, innerWidth - w - 12)) + "px";
+    $$("[data-scr]", pop).forEach(b => b.onclick = async () => {
+      if (!ZHC) { try { await loadZhc(); } catch (e) { return toast("简繁字表要联网下载一次 · The simplified/traditional table needs to download once (go online)", 4000); } }
+      setCuePref({ tr: b.dataset.scr === "t" }); draw(); redrawCues(it);
+    });
+    $("#lpy", pop).onclick = () => { setCuePref({ py: !cuePref().py }); draw(); redrawCues(it); };
+    $$("[data-fs]", pop).forEach(b => b.onclick = () => { setCuePref({ fs: Math.max(0, Math.min(CUE_FS.length - 1, cuePref().fs + +b.dataset.fs)) }); redrawCues(it); });
+    $$("[data-lag]", pop).forEach(b => b.onclick = () => { setCuePref({ lag: +Math.max(0, Math.min(0.8, tapLag() + +b.dataset.lag)).toFixed(2) }); draw(); });
+  };
+  draw();
+}
+document.addEventListener("click", e => { const p = $("#aapop"); if (p && e.target.isConnected && !p.contains(e.target) && !e.target.closest("#laa")) { p.remove(); const b = $("#laa"); if (b) b.classList.remove("on"); } });
 function tapHtml(it) {
   const st = it.tap || [], k = st.length, n = it.cues.length;
   return `<div class="fixbox stack" style="gap:10px"><span class="small"><b>打拍子 · Tap along</b>：播放，每句一开始就点大按钮。慢一点也可以（0.75×）。<br>Play it and tap the big button the moment each line starts. Slower speed works too. ${k}/${n}</span>
@@ -3524,85 +3652,59 @@ function tapHtml(it) {
     <div class="row"><button class="btn ghost" id="tapundo" ${k ? "" : "disabled"}>撤销 Undo</button><button class="btn ghost" id="tapstop">先停 Stop (keeps your taps)</button></div></div>`;
 }
 function renderListenItem(main, it) {
-  const timed = isTimed(it), hasTr = (it.cues || []).length > 0, file = it.kind === "file", pref = cuePref();
+  const timed = isTimed(it), hasTr = (it.cues || []).length > 0, file = it.kind === "file";
+  const song = itemType(it) === "song";
   if (!timed && LST.mode === "follow") LST.mode = "hide";
   if (!LST.looked) LST.looked = new Set();
   if (!(timed && file)) LST.fix = false;
   if (!(file && hasTr && !timed)) LST.tap = false;
-  const secs = listenSections(it);
-  const pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags, trad: pref.tr };
-  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="chip">${it.kind === "link" ? "🔗 链接" : "🎧 文件"}</span></div>
-    <div class="card stack"><h2 class="zh">${esc(it.title)}</h2>
+  const secs = listenSections(it), pref = cuePref();
+  const qBtn = hasTr && !(it.qs && it.qs.length) && !HOSTED && !AI && !reqWaiting("q:listen:" + it.id);
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><div class="row" style="gap:6px"><button class="tagc" id="ltype" title="点一下改 · tap to change">${song ? "🎵 歌 Song" : "🎙 谈 Talk"}</button><span class="chip">${it.kind === "link" ? "🔗 链接" : "🎧 文件"}</span></div></div>
+    <div class="card stack"><div class="spread" style="align-items:flex-start;gap:8px"><h2 class="zh">${esc(it.title)}</h2><div class="row" style="gap:6px;flex:none">${hasTr ? `<button class="tagc" id="laa" aria-label="显示 Display">Aa</button>` : ""}${timed && file ? `<button class="tagc ${LST.fix ? "on" : ""}" id="lfix">⏱ 对时间</button>` : ""}</div></div>
       <div id="lplay"></div>
-      ${it.kind === "link" && !hasTr ? "" : `<button class="btn soft lostbtn" id="llost">没跟上 · Lost it${LST.lost.length ? ` <span class="small">(${LST.lost.length})</span>` : ""}</button>
-      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. It doesn't rewind. ${timed && file ? "Afterwards you'll see the exact lines." : it.kind === "link" ? "This page can't see where the other app is, so afterwards you mark the lines yourself." : "Afterwards you'll see roughly where (exact lines need a timed transcript)."}</p>`}
-      ${LST.tap ? `<div id="ltap">${tapHtml(it)}</div>` : hasTr ? `<div class="row" style="gap:6px"><span class="small">文字 Text:</span>${[["hide", "隐藏 Hidden"], ...(timed ? [["follow", "跟着看 Follow"]] : []), ["all", "全文 All"]].map(([m, l]) => `<button class="tagc ${LST.mode === m ? "on" : ""}" data-mode="${m}">${l}</button>`).join("")}${timed && file ? `<button class="tagc ${LST.fix ? "on" : ""}" id="lfix" style="margin-left:auto">⏱ 对时间 Fix timing</button>` : ""}</div>
-        <div class="row" id="lcuectl" style="gap:6px" ${LST.mode === "hide" ? "hidden" : ""}><button class="tagc ${pref.tr ? "" : "on"}" data-scr="s">简体</button><button class="tagc ${pref.tr ? "on" : ""}" data-scr="t">繁體</button><button class="tagc ${pref.py ? "on" : ""}" id="lpy">拼音 Pinyin</button><button class="tagc" data-fs="-1" aria-label="Smaller text">字 −</button><button class="tagc" data-fs="1" aria-label="Bigger text">字 +</button></div>
-        <div id="lfixbox">${LST.fix && LST.mode !== "hide" ? fixHtml(it) : ""}</div>
+      ${it.kind === "link" && !song ? `<button class="btn soft lostbtn" id="llost">没跟上 · Lost it${LST.lost.length ? ` <span class="small">(${LST.lost.length})</span>` : ""}</button>
+      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. This page can't see where the other app is, so afterwards you mark the lines yourself.</p>` : ""}
+      ${LST.tap ? `<div id="ltap">${tapHtml(it)}</div>` : hasTr ? `<div class="row" style="gap:6px"><span class="small">文字 Text:</span>${[["hide", "隐藏 Hidden"], ...(timed ? [["follow", "跟着看 Follow"]] : []), ["all", "全文 All"]].map(([m, l]) => `<button class="tagc ${LST.mode === m ? "on" : ""}" data-mode="${m}">${l}</button>`).join("")}</div>
         <div class="cues ${LST.fix ? "fixing" : ""} ${pref.py ? "py" : ""}" id="lcues" style="--cuefs:${CUE_FS[pref.fs] || 25}px" ${LST.mode === "hide" ? "hidden" : ""}>${cuesHtml(it)}</div>` : ""}
       <button class="btn wide" id="ldone" style="margin-top:18px">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
     <div class="card stack"><span class="label">这一条 · This item</span>
-      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : HOSTED ? `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>` : reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : `<button class="btn soft" id="lqask">请 Claude 出题 · Ask Claude for questions</button>`) : ""}
-      ${hasTr && secs.length > 1 ? `<span class="small muted">文字很长：分成 ${secs.length} 段（每段大约 20 分钟），每段 3 个问题。播放还是一整段；听完以后问你听过的那几段。<br>Long transcript: ${secs.length} sections of about 20 minutes, 3 questions each. It still plays as one piece; afterwards you get the questions for the sections you heard.</span>` : ""}
+      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : HOSTED ? `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>` : reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : "") : ""}
+      ${qBtn ? `<button class="btn ${song ? "ghost" : "soft"}" id="lqask">${song ? "也请 Claude 出题 · Questions anyway (songs usually skip them)" : "请 Claude 出题 · Ask Claude for questions"}</button>` : ""}
+      ${hasTr && secs.length > 1 && !song ? `<span class="small muted">文字很长：分成 ${secs.length} 段（每段大约 20 分钟），每段 3 个问题。播放还是一整段；听完以后问你听过的那几段。<br>Long transcript: ${secs.length} sections of about 20 minutes, 3 questions each. It still plays as one piece; afterwards you get the questions for the sections you heard.</span>` : ""}
       ${file && hasTr && !timed && !LST.tap ? `<button class="btn soft" id="ltapgo">${it.tap && it.tap.length ? `继续打拍子 Continue tapping along (${it.tap.length}/${it.cues.length})` : "打拍子对时间 · Tap along to time the lines"}</button><span class="small muted" style="margin-top:-6px">No timings? Play it once and tap as each line starts; then the text can follow along.</span>` : ""}
       ${LST.edit ? `<div class="stack" style="gap:8px">${trEditorHtml(LST.edit)}<div id="lerr" class="small" style="color:var(--bad)"></div>
           <div class="row"><button class="btn" id="ltrsave">保存文字 Save transcript</button><button class="btn ghost" id="ltrcancel">取消 Cancel</button></div>
           ${hasTr ? `<span class="small muted">换文字会删掉根据旧文字出的问题和对好的时间 · Replacing it removes questions and timing fixes made for the old one.</span>` : ""}</div>`
-        : `${!hasTr ? `<span class="small muted">没有文字：只有播放和“没跟上”记录。 No transcript yet: player and "lost it" marks only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? "换文字 Replace transcript / lyrics" : "加文字 Add transcript / lyrics"}</button>`}
+        : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? "换文字 Replace transcript / lyrics" : "加文字 Add transcript / lyrics"}</button>`}
       <div id="lqs" class="small muted"></div>
       <div id="r2item" class="stack" style="gap:6px"></div>
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
   $("#lback", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
-  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = $("#lcuectl", main).hidden = LST.mode === "hide"; drawFix(); syncCue(it); });
-  const bindCues = () => {
-    $$("#lcues .tk", main).forEach(el => el.onclick = e => {
-      if (LST.fix) return; e.stopPropagation();
-      const [pi, ti] = el.dataset.k.split(":").map(Number); LST.looked.add(el.dataset.k); el.classList.add("looked");
-      openSheet(Object.assign(pp, { trad: cuePref().tr }), LST.ptoks.map(l => l.map(t => t.s)), pi, ti, el);
-    });
-    $$("[data-go]", main).forEach(b => b.onclick = e => { if (LST.fix) return; e.stopPropagation(); const t = cueT(it, +b.dataset.go); if (AUD && AUD_ID === it.id && t != null) { AUD.currentTime = t; AUD.play(); } });
-    $$("#lcues .cue", main).forEach(el => el.onclick = () => {
-      if (!LST.fix) return;
-      if (!AUD || AUD_ID !== it.id || (AUD.paused && !AUD.currentTime)) return toast("先播放，听到那一句再点 · Play first, then tap a line as you hear it start", 3000);
-      anchorLine(it, +el.dataset.ci, AUD.currentTime); el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
-      drawFix(); LAST_CUE = -1; syncCue(it);
-    });
+  $("#ltype", main).onclick = () => { it.type = song ? "talk" : "song"; it.typeMan = true; it.u = now(); save(); toast(song ? "改成谈话（播客、视频、对话）· Now talk" : "改成歌 · Now a song"); renderListenItem(main, it); };
+  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; if (LST.mode === "hide" && LST.fix) { LST.fix = false; LST.sel = null; const f = $("#lfix", main); if (f) f.classList.remove("on"); drawTiming(it); } fitCues(); syncCue(it); });
+  const aa = $("#laa", main); if (aa) aa.onclick = () => toggleAa(it, aa);
+  const fx = $("#lfix", main); if (fx) fx.onclick = () => {
+    LST.fix = !LST.fix; LST.sel = null; LST.tmsg = null; fx.classList.toggle("on", LST.fix);
+    if (LST.fix && LST.mode === "hide") { LST.mode = "follow"; renderListenItem(main, it); return; }
+    $("#lcues", main).classList.toggle("fixing", LST.fix); refreshMarks(it); drawTiming(it);
   };
-  const redrawCues = () => { const box = $("#lcues", main); if (!box) return; box.innerHTML = cuesHtml(it); box.style.setProperty("--cuefs", (CUE_FS[cuePref().fs] || 25) + "px"); box.classList.toggle("py", cuePref().py); bindCues(); LAST_CUE = -1; syncCue(it); };
-  const drawFix = () => {
-    const box = $("#lfixbox", main); if (!box) return;
-    box.innerHTML = LST.fix && LST.mode !== "hide" ? fixHtml(it) : ""; $("#lcues", main).classList.toggle("fixing", !!LST.fix);
-    const fb = $("#lfix", main); if (fb) fb.classList.toggle("on", !!LST.fix);
-    $$("[data-nudge]", box).forEach(b => b.onclick = () => { nudgeTiming(it, +b.dataset.nudge); drawFix(); LAST_CUE = -1; syncCue(it); });
-    const rs = $("#fixreset", box); if (rs) rs.onclick = () => { delete it.tm; it.u = now(); save(); drawFix(); LAST_CUE = -1; syncCue(it); };
-    const dn = $("#fixdone", box); if (dn) dn.onclick = () => { LST.fix = false; drawFix(); };
-  };
-  const fx = $("#lfix", main); if (fx) fx.onclick = () => { LST.fix = !LST.fix; if (LST.fix && LST.mode === "hide") { LST.mode = "follow"; renderListenItem(main, it); return; } drawFix(); };
-  drawFix();
-  $$("[data-fs]", main).forEach(b => b.onclick = () => { setCuePref({ fs: Math.max(0, Math.min(CUE_FS.length - 1, cuePref().fs + +b.dataset.fs)) }); redrawCues(); });
-  const py = $("#lpy", main); if (py) py.onclick = () => { setCuePref({ py: !cuePref().py }); py.classList.toggle("on", cuePref().py); redrawCues(); };
-  $$("[data-scr]", main).forEach(b => b.onclick = async () => {
-    const tr = b.dataset.scr === "t";
-    if (!ZHC) { const l = b.textContent; b.innerHTML = '<span class="spin"></span> ' + l; try { await loadZhc(); } catch (e) { b.textContent = l; return toast("简繁字表要联网下载一次 · The simplified/traditional table needs to download once (go online)", 4000); } b.textContent = l; }
-    setCuePref({ tr }); $$("[data-scr]", main).forEach(x => x.classList.toggle("on", x === b)); redrawCues();
-  });
-  if (hasTr && !ZHC) loadZhc().then(() => { if ($("#lcues", main)) redrawCues(); }).catch(() => {});
-  bindCues();
-  if ($("#llost", main)) $("#llost", main).onclick = () => {
-    LST.lost.push(file && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null);
-    const b = $("#llost", main); b.innerHTML = `没跟上 · Lost it <span class="small">(${LST.lost.length})</span>`; b.classList.remove("pop"); void b.offsetWidth; b.classList.add("combo", "pop"); setTimeout(() => b.classList.remove("combo"), 400);
-  };
+  if (hasTr && !ZHC) loadZhc().then(() => { if ($("#lcues", main) && LST && LST.id === it.id) redrawCues(it); }).catch(() => {});
+  bindCues(it);
+  const lostTap = b => { LST.lost.push(file && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null); b.innerHTML = `没跟上${LST.lost.length ? ` (${LST.lost.length})` : ""}`; b.classList.remove("pop"); void b.offsetWidth; b.classList.add("combo", "pop"); setTimeout(() => b.classList.remove("combo"), 400); };
+  LST.lostTap = lostTap;
+  if ($("#llost", main)) $("#llost", main).onclick = () => { lostTap($("#llost", main)); $("#llost", main).innerHTML = `没跟上 · Lost it <span class="small">(${LST.lost.length})</span>`; };
   // tap along (untimed text): one tap per line start; the taps are kept on the item until every line has one
   const drawTap = () => {
     const box = $("#ltap", main); if (!box) return; box.innerHTML = tapHtml(it);
     $("#tapgo", box).onclick = () => {
       if (!AUD || AUD_ID !== it.id) return toast("音频还没准备好 · The audio isn't ready yet", 2500);
       if (AUD.paused) { AUD.play().then(drawTap).catch(() => toast("播放不了这个文件 · Can't play this file")); return; }
-      const st = it.tap = it.tap || [], t = Math.max(0, AUD.currentTime - TAP_LAG);
+      const st = it.tap = it.tap || [], t = Math.max(0, AUD.currentTime - tapLag());
       st.push(+(st.length ? Math.max(st[st.length - 1] + 0.05, t) : t).toFixed(2)); it.u = now();
       if (st.length >= it.cues.length) {
-        it.cues = it.cues.map((c, i) => [st[i], c[1]]); delete it.tap; delete it.tm; delete it.secs; save();
-        LST.tap = false; LST.mode = "follow"; toast("时间对好了 · Timed! The text can follow along now; 对时间 fine-tunes it.", 4000); renderListenItem(main, it); return;
+        it.cues = it.cues.map((c, i) => [st[i], c[1]]); for (const k of ["tap", "tm", "fix", "secs"]) delete it[k]; save();
+        LST.tap = false; LST.mode = "follow"; toast("时间对好了 · Timed! The text can follow along now; ⏱ 对时间 fine-tunes it.", 4000); renderListenItem(main, it); return;
       }
       save(); drawTap();
     };
@@ -3610,13 +3712,14 @@ function renderListenItem(main, it) {
     $("#tapstop", box).onclick = () => { LST.tap = false; if (AUD) AUD.pause(); renderListenItem(main, it); };
   };
   const tg = $("#ltapgo", main); if (tg) tg.onclick = () => { LST.tap = true; if (it.tap && it.tap.length && AUD && AUD_ID === it.id) AUD.currentTime = Math.max(0, it.tap[it.tap.length - 1] - 2); renderListenItem(main, it); };
-  if (LST.tap) { drawTap(); LST.onplay = drawTap; } else LST.onplay = null;
+  LST.onplay = () => { if (LST.tap) drawTap(); if (LST.fix && !(LST.tmsg && now() < LST.tmsgT)) drawTiming(it); };
+  if (LST.tap) drawTap();
   $("#ldone", main).onclick = () => {
     if (AUD) AUD.pause(); closeSheet();
     (S.lsn = S.lsn || {})[it.id] = ((S.lsn || {})[it.id] || []).concat([{ t: now(), lost: LST.lost.slice() }]).slice(-20);
     save();
     const qlist = listenQuizList(it);
-    Object.assign(LST, { review: true, quiz: qlist.length > 0, qlist, qi: 0, score: 0, looked: new Set(), tap: false, fix: false }); render(); window.scrollTo(0, 0);
+    Object.assign(LST, { review: true, quiz: qlist.length > 0, qlist, qi: 0, score: 0, looked: new Set(), tap: false, fix: false, sel: null }); render(); window.scrollTo(0, 0);
   };
   const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
   const lqa = $("#lqask", main); if (lqa) lqa.onclick = () => { addReq({ rid: "q:listen:" + it.id, kind: "questions", target: "listen", id: it.id }); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
@@ -3632,7 +3735,9 @@ function renderListenItem(main, it) {
       if (n > LISTEN_TR_MAX) return err(`文字太长（${n} 字，最多 ${LISTEN_TR_MAX}）· Transcript too long (${n} characters; max ${LISTEN_TR_MAX}).`);
       const total = S.gen.listen.reduce((a, x) => a + (x === it ? 0 : cueChars(x.cues)), 0);
       if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了 · Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
-      it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs"]) delete it[k]; it.u = now(); save();
+      it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs", "fix"]) delete it[k];
+      if (!it.typeMan) it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: it.dur });
+      it.u = now(); save(); LST.tundo = []; LST.sel = null;
       LST.edit = null; LAST_CUE = -1; toast(`文字已保存 · Transcript saved (${cues.length} lines${isTimed(it) ? ", timed" : ""})`); renderListenItem(main, it);
     };
   }
@@ -3640,7 +3745,7 @@ function renderListenItem(main, it) {
     stopAudio(); closeSheet(); const e = trashListen(it); LST = null; render();
     toastAction("已删除，可以在“进度 → 最近删除”找回 · Deleted (Progress → Recently deleted)", "撤销 Undo", () => { restoreTrash(e); render(); }, 5000);
   };
-  drawPlayer(it); drawR2Item(it);
+  drawPlayer(it); drawR2Item(it); fitCues();
 }
 // questions after listening: with sections, the ones for the sections you heard this time (all of them for links,
 // or if nothing was played)
@@ -3663,6 +3768,7 @@ async function drawR2Item(it) {
 async function drawPlayer(it) {
   const box = $("#lplay"); if (!box) return;
   if (it.kind === "link") {
+    dropBar();
     box.innerHTML = `<a class="btn wide" href="${esc(it.url)}" target="_blank" rel="noopener">打开 Open ↗</a><p class="small muted">It plays in its own app or site; come back here to tap "Lost it" and Done.</p>`;
     return;
   }
@@ -3684,29 +3790,40 @@ async function drawPlayer(it) {
     if (!AUD) { AUD = document.createElement("audio"); AUD.preload = "metadata"; AUD.hidden = true; document.body.append(AUD); }
     AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; AUD.playbackRate = LST.rate || 1;
   }
-  const rates = [0.75, 0.9, 1, 1.25];
-  box.innerHTML = `<div class="stack" style="gap:8px">
+  // the player: a bar pinned above the tabs, so you can stay on the transcript and still scrub, skip, pause,
+  // change speed (tap to cycle) and, for talk, tap "lost it"; the timing tools appear on top of it while fixing
+  box.innerHTML = "";
+  dropBar(true);
+  const rates = [0.75, 0.9, 1, 1.25], talk = itemType(it) !== "song";
+  const bar = document.createElement("div"); bar.className = "lbar"; bar.id = "lbar";
+  bar.innerHTML = `<div class="in"><div id="ltime"></div>
     <input type="range" id="lseek" min="0" max="1000" value="0" aria-label="Position">
-    <div class="spread small muted"><span id="lpos">0:00</span><span id="ldur"></span></div>
-    <div class="row" style="justify-content:center;gap:8px"><button class="btn ghost" id="lb5">⟲ 5s</button><button class="btn" id="lpp" style="min-width:96px">▶ 播放</button><button class="btn ghost" id="lf5">5s ⟳</button></div>
-    <div class="row" style="justify-content:center;gap:6px">${rates.map(r => `<button class="tagc ${(LST.rate || 1) === r ? "on" : ""}" data-rate="${r}">${r}×</button>`).join("")}</div></div>`;
+    <div class="lctl"><span class="small muted lt" id="lpos">0:00</span><button class="btn ghost" id="lb5" aria-label="Back 5 s">⟲5</button><button class="btn" id="lpp" aria-label="Play">▶</button><button class="btn ghost" id="lf5" aria-label="Forward 5 s">5⟳</button><button class="tagc" id="lrate">${LST.rate || 1}×</button>${talk ? `<button class="btn soft" id="llostb">没跟上${LST.lost.length ? ` (${LST.lost.length})` : ""}</button>` : ""}<span class="small muted lt" id="ldur"></span></div></div>`;
+  document.body.append(bar); placeBar();
   const pp = $("#lpp"), seek = $("#lseek");
   const draw = () => {
-    if (!$("#lpp")) return;
-    pp.textContent = AUD.paused ? "▶ 播放" : "❚❚ 暂停";
+    if (!$("#lpp") || AUD_ID !== it.id) return;
+    pp.textContent = AUD.paused ? "▶" : "❚❚";
     if (isFinite(AUD.duration)) { $("#ldur").textContent = fmtT(AUD.duration); if (!seek.matches(":active")) seek.value = Math.round(AUD.currentTime / AUD.duration * 1000); }
-    $("#lpos").textContent = fmtT(AUD.currentTime); syncCue(it);
+    $("#lpos").textContent = fmtT(AUD.currentTime);
+    if (LST && LST.stopAt != null && AUD.currentTime >= LST.stopAt) { LST.stopAt = null; AUD.pause(); }
+    syncCue(it);
     if (LST && LST.id === it.id && !AUD.paused) { if (LST.fromT == null) LST.fromT = AUD.currentTime; LST.maxT = Math.max(LST.maxT || 0, AUD.currentTime); }
   };
   const pd = () => { draw(); if (LST && LST.id === it.id && LST.onplay) LST.onplay(); };
   AUD.ontimeupdate = draw; AUD.onplay = pd; AUD.onpause = pd; AUD.onloadedmetadata = draw; AUD.onended = draw;
-  pp.onclick = () => { if (AUD.paused) { LST.play = true; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
+  pp.onclick = () => { if (AUD.paused) { LST.play = true; LST.stopAt = null; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
   $("#lb5").onclick = () => { AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
   $("#lf5").onclick = () => { AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };
   seek.oninput = () => { if (isFinite(AUD.duration)) AUD.currentTime = seek.value / 1000 * AUD.duration; };
-  $$("[data-rate]").forEach(b => b.onclick = () => { LST.rate = +b.dataset.rate; AUD.playbackRate = LST.rate; $$("[data-rate]").forEach(x => x.classList.toggle("on", x === b)); });
-  draw();
+  $("#lrate").onclick = () => { const r = rates[(rates.indexOf(LST.rate || 1) + 1) % rates.length]; LST.rate = r; AUD.playbackRate = r; $("#lrate").textContent = r + "×"; };
+  const lb = $("#llostb"); if (lb) lb.onclick = () => LST.lostTap(lb);
+  drawTiming(it);
+  draw(); fitCues();
 }
+// the bar sits just above the tab bar; the page gets room at the bottom so nothing hides under it
+function placeBar() { const bar = $("#lbar"); if (!bar) return; const tabs = $("#tabs"), h = tabs && !tabs.hidden ? tabs.offsetHeight : 0; bar.style.bottom = h + "px"; $("#main").style.paddingBottom = (bar.offsetHeight + h + 24) + "px"; }
+function dropBar(keepPad) { const b = $("#lbar"); if (b) b.remove(); const p = $("#aapop"); if (p && !keepPad) p.remove(); if (!keepPad) $("#main").style.paddingBottom = ""; }
 let LAST_CUE = -1;
 function syncCue(it) {
   if (!LST || !isTimed(it) || !AUD || LST.mode !== "follow") return;
