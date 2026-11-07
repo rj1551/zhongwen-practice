@@ -677,7 +677,7 @@ function changedDocs() {
 }
 // a few seconds after each answer: build the next commit ahead of time (1.5 s later) (see prepare/flush in ghCollection)
 let ghPrepTimer = null;
-function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (OUTBOX && COL && COL.gh && stable(outboxRequests()) !== stable(OUTBOX.requests)) { try { computeOutbox(); } catch (e) {} } if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
+function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (OUTBOX && COL && COL.gh && stable(outboxRequests().concat(checkRequests())) !== stable(OUTBOX.requests)) { try { computeOutbox(); } catch (e) {} } if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
 // putting the app away: write now instead of waiting the 15 s. If the commit is ready, one keepalive request finishes
 // the job even if the tab is closed or the app killed; otherwise the normal write starts (and may be cut off).
 const ghFlush = () => {
@@ -724,6 +724,10 @@ function mergeStates(a, b) {
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
   m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
   m.reqDone = [...new Set([...(m.reqDone || []), ...(o.reqDone || [])])].slice(-500);
+  m.mgDone = [...new Set([...(m.mgDone || []), ...(o.mgDone || [])])].slice(-400);
+  m.mg = byId(m.mg || [], o.mg || [], "k").sort((p, q) => p.t - q.t).slice(-MG_MAX);
+  { const ag = Object.assign({}, o.agree); for (const k in m.agree || {}) ag[k] = byId(m.agree[k], ag[k] || [], 0).sort((p, q) => p[0] - q[0]).slice(-60); m.agree = ag; }
+  for (const k of ["nudge", "ckSum"]) { const x = o[k], y = m[k]; if (x && (!y || (x.t || 0) > (y.t || 0))) m[k] = x; else if (x && y && x.t === y.t && x.seen) m[k] = x; }
   { const rd = new Set(m.reqDone); m.req = byId(m.req || [], o.req || [], "rid").filter(x => !rd.has(x.rid)); }
   m.packLog = byId(m.packLog || [], o.packLog || [], "id").sort((p, q) => q.t - p.t).slice(0, 20);
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
@@ -1366,7 +1370,7 @@ function renderHome(main) {
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
   ${syncWarn()}
-  ${ghHomeCard()}${provGoneCard()}${gradedCard()}
+  ${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
   ${offwCard()}
   ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
   ${reqWaitCard()}
@@ -1392,6 +1396,9 @@ function renderHome(main) {
   const oo = $("#offw-ok", main); if (oo) oo.onclick = () => { S.offwSummary = null; save(); render(); };
   const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
   const bk = $("#backup-go", main); if (bk) bk.onclick = () => setView("me");
+  const ng = $("#nudge-go", main); if (ng) ng.onclick = () => { S.nudge.seen = true; save(); setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
+  const nk = $("#nudge-ok", main); if (nk) nk.onclick = () => { S.nudge.seen = true; save(); render(); };
+  const ck = $("#ck-ok", main); if (ck) ck.onclick = () => { S.ckSum.seen = true; save(); render(); };
   const gf = $("#gh-fix", main); if (gf) gf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#ghcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const pf = $("#prov-fix", main); if (pf) pf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
@@ -1840,6 +1847,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
             ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a", chunkVerdict(g));
           if (!placement) addOverride(fb, item, raw, sc, g._by || G.name);
+          if (G.prov && !placement) recordMG(item.id, raw, g._by || G.name, g._model, sc, chunkVerdict(g));
           if (G.prov && (S.offw || []).length) setTimeout(autoCheck, 4000); // a model is answering again: catch up
         } catch (e) {
           if (cancelled || answered) return;
@@ -2025,6 +2033,7 @@ async function autoCheck() {
       batch.forEach((e, j) => {
         if (!res[j]) return; got++;
         if (e.self != null && e.self < 2 && (+res[j].score || 0) >= 2) sum.raised++;
+        if (batch.by) recordMG(e.id, e.raw, batch.by, batch.real, Math.round(+res[j].score || 0), chunkVerdict(res[j]), Math.round(e.t / 1000));
         if (settleOffline(e, res[j], batch.by)) sum.fine++; else sum.cards++;
         sum.n++;
       });
@@ -2071,7 +2080,7 @@ Also judge the practiced chunk separately: "ok" if the learner used it (or a for
 Reply with only a JSON array, one object per answer in the same order: {"i": answer number, "score": 0-3, "chunk": "ok" | "wrong" | "missing", "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
   const arr = json ? await json(prompt) : await AI.json(prompt, { modelTier: "default", effort: "low" });
   if (!Array.isArray(arr)) throw { code: "invalid_json" };
-  if (arr._by) entries.by = arr._by;
+  if (arr._by) entries.by = arr._by; if (arr._model) entries.real = arr._model;
   return entries.map((e, j) => arr.find(x => x && +x.i === j + 1) || null);
 }
 // one feedback card per block of practice, at the 4th slot
@@ -3484,7 +3493,9 @@ async function provJson(p, prompt, signal) {
   // Gemini 3 models always think first; "low" keeps that short (grading doesn't need long thinking)
   const extra = /generativelanguage\.googleapis/.test(p.base) ? { reasoning_effort: "low" } : {};
   const j = await provCall(p, "/chat/completions", { model: p.model, temperature: 0.2, ...extra, messages: [{ role: "system", content: "You reply with only valid JSON, no other text." }, { role: "user", content: prompt }] }, signal);
-  return parseLooseJson(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content);
+  const out = parseLooseJson(j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content);
+  if (out && typeof out === "object" && j && j.model) Object.defineProperty(out, "_model", { value: String(j.model).replace(/^models\//, ""), enumerable: false });
+  return out;
 }
 // test set: [drill, answer, Claude's score, Claude's chunk verdict or null, where the verdict came from]
 // "app" = graded by Claude inside the app (your real answers); "chat" = written and graded by Claude in the build chat
@@ -3516,7 +3527,7 @@ function gradeOrderHtml(p) {
   };
   return `<div class="stack" style="gap:6px"><span class="small"><b>批改顺序 · Grading order</b> — 第一个用不了就用第二个，都用不了就自己判断，之后自动补批改。<br><span class="muted">If the first can't grade (busy, limit, unreachable, slow), the second does; if neither can, you grade yourself and it's graded automatically later.</span></span>
     ${rows.map((r, i) => `<label class="row" style="gap:8px;align-items:center;flex-wrap:nowrap"><input type="checkbox" data-gro="${r.id}" ${gradeOn(p, r.id) ? "checked" : ""} style="width:22px;height:22px;flex:none">
-      <span class="small" style="flex:1;min-width:0"><b>${i + 1}. ${r.n}</b> · ${esc(r.model)}${status(r) ? `<br><span class="muted">${status(r)}</span>` : ""}</span></label>`).join("")}</div>`;
+      <span class="small" style="flex:1;min-width:0"><b>${i + 1}. ${r.n}</b> · ${esc(r.model)}${status(r) ? `<br><span class="muted">${status(r)}</span>` : ""}${agreeLine(r.id === "gem" ? "Gemini " + r.model.replace(/^gemini-/, "") : provName(r.model)) ? `<br>${agreeLine(r.id === "gem" ? "Gemini " + r.model.replace(/^gemini-/, "") : provName(r.model))}` : ""}</span></label>`).join("")}</div>`;
 }
 function provCard() {
   const p = provGet(), u = PROV_UI;
@@ -4159,6 +4170,7 @@ function applyAnswers(pk, r) {
     doneReq(rid); r.qs++;
   }
   for (const a of Array.isArray(pk.regrades) ? pk.regrades : []) {
+    if (a && String(a.rid || "").startsWith("c:")) { applyCheck(a, r); continue; }
     const rid = String(a && a.rid || ""), q = (S.req || []).find(x => x.rid === rid);
     if (!q) continue; // answered already (another device, or an earlier pack)
     const score = Math.round(+a.score);
@@ -4186,6 +4198,78 @@ function reqWaitCard() {
     <p class="small">${parts.join("<br>")}</p>
     <p class="small muted">Claude 每天的任务会处理（大约凌晨 3:40）；等不及可以在定时任务里点 Run now。<br>Claude's daily run handles these (about 3:40 am); Run now in your scheduled tasks if you can't wait. Words work as plain word cards meanwhile.</p></div>`;
 }
+/* ---------- sample re-check of model grades (step 4d, offline copy) ----------
+   S.mg = the last 100 grades from Gemini / Qwen (live or automatic): {k, id, at (answer time in s), raw, by, real
+   (the model the reply names, e.g. what an alias points to), score, chunk, t}. On days with new ones, the note asks
+   Claude to regrade up to 10 of those from the last 2 days, picked at random (not ones you already sent with 问 Claude).
+   Claude's grade always wins (schedule follows it, and a brief note says how many it changed); a big disagreement
+   (pass/fail flips or 2+ points) is shown like 问 Claude, with a feedback card if the model had passed it.
+   S.agree[model] keeps [t, model score, Claude score] (last 60) for the Another AI card; a nudge to re-run the
+   comparison appears when same pass/fail drops below 80% over the last 30 checks, or the model behind a name changes. */
+const MG_MAX = 100;
+function recordMG(id, raw, by, real, score, chunk, at) {
+  if (HOSTED || !by || by === "Claude") return;
+  if (!at) { const it = S.items[id]; at = it && it.h && it.h.length ? it.h[it.h.length - 1][0] : Math.round(now() / 1000); }
+  const k = id + ":" + at;
+  const prev = (S.mg || []).filter(x => x.by === by && x.real).slice(-1)[0];
+  if (real && prev && prev.real !== real && !(S.nudge && S.nudge.kind === "model" && S.nudge.to === real))
+    S.nudge = { kind: "model", by, from: prev.real, to: real, t: now(), seen: false };
+  S.mg = (S.mg || []).filter(x => x.k !== k).concat([{ k, id, at, raw, by, real: real || "", score, chunk, t: now() }]).slice(-MG_MAX);
+  save();
+}
+function checkRequests() {
+  const done = new Set(S.mgDone || []), asked = new Set((S.req || []).concat().map(x => x.rid).concat(S.reqDone || []));
+  const recent = (S.mg || []).filter(x => now() - x.t < 2 * DAY && !done.has(x.k) && !asked.has("r:" + x.k) && LADDER.has(x.id));
+  return dayShuffle(recent.map(x => x.k)).slice(0, 10).map(k => recent.find(x => x.k === k)).map(x => {
+    const it = LADDER.get(x.id), lp = ladParts(it);
+    return { rid: "c:" + x.k, kind: "check", drill: x.id, en: it.en, ref: [lp.model, ...(it.alt || [])], key: lp.key, answer: x.raw, model: x.by, modelScore: x.score, modelChunk: x.chunk || null };
+  });
+}
+function applyCheck(a, r) {
+  const k = String(a.rid).slice(2), x = (S.mg || []).find(m => m.k === k);
+  if (!x || (S.mgDone || []).includes(k)) return; // unknown or already applied
+  const score = Math.round(+a.score); if (!(score >= 0 && score <= 3) || !LADDER.has(x.id)) { r.bad++; return; }
+  const g = { score, chunk: ["ok", "wrong", "missing"].includes(a.chunk) ? a.chunk : "ok", fixed: String(a.fixed || ""), notes: (Array.isArray(a.notes) ? a.notes : []).slice(0, 3).map(String) };
+  S.mgDone = (S.mgDone || []).concat([k]).slice(-400);
+  const key = x.by; S.agree = Object.assign({}, S.agree); S.agree[key] = (S.agree[key] || []).concat([[now(), x.score, g.score]]).slice(-60);
+  const changed = g.score !== x.score || g.chunk !== (x.chunk || "ok");
+  const big = (g.score >= 2) !== (x.score >= 2) || Math.abs(g.score - x.score) >= 2;
+  if (changed) { // Claude's grade wins: the schedule follows it
+    const it = S.items[x.id];
+    if (it && it.h) { let best = null; for (const e of it.h) if (Math.abs(e[0] - x.at) <= 5 && (!best || Math.abs(e[0] - x.at) < Math.abs(best[0] - x.at))) best = e; if (best) { best[4] = [g.score, g.chunk]; if (FSRS_KINDS.has(it.t)) fsrsReplay(it); } }
+  }
+  if (big) {
+    const item = LADDER.get(x.id);
+    (S.graded = S.graded || []).unshift({ k: "c:" + k, id: x.id, en: item.en, raw: x.raw, score: g.score, self: null, fixed: g.fixed, good: "", notes: g.notes, model: ladParts(item).model, t: now(), seen: false, by: "Claude", was: x.score, wasBy: x.by, check: true });
+    S.graded = S.graded.slice(0, 20);
+    if (x.score >= 2 && (g.score < 2 || g.chunk !== "ok")) (S.offfb = S.offfb || []).unshift({ k: "c:" + k, id: x.id, raw: x.raw, score: g.score, self: null, by: "Claude", fixed: g.fixed, notes: g.notes, t: x.at * 1000, seen: false });
+  }
+  const cs = S.ckSum && !S.ckSum.seen ? S.ckSum : { n: 0, changed: 0, big: 0, by: {} };
+  cs.n++; if (changed) cs.changed++; if (big) cs.big++; cs.by = Object.assign({}, cs.by, { [key]: 1 }); cs.t = now(); cs.seen = false; S.ckSum = cs;
+  // agreement slipping?
+  const last = S.agree[key].slice(-30);
+  if (last.length >= 30) { const same = last.filter(v => (v[1] >= 2) === (v[2] >= 2)).length / last.length;
+    if (same < 0.8 && !(S.nudge && S.nudge.kind === "low" && S.nudge.by === key && now() - S.nudge.t < 7 * DAY)) S.nudge = { kind: "low", by: key, pct: Math.round(same * 100), t: now(), seen: false }; }
+  r.ck++;
+}
+function agreeLine(key) {
+  const a = (S.agree || {})[key] || []; if (!a.length) return "";
+  const l = a.slice(-50), n = l.length, same = l.filter(v => v[1] === v[2]).length, pf = l.filter(v => (v[1] >= 2) === (v[2] >= 2)).length;
+  const strict = l.filter(v => v[1] < v[2]).length, len = l.filter(v => v[1] > v[2]).length;
+  const real = ((S.mg || []).filter(x => x.by === key && x.real).slice(-1)[0] || {}).real;
+  return `<span class="small">Claude 抽查 · Claude's checks${real && real !== key.replace(/^Gemini /, "gemini-") ? ` <span class="muted">(${esc(real)})</span>` : ""}: 分数一样 same score <b>${same}/${n}</b> · 对/不对一致 same pass/fail <b>${pf}/${n}</b> · 比 Claude 严 stricter ${strict} · 松 more lenient ${len}</span>`;
+}
+function checkHomeCards() {
+  if (HOSTED) return "";
+  let h = "";
+  const nd = S.nudge;
+  if (nd && !nd.seen) h += `<div class="card stack"><span class="label">该重新比较了 · Time to re-compare models</span>
+    <p class="small">${nd.kind === "model" ? `「${esc(nd.by)}」背后的模型换了：${esc(nd.from)} → ${esc(nd.to)}。<br>The model behind ${esc(nd.by)} changed (${esc(nd.from)} → ${esc(nd.to)}). Its grading may have changed too.` : `Claude 最近 30 次抽查里，${esc(nd.by)} 只有 ${nd.pct}% 的对/不对和 Claude 一样。<br>In Claude's last 30 checks, ${esc(nd.by)} agreed with Claude on pass/fail only ${nd.pct}% of the time (threshold 80%).`} 可以再跑一次比较测试 · Worth running the comparison again.</p>
+    <div class="row"><button class="btn soft" id="nudge-go">去比较 Open the comparison</button><button class="btn ghost" id="nudge-ok">知道了 Got it</button></div></div>`;
+  const cs = S.ckSum;
+  if (cs && !cs.seen && cs.n) h += `<div class="card"><p class="small">🔍 Claude 抽查了 ${cs.n} 句${Object.keys(cs.by || {}).map(esc).join("、")}的批改，改了 ${cs.changed} 句${cs.big ? `（${cs.big} 句差得多，见上面）` : ""}，复习安排已经按 Claude 的算。<br>Claude checked ${cs.n} of ${Object.keys(cs.by || {}).map(esc).join(" / ")}'s grades and changed ${cs.changed}${cs.big ? ` (${cs.big} by a lot, shown above)` : ""}; your schedule follows Claude.</p><button class="btn ghost" id="ck-ok">知道了 Got it</button></div>`;
+  return h;
+}
 const readPerDay = () => +(((S.settings || {}).reading || {}).perDay) || 0.5;
 const readGenres = () => { const g = ((S.settings || {}).reading || {}).genres; return Array.isArray(g) && g.length ? g : null; }; // null = auto
 function packIdOk(id) { return typeof id === "string" && /^[\w.-]{1,60}$/.test(id); }
@@ -4196,7 +4280,7 @@ function parsePack(text) {
 }
 function applyPack(pk, src) {
   if ((S.packsDone || []).includes(pk.id)) return { dup: true, lad: 0, sen: 0, psg: 0, bad: 0 };
-  const pre = "K" + pk.id.replace(/[^\w]/g, "") + "-", r = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0 };
+  const pre = "K" + pk.id.replace(/[^\w]/g, "") + "-", r = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0, ck: 0 };
   (Array.isArray(pk.ladder) ? pk.ladder : []).forEach((x, i) => {
     const id = pre + "L" + i; if (LADDER.has(id)) return;
     const it = makeLadder(x, id); if (!it) { r.bad++; return; }
@@ -4219,11 +4303,11 @@ function applyPack(pk, src) {
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
-  const tot = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0 }; let n = 0;
+  const tot = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0, ck: 0 }; let n = 0;
   for (const pk of COL.packs()) {
     if ((S.packsDone || []).includes(pk.id)) continue;
     try { const r = applyPack(pk, "repo"); n++; for (const k in tot) tot[k] += r[k] || 0; } catch (e) {}
@@ -4264,7 +4348,7 @@ function computeOutbox() {
     covered: f.days, unreadPassages: f.unread, perDay: f.perDay, short: shortage(f, cfg),
     room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
     reading: { perDay: readPerDay(), genres: readGenres() || "auto" },
-    hints: genHints(), requests: outboxRequests(), packsDone: (S.packsDone || []).slice(-60) };
+    hints: genHints(), requests: outboxRequests().concat(checkRequests()), packsDone: (S.packsDone || []).slice(-60) };
   OUTBOX_AT = now(); OUTBOX_DIRTY = true;
   return OUTBOX;
 }

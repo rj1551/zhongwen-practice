@@ -149,7 +149,7 @@ if (pk.regrades !== undefined) {
     if (pk.regrades.length > CAP.regrades) problems.push(`regrades: ${pk.regrades.length}, the per-run cap is ${CAP.regrades}`);
     pk.regrades.forEach((a, i) => {
       const at = `regrades[${i}]` + (a && a.rid ? ` ${a.rid}` : "");
-      if (!a || !reqs.has(a.rid) || reqs.get(a.rid).kind !== "regrade") { problems.push(at + ": rid must be a regrade request in outbox.json"); return; }
+      if (!a || !reqs.has(a.rid) || !["regrade", "check"].includes(reqs.get(a.rid).kind)) { problems.push(at + ": rid must be a regrade or check request in outbox.json"); return; }
       if (!Number.isInteger(a.score) || a.score < 0 || a.score > 3) problems.push(at + ": score must be 0, 1, 2 or 3");
       if (!["ok", "wrong", "missing"].includes(a.chunk)) problems.push(at + ': chunk must be "ok", "wrong" or "missing"');
       if (!Array.isArray(a.notes)) problems.push(at + ": notes must be an array (can be empty)");

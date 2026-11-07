@@ -11,7 +11,7 @@ and spend as little as possible.
 - Write only `packs/<id>.json`, and delete only the old packs `check-pack.js --cleanup` lists. Never edit
   `progress/`, `outbox.json`, the README, or anything in zhongwen-practice.
 - Per run at most **40 drills, 60 parsing sentences, 6 passages, 100 example sentences, 10 question sets,
-  30 regrades** (the learner agreed to these caps). Bigger gaps and longer request lists are handled over several days.
+  30 regrades (including checks)** (the learner agreed to these caps). Bigger gaps and longer request lists are handled over several days.
 - **Requests first**: they're the learner's own asks. Then top up the stock with what's left of the caps.
 - Every pack must pass `node tools/daily-run/check-pack.js` before it's committed.
 
@@ -151,6 +151,11 @@ Each has a `rid` (copy it exactly into the answer) and a `kind`:
   from the reference; mention more idiomatic options in the notes without lowering the score. Score the sentence
   on its own; the practiced chunk is judged only in "chunk" ("ok" used correctly, "wrong" used incorrectly,
   "missing" not there). Don't penalize punctuation.
+- **`check`** `{rid: "c:<drill>:<time>", …same fields as regrade}`: a random sample (up to 10 a day) of grades
+  Gemini/Qwen gave recently, for you to regrade so the app can track how often they agree with you. Grade each
+  exactly like a regrade, **without looking at `modelScore` first** (grade the answer, then compare), and answer in
+  the same `"regrades"` array with the `c:` rid. Your grade wins in the learner's schedule. Checks count toward the
+  30-regrade cap; do `regrade` requests (the learner's own asks) first.
 - **`passage`** `{rid: "p:…", genre: xhs|news|book|travel|null, topic}`: the learner asked for one more passage.
   Write it like any passage (genre as asked, or your choice; on the topic if given) and add `"rid": "<rid>"` to
   that passage object.
