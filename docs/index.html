@@ -1382,10 +1382,24 @@ function doneToday() {
 // No clock is ever shown. Time only counts while the page is visible; answers far slower than
 // your own usual pace are treated as interruptions and their time is ignored.
 function makeTimer() {
-  let acc = 0, start = document.hidden ? null : now();
-  const onVis = () => { if (document.hidden) { if (start) { acc += now() - start; start = null; } } else if (start == null) start = now(); };
+  let acc = 0, start = document.hidden ? null : now(), held = false;
+  const onVis = () => { if (document.hidden) { if (start) { acc += now() - start; start = null; } } else if (start == null && !held) start = now(); };
   document.addEventListener("visibilitychange", onVis);
-  return { stop() { if (start) acc += now() - start; start = null; document.removeEventListener("visibilitychange", onVis); return acc; } };
+  return {
+    stop() { if (start) acc += now() - start; start = null; document.removeEventListener("visibilitychange", onVis); return acc; },
+    hold() { held = true; if (start) { acc += now() - start; start = null; } },
+    resume() { held = false; if (start == null && !document.hidden) start = now(); },
+  };
+}
+/* ---- renaming (2026-11-07): own texts (all parts), listening items, Claude's generated passages. Built-in passages
+   keep their titles. The button turns into a box in place; Enter or 保存 saves (synced through it.u), Esc cancels. */
+function renameFlow(btn, current, onSave, onEnd) {
+  const row = document.createElement("div"); row.className = "row"; row.style.cssText = "gap:6px;align-items:center;width:100%";
+  row.innerHTML = `<input class="inp" id="rnin" maxlength="60" lang="zh-CN" style="flex:1;min-width:0" value="${esc(current)}"><button class="btn" id="rnok">保存 Save</button><button class="btn ghost" id="rnno">取消</button>`;
+  btn.replaceWith(row); const inp = $("#rnin", row); inp.focus(); inp.select();
+  const done = ok => { const v = inp.value.replace(/\s+/g, " ").trim(); if (ok) { if (!v) return toast("名字不能是空的 · The name can't be empty"); if (v !== current) { onSave(v); toast("改好了 · Renamed: " + v); } } if (onEnd) onEnd(); };
+  $("#rnok", row).onclick = () => done(true); $("#rnno", row).onclick = () => done(false);
+  inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); done(true); } else if (e.key === "Escape") { e.stopPropagation(); done(false); } };
 }
 const zhLen = s => Array.from(String(s || "")).filter(c => /[\u4e00-\u9fff]/.test(c)).length;
 const TARGET_MS_PER_CHAR = 240; // ≈250 characters a minute: a fluent-learner reading pace
@@ -2748,13 +2762,19 @@ function renderPassage(main) {
   const p = PSG.get(READ.pid);
   const paras = [segmentText(p.mine ? mineTitle(p) : p.title, p.gl || {})].concat(passageTokens(p)); // index 0 = title
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>${READ.re ? `<span class="chip">重读 Re-read</span>` : ""}
-    <label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></div>
+    <span class="row" style="gap:8px">${p.gen || p.mine ? `<button class="tagc" id="pren" aria-label="改名 Rename">✎</button>` : ""}<label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></span></div>
     <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""}" id="rd">
       <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
       ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
     ${READ.re || (p.mine && !(p.qs && p.qs.length)) ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
   $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = p.mine ? { grp: p.grp } : null; render(); };
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
+  const pr = $("#pren"); if (pr) pr.onclick = () => {
+    if (READ.timer && READ.timer.hold) READ.timer.hold();
+    const h = $("#ptitle"), slot = document.createElement("div"); h.before(slot); const b = document.createElement("span"); slot.append(b); h.hidden = true;
+    const grp = p.mine ? S.gen.mine.filter(x => x.grp === p.grp) : [p];
+    renameFlow(b, p.title, v => { grp.forEach(x => { x.title = v; x.u = now(); }); save(); }, () => { if (READ && READ.timer && READ.timer.resume) READ.timer.resume(); renderPassage(main); });
+  };
   READ.paras = paras;
   bindTokens(main, p);
   $("#done").onclick = () => READ.re ? finishReread(main, p) : (p.mine && !(p.qs && p.qs.length)) ? finishMine(main, p) : passageQuiz(main, p);
@@ -3061,6 +3081,7 @@ function renderMineText(main) {
   const p0 = g[0], next = g.find(p => !S.reads[p.id]) || null, needQ = g.filter(p => !(p.qs && p.qs.length));
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button></div>
     <div class="card"><span class="label">我的文章 · Your text</span><h2 class="zh">${esc(p0.title)}</h2>
+      <button class="tagc" id="mren" style="align-self:flex-start">✎ 改名 Rename</button>
       ${tagInput("ttags", (p0.tags || []).join(" "))}
       <button class="btn" id="go">${next ? (S.reads[g[0].id] ? `继续读 Continue: 第${next.part + 1}部分` : g.length > 1 ? "开始读 Start: 第1部分" : "开始读 Start") : "全部读过 ✓ Read again from part 1"}</button>
       ${g.length > 1 ? `<div class="stack" style="gap:6px">${g.map(p => { const r = S.reads[p.id]; return `<button class="pitem ${r ? "done" : ""}" data-part="${esc(p.id)}" style="padding:10px 14px"><div class="row"><b>第${p.part + 1}部分</b><span class="small muted">${charCount(p.paras.join("").replace(/[|\/]/g, ""))} 字${r ? ` · ✓ ${r.cpm} 字/分` : ""}${p.qs && p.qs.length ? " · 有问题" : ""}</span></div><span class="small muted zh">${esc(p.paras.join("").replace(/[|\/]/g, "").slice(0, 24))}…</span></button>`; }).join("")}</div>` : ""}
@@ -3069,6 +3090,7 @@ function renderMineText(main) {
       <button class="btn ghost" id="del">删除这篇 Delete this text</button></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
+  $("#mren").onclick = e => renameFlow(e.currentTarget, p0.title, v => { g.forEach(p => { p.title = v; p.u = now(); }); save(); }, () => render());
   $("#ttags").onchange = () => { const tags = parseTags($("#ttags").value); g.forEach(p => { p.tags = tags; p.u = now(); }); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); };
   const open = (p, re) => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!re }; render(); window.scrollTo(0, 0); };
   $("#go").onclick = () => next ? open(next) : open(g[0], true);
@@ -3705,6 +3727,7 @@ function renderListenItem(main, it) {
           ${hasTr ? `<span class="small muted">${trKeepable(it) ? `现在的${song ? "歌词" : "文字"}（和你的时间调整）会留在“之前的”里，随时可以换回来 · The current version and your timing fixes are kept under Earlier versions, so you can switch back.` : "文字很长，旧的不保留；根据旧文字出的问题也会删掉 · Long text: the old version isn't kept, and questions made for it go."}</span>` : ""}</div>`
         : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? (song ? "换歌词 Try other lyrics (LRCLIB or a file)" : "换文字 Replace transcript / lyrics") : "加文字 Add transcript / lyrics"}</button>
           ${(it.trPrev || []).length ? `<div class="stack" style="gap:4px">${it.trLabel ? `<span class="small muted">现在用的 Now using: ${esc(it.trLabel)}</span>` : ""}<span class="small">之前的${song ? "歌词" : "文字"} · Earlier versions (switching keeps the current one here too):</span>${it.trPrev.map((v, k) => `<button class="btn ghost" data-trv="${k}" style="text-align:left;justify-content:flex-start">↩ ${esc(v.label || "之前的 Earlier")} <span class="small muted">· ${v.cues.length} 行${v.fix ? " · 有你的时间调整 your timing fixes" : ""}</span></button>`).join("")}</div>` : ""}`}
+      <button class="tagc" id="lren" style="align-self:flex-start">✎ 改名 Rename</button>
       ${tagInput("ltags", (it.tags || []).join(" "))}
       <div id="lqs" class="small muted"></div>
       <div id="r2item" class="stack" style="gap:6px"></div>
@@ -3759,6 +3782,7 @@ function renderListenItem(main, it) {
     if (song && hasTr && navigator.onLine) { const g = $("#lrgo", main); if (g) g.click(); } // songs: show LRCLIB's other versions straight away
   };
   $$("[data-trv]", main).forEach(b => b.onclick = () => { trSwitch(it, +b.dataset.trv); LST.tundo = []; LST.sel = null; LAST_CUE = -1; toast("换回来了 · Switched; the other version is kept too"); renderListenItem(main, it); });
+  $("#lren", main).onclick = e => renameFlow(e.currentTarget, it.title, v => { it.title = v; it.u = now(); save(); if (plOn(it)) mediaMeta(it); }, () => renderListenItem(main, it));
   const lt = $("#ltags", main); if (lt) { bindTagInput(main); lt.onchange = () => { const tags = parseTags(lt.value); if (tags.length) it.tags = tags; else delete it.tags; it.u = now(); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); }; }
   if (LST.edit) {
     const f = LST.edit, keep = () => { f.tr = $("#ltr", main).value; };

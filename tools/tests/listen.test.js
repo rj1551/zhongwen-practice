@@ -112,6 +112,11 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(vv.now === "我看着你的头发" && vv.fix === 2.5 && vv.prev[0] === "新的第一句", "switching back restores them (fixes too) and keeps the newer ones: " + JSON.stringify(vv));
   await page.fill("#ltags", "周杰伦 KTV"); await page.locator("#ltags").dispatchEvent("change"); await sleep(100);
   ok(JSON.stringify(await page.evaluate(() => S.gen.listen.find(x => x.id === "Atest").tags)) === '["周杰伦","KTV"]', "tags can be changed on a song after adding it");
+  await page.click("#lren"); await page.fill("#rnin", "  新名字  "); await page.press("#rnin", "Enter"); await sleep(150);
+  ok(await page.evaluate(() => S.gen.listen.find(x => x.id === "Atest").title) === "新名字" && (await page.locator("h2").first().textContent()) === "新名字", "a song can be renamed (✎ 改名, Enter saves)");
+  await page.click("#lren"); await page.fill("#rnin", ""); await page.click("#rnok"); await sleep(100);
+  ok(await page.evaluate(() => S.gen.listen.find(x => x.id === "Atest").title) === "新名字", "an empty name is refused");
+  await page.click("#rnno"); await sleep(100);
   await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); delete it.fix; delete it.trPrev; delete it.tags; it.u = now(); save(); });
 
   // ---- 4. player bar + Aa menu + fix timing line by line ----
@@ -314,6 +319,15 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.evaluate(() => { S.gen.trash.slice().forEach(e => purgeTrash(e, true)); save(); render(); });
   ok(cap[0] === 300 && cap[1] && !cap[2], "the bin keeps at most 300; the oldest go for good first: " + cap.join(" "));
   await page.evaluate(() => { S.gen.mine.push({ id: "Mx1p0", grp: "Mx1", part: 0, np: 1, title: "测试文章", mine: true, reg: "mine", t: now() - 1000, paras: ["你好"], gl: {}, en: "" }); indexGen(); save(); });
+  await page.evaluate(() => { S.gen.mine.push({ id: "Mr1p0", grp: "Mr1", part: 0, np: 2, title: "旧标题", mine: true, reg: "mine", t: now() - 1000, paras: ["你好，世界。"], gl: {}, en: "" }, { id: "Mr1p1", grp: "Mr1", part: 1, np: 2, title: "旧标题", mine: true, reg: "mine", t: now() - 1000, paras: ["再见。"], gl: {}, en: "" }); indexGen(); save(); VIEW = "read"; READ = { grp: "Mr1" }; render(); });
+  await sleep(200); await page.click("#mren"); await page.fill("#rnin", "我的新标题"); await page.click("#rnok"); await sleep(150);
+  ok(await page.evaluate(() => S.gen.mine.filter(p => p.grp === "Mr1").every(p => p.title === "我的新标题" && p.u)), "an own text is renamed (all its parts, synced)");
+  await page.click("#go"); await sleep(300);
+  await page.click("#pren"); await sleep(100);
+  const held = await page.evaluate(async () => { const a = READ.timer.stop(); return a; });
+  await page.fill("#rnin", "读的时候改名"); await page.press("#rnin", "Enter"); await sleep(200);
+  ok(await page.evaluate(() => S.gen.mine.find(p => p.id === "Mr1p0").title) === "读的时候改名" && (await page.locator("#ptitle").textContent()).startsWith("读的时候改名"), "…and from the reading page (✎), the title redrawn");
+  await page.evaluate(() => { READ = null; S.gen.mine = S.gen.mine.filter(p => p.grp !== "Mr1"); indexGen(); save(); });
   const mine = await page.evaluate(() => { const other = JSON.parse(JSON.stringify(S)); trashMine([S.gen.mine.find(p => p.id === "Mx1p0")]); S = mergeStates(S, other); indexGen(); return [S.gen.mine.some(p => p.id === "Mx1p0"), PSG.has("Mx1p0")]; });
   ok(!mine[0] && !mine[1], "a deleted own text stays deleted after syncing (the test-reading case)");
 
