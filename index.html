@@ -234,7 +234,7 @@ const pct = x => Math.round((x || 0) * 100) + "%";
 
 /* ============ state & storage ============ */
 const LS_KEY = "zwlgf:state:v1";
-const OFFW_MAX = 50; // offline copy keeps this many written answers for Claude to check later
+const OFFW_MAX = 300; // answers waiting to be graded later (offline copy: graded automatically; was 50 before step 3)
 function freshState() {
   return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [], listen: [] }, best: { combo: 0 } };
 }
@@ -391,7 +391,7 @@ function syncInfo() {
 // Read every document, merge them into what this device has, then write back whatever differs.
 function pullRemote() {
   if (!COL) return SYNCQ;
-  return queueSync(pullInner).then(() => { remoteDirty = true; pushRemote(); processSentences(); });
+  return queueSync(pullInner).then(() => { remoteDirty = true; pushRemote(); processSentences(); if (!HOSTED) autoCheck(); });
 }
 async function pullInner() {
   {
@@ -470,7 +470,7 @@ function keysOf(p) {
   for (const k in p.keys || {}) if (p.keys[k]) keys[k] = p.keys[k];
   for (const k in p.models || {}) if (p.models[k]) models[k] = p.models[k];
   if (p.key) keys[p.base] = p.key; if (p.model) models[p.base] = p.model;
-  return { base: p.base, keys, models, use: !!p.use };
+  return { base: p.base, keys, models, use: !!p.use, grade: { gem: gradeOn(p, "gem"), groq: gradeOn(p, "groq") } };
 }
 function ghKeysPlan(file, cfg) {
   const local = keysOf(provGet()), lfp = stable(local), hasKey = !!Object.keys(local.keys).length;
@@ -480,14 +480,14 @@ function ghKeysPlan(file, cfg) {
   if (rfp === lfp) return { take: null, send: null, fp: lfp };
   const changed = cfg.keysFp === undefined ? hasKey : lfp !== cfg.keysFp;
   if (!changed) return { take: remote, send: null, fp: rfp };
-  const m = { base: local.base || remote.base, keys: Object.assign({}, remote.keys, local.keys), models: Object.assign({}, remote.models, local.models), use: local.use };
+  const m = { base: local.base || remote.base, keys: Object.assign({}, remote.keys, local.keys), models: Object.assign({}, remote.models, local.models), use: local.use, grade: local.grade };
   const mfp = stable(m);
   return { take: mfp !== lfp ? m : null, send: mfp !== rfp ? m : null, fp: mfp };
 }
 function ghKeysApply(m) {
   const p = provGet();
   p.keys = Object.assign({}, m.keys); p.models = Object.assign({}, m.models); p.base = m.base || p.base;
-  p.key = p.keys[p.base] || ""; p.model = p.models[p.base] || ""; p.use = !!m.use;
+  p.key = p.keys[p.base] || ""; p.model = p.models[p.base] || ""; p.use = !!m.use; if (m.grade) p.grade = Object.assign({}, m.grade);
   try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {}
   if (typeof PROV_UI !== "undefined") PROV_UI.models = null;
   const pc = $("#provcard"); if (pc) { pc.innerHTML = provCard(); bindProv(); }
@@ -743,33 +743,93 @@ function drawOffline() {
   if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
   b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
 }
-addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); if (COL) pullRemote(); });
+addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); if (COL) pullRemote(); if (!HOSTED) setTimeout(autoCheck, 2000); });
 addEventListener("offline", () => { ONLINE = false; drawOffline(); });
 let PERSISTED = null;
 
 /* ============ AI (Claude-hosted only) ============ */
 let AI = null;
-// Who grades typed answers: Claude in the hosted version; in the offline copy, the other AI from Progress when it's
-// switched on, has a key and model, and we're online. null = nobody (self-grade).
-function provReady() { if (HOSTED) return false; const p = provGet(); return !!(p.use && p.key && p.model && p.gone !== p.model); }
-// called when a request says the model is retired: stop using it (self-grade) and say so until another is picked
-function provGone(e) {
-  const p = provGet(); if (p.gone === p.model) return; p.gone = p.model; provSet(p);
-  toast(e.message, 9000); if (VIEW === "home" || VIEW === "me") render();
+/* ---------- grading chain (offline copy, step 3, 2026-11-06) ----------
+   Who grades typed answers: Claude in the hosted version. In the offline copy: Gemini Flash-Lite first, then Groq
+   (Qwen), each switched on in Progress → 其他 AI → 批改顺序 and using that service's saved key; null = self-grade.
+   Per answer the next one is tried when the first is busy, over its per-minute limit, unreachable, or slower than
+   15 s. Gemini's daily free limit → skipped until midnight Pacific (when Google resets it). The alias
+   gemini-flash-lite-latest → if it's retired or not in the free tier, gemini-3.5-flash-lite instead (said once). */
+const GEM_BASE = "https://generativelanguage.googleapis.com/v1beta/openai", GROQ_BASE = "https://api.groq.com/openai/v1";
+const GEM_ALIAS = "gemini-flash-lite-latest", GEM_PIN = "gemini-3.5-flash-lite", GROQ_DEF = "qwen/qwen3.8-27b";
+const GRADE_TIMEOUT = 15000;
+// settings (synced with the keys file): p.grade = { gem: on?, groq: on? }; models: Gemini fixed (alias → pin), Groq = its saved model
+const gradeOn = (p, id) => !(p.grade && p.grade[id] === false);
+const keyFor = (p, base) => (p.base && p.base.replace(/\/+$/, "") === base ? p.key : "") || (p.keys || {})[base] || "";
+const groqModel = p => (p.base && p.base.replace(/\/+$/, "") === GROQ_BASE && p.model) || (p.models || {})[GROQ_BASE] || GROQ_DEF;
+// this device's view of each service right now (not synced): skip-until times, daily-limit-until, retired models
+const PST_KEY = "zwlgf:provstate";
+function pstGet() { try { return Object.assign({ skip: {}, day: {}, gone: {} }, JSON.parse(localStorage.getItem(PST_KEY) || "{}")); } catch (e) { return { skip: {}, day: {}, gone: {} }; } }
+function pstSet(x) { try { localStorage.setItem(PST_KEY, JSON.stringify(x)); } catch (e) {} }
+function nextPacificMidnight() {
+  const t = Date.now(), la = new Date(new Date(t).toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+  const off = t - la.getTime(), m = new Date(la); m.setHours(24, 0, 0, 0); return m.getTime() + off + 60000;
 }
+// every service that could grade (on + key + a usable model), with why it's skipped right now, if it is
+function gradeServices() {
+  if (HOSTED) return [];
+  const p = provGet(), st = pstGet(), out = [];
+  const gk = keyFor(p, GEM_BASE);
+  if (gradeOn(p, "gem") && gk) {
+    const model = st.gone[GEM_BASE + "|" + GEM_ALIAS] ? GEM_PIN : GEM_ALIAS;
+    out.push({ id: "gem", base: GEM_BASE, key: gk, model, name: "Gemini " + model.replace(/^gemini-/, ""), gone: !!st.gone[GEM_BASE + "|" + model], day: (st.day.gem || 0) > now() ? st.day.gem : 0, skip: (st.skip.gem || 0) > now() });
+  }
+  const qk = keyFor(p, GROQ_BASE);
+  if (gradeOn(p, "groq") && qk) { const model = groqModel(p); out.push({ id: "groq", base: GROQ_BASE, key: qk, model, name: provName(model), gone: !!st.gone[GROQ_BASE + "|" + model], day: 0, skip: (st.skip.groq || 0) > now() }); }
+  return out;
+}
+const gradeChain = () => gradeServices().filter(x => !x.gone && !x.day && !x.skip);
+function provReady() { return !!gradeChain().length; }
+function chainNote(svc, e) {
+  const st = pstGet();
+  if (e.code === "model_gone") {
+    st.gone[svc.base + "|" + svc.model] = now(); pstSet(st);
+    if (svc.id === "gem" && svc.model === GEM_ALIAS) toast(`${GEM_ALIAS} 现在用不了，改用 ${GEM_PIN} · The Flash-Lite alias isn't usable on your free tier any more, so grading now uses ${GEM_PIN}.`, 9000);
+    else toast(e.message, 9000);
+    if (VIEW === "home" || VIEW === "me") render();
+  } else if (e.code === "rate_limited" && svc.id === "gem" && e.daily) { st.day.gem = nextPacificMidnight(); pstSet(st); }
+  else if (e.code === "rate_limited" || e.code === "busy") { st.skip[svc.id] = now() + Math.max(30000, (e.wait || 0) * 1000); pstSet(st); }
+  else if (e.code === "network" || e.code === "timeout") { st.skip[svc.id] = now() + 60000; pstSet(st); }
+  else if (e.code === "auth") { st.skip[svc.id] = now() + 10 * MIN; pstSet(st); toast(`${svc.name}: ${e.message}`, 6000); }
+}
+// one request through the chain; the reply carries _by = the model that answered
+async function chainJson(prompt) {
+  const list = gradeChain(); let last = { code: "none", message: "没有可用的批改模型 · No grading model available" };
+  for (const svc of list) {
+    const ac = new AbortController(), tm = setTimeout(() => { ac.timedOut = true; ac.abort(); }, GRADE_TIMEOUT);
+    try {
+      const res = await provJson({ base: svc.base, key: svc.key, model: svc.model }, prompt, ac.signal);
+      if (res && typeof res === "object") Object.defineProperty(res, "_by", { value: svc.name, enumerable: false });
+      return res;
+    } catch (e) {
+      e = e || {}; if (e.code === "aborted" && ac.timedOut) e = { code: "timeout", message: "太慢了 · Too slow" };
+      if (e.code === "invalid_json") { last = e; continue; } // a garbled reply: try the next one, don't sideline this one
+      chainNote(svc, e); last = e;
+    } finally { clearTimeout(tm); }
+  }
+  throw Object.assign({}, last, { code: "all_failed", cause: last.code });
+}
+// kept for the home card: a service is switched on but its model was retired and there's no fallback left
+function provGone() {}
 function provGoneCard() {
-  if (HOSTED) return ""; const p = provGet(); if (!p.use || !p.model || p.gone !== p.model) return "";
+  if (HOSTED) return "";
+  const g = gradeServices().filter(x => x.gone); if (!g.length) return "";
   return `<div class="card stack" style="border-color:var(--bad)"><span class="label">需要换模型 · Pick a new model</span>
-    <p class="small">「${esc(p.model)}」用不了了，可能已经停用。在换模型之前，写的句子由你自己判断。<br>${esc(p.model)} isn't available any more (probably retired). Until you pick another one, you grade your own answers.</p>
+    <p class="small">${g.map(x => `「${esc(x.model)}」`).join("")}用不了了，可能已经停用。<br>${g.map(x => esc(x.model)).join(", ")} isn't available any more (probably retired). ${gradeChain().length ? "The other model grades meanwhile." : "Until you pick another one, you grade your own answers."}</p>
     <button class="btn" id="prov-fix">去换模型 Pick a new model</button></div>`;
 }
 const provName = m => String(m || "").split("/").pop().replace(/^qwen/i, "Qwen");
-// the offline copy's queued grades (other AI): retried a moment after start and whenever the app comes back
-document.addEventListener("visibilitychange", () => { if (!document.hidden && !HOSTED) processPending(); });
-if (!HOSTED) setTimeout(() => processPending(), 3000);
+// the offline copy: waiting answers are graded a moment after start and whenever the app comes back
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !HOSTED) { processPending(); autoCheck(); } });
+if (!HOSTED) setTimeout(() => { processPending(); autoCheck(); }, 3000);
 function grader() {
   if (AI) return { json: (pr, o) => AI.json(pr, o), name: "Claude", prov: false };
-  if (ONLINE && provReady()) { const p = provGet(); return { json: pr => provJson(p, pr), name: provName(p.model), prov: true }; }
+  if (ONLINE && provReady()) return { json: pr => chainJson(pr), name: gradeChain()[0].name, prov: true };
   return null;
 }
 if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); }).catch(() => {});
@@ -1754,7 +1814,8 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
       if (G) {
         fb.innerHTML = `<div class="fb mid"><span><span class="spin"></span> 批改中… ${esc(G.name)} is reading your answer</span><button class="btn ghost" id="selfg">不等了，自己判断 Grade it myself</button></div>`;
         let cancelled = false, entry = null;
-        $("#selfg", fb).onclick = () => { cancelled = true; entry = queue(); noClaude(raw, entry, true); };
+        // offline copy: grading yourself instead keeps the answer for the automatic check (a late reply is dropped)
+        $("#selfg", fb).onclick = () => { cancelled = true; if (G.prov) return noClaude(raw); entry = queue(); noClaude(raw, entry, true); };
         try {
           const g = await gradeAI(item, raw, G);
           if (cancelled || answered) { if (entry) settleGrade(entry, g); return; }
@@ -1764,17 +1825,13 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
             ${g.fixed && norm(g.fixed) !== norm(raw) ? `<span>改一改：<span class="zh" style="font-size:17px">${esc(g.fixed)}</span></span>` : ""}
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
             ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a", chunkVerdict(g));
-          if (!placement) addOverride(fb, item, raw, sc, G.name);
+          if (!placement) addOverride(fb, item, raw, sc, g._by || G.name);
+          if (G.prov && (S.offw || []).length) setTimeout(autoCheck, 4000); // a model is answering again: catch up
         } catch (e) {
           if (cancelled || answered) return;
-          // the other AI: busy / too fast → it grades this later (home card); unreachable (e.g. blocked) or broken →
-          // self-grade, kept for a Claude check later like any offline answer
-          if (G.prov) {
-            if (e && (e.code === "rate_limited" || e.code === "busy")) noClaude(raw, queue(), false);
-            else if (e && e.code === "model_gone") { provGone(e); noClaude(raw); }
-            else { toast(`${G.name} 用不了 · Can't use ${G.name} right now: ${e && e.message || "error"}`, 4000); noClaude(raw); }
-            return;
-          }
+          // the offline copy: every model in the grading order failed (busy, limit, unreachable, slow) → self-grade;
+          // the answer waits with the offline ones and is graded automatically later (autoCheck)
+          if (G.prov) return noClaude(raw);
           const transient = !ONLINE || !e || !e.code || e.code === "upstream_error" || e.code === "rate_limited";
           if (transient && AI) noClaude(raw, queue(), false);
           else { toast(aiErr(e)); noClaude(raw); }
@@ -1787,12 +1844,13 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
     function noClaude(raw, entry, waiting) {
       if (placement || hasChunk(raw, p.key)) return selfGrade(raw, entry, waiting);
       if (entry) { entry.self = 0; save(); } else if (!HOSTED) keepOffline(item, rung, raw, 0);
-      finish(0, `<span>你的：<span class="zh">${esc(raw)}</span></span>${entry || !HOSTED ? `<span class="small muted">${entry ? `${esc(graderName())} 能用了会再看一遍 · ${esc(graderName())} will check it once available.` : "联网后可以让 Claude 再看一遍 · Claude can check it later in the online version."}</span>` : ""}`, "k");
+      finish(0, `<span>你的：<span class="zh">${esc(raw)}</span></span>${entry || !HOSTED ? `<span class="small muted">${entry ? `${esc(graderName())} 能用了会再看一遍 · ${esc(graderName())} will check it once available.` : "之后会自动批改，有问题会出反馈卡 · It'll be graded automatically later; a feedback card comes if something's off."}</span>` : ""}`, "k");
     }
     function selfGrade(raw, entry, waiting) {
       fb.innerHTML = `<div class="fb mid"><span>你的：<span class="zh" style="font-size:18px">${esc(raw)}</span></span>
         <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span>
         ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 3).map(esc).join(" ／ ")}</span>` : ""}
+        ${!entry && !HOSTED && !placement ? `<span class="small">现在没有模型能批改（离线、太忙或额度用完）。先自己判断；之后会自动批改，有问题会出反馈卡。<br>No model can grade right now (offline, busy, or out of free quota). Grade yourself for now; it'll be graded automatically later, and a feedback card comes if something's off.</span>` : ""}
         ${entry ? `<span class="small">${waiting ? `批改到了会放在首页 · ${esc(graderName())}'s feedback will appear on the home screen when it arrives.` : `现在用不了 ${esc(graderName())}（离线、太忙或到了用量上限）。先自己判断；能用了会补批改，结果放在首页。Can't reach ${esc(graderName())} right now (offline, busy, or usage limit), so grade yourself; its feedback will appear on the home screen once it's available again.`}</span>` : ""}
         <span class="small">自己判断 How did you do?</span>
         <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
@@ -1854,7 +1912,8 @@ let OFFW_RUN = null;
 function offwPriority() { const rank = x => x >= 3 ? 0 : x === 2 ? 1 : 2; return (S.offw || []).slice().sort((a, b) => rank(a.self) - rank(b.self) || b.t - a.t); }
 function offwCard() {
   const left = (S.offw || []).length, sum = S.offwSummary;
-  if (!HOSTED || (!left && !sum && !OFFW_RUN)) return "";
+  if (!HOSTED) return autoCard();
+  if (!left && !sum && !OFFW_RUN) return "";
   let h = `<div class="card"><span class="label">离线写的句子 · Answers you wrote offline</span>`;
   if (sum && !OFFW_RUN) h += `<div class="stack" style="gap:6px"><b>检查了 ${sum.n} 句 · Checked ${sum.n}</b>
     <span class="small">✓ <b>${sum.fine}</b> 句没问题 · natural as written</span>
@@ -1899,16 +1958,73 @@ async function checkOffline(n) {
   if (VIEW === "home") render(); else toast(`检查完了 · ${fine} 句没问题${cards ? `，${cards} 张反馈卡` : ""}`);
 }
 // returns true when Claude found nothing to fix
-function settleOffline(e, g) {
+function settleOffline(e, g, by) {
   S.offw = (S.offw || []).filter(x => x.k !== e.k);
   S.offwDone = (S.offwDone || []).concat([e.k]).slice(-400);
   if (!g) return true;
   const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
   regradeLog(e.id, e.t, gradeValue(g));
   if (score >= 3 && chunkVerdict(g) === "ok") return true;
-  (S.offfb = S.offfb || []).unshift({ k: e.k, id: e.id, raw: e.raw, score, self: e.self, fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), t: e.t, seen: false });
+  (S.offfb = S.offfb || []).unshift({ k: e.k, id: e.id, raw: e.raw, score, self: e.self, by: by || (HOSTED ? "Claude" : ""), fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), t: e.t, seen: false });
   S.offfb = S.offfb.slice(0, 60);
   return false;
+}
+/* ---------- offline copy: waiting answers graded automatically (step 3) ----------
+   Answers that weren't graded on the spot (offline, or every model in the grading order unavailable) wait in S.offw
+   and are graded here in batches of 5 (one request each), one batch every 6 s (under Gemini's 15 a minute, with room
+   for live grading). An answer leaves the queue only once its grade is saved, so closing the app mid-run loses at
+   most one request; the rest continue next time. Runs on start, reconnect, return to the app, after a sync brings
+   in answers, and after a live grade. Stops at the first failure; never loops. Same result as the old check:
+   the schedule is corrected, and only answers with a problem become feedback cards. */
+let AUTO = null;
+async function autoCheck() {
+  if (HOSTED || AUTO || !ONLINE || !provReady()) return;
+  // answers queued by older versions as "graded later" join the same route
+  if ((S.pending || []).length) {
+    const old = S.pending.filter(x => !x.pl && (x.self != null || now() - x.t > 5 * MIN));
+    if (old.length) { const ks = new Set(old.map(x => x.k)); S.pending = S.pending.filter(x => !ks.has(x.k)); S.offw = (S.offw || []).concat(old.map(x => ({ k: x.k, id: x.id, rung: x.rung, raw: x.raw, self: x.self, t: x.t }))); save(); }
+  }
+  if (!(S.offw || []).length) return;
+  AUTO = { n: S.offw.length, done: 0 };
+  const sum = Object.assign({ n: 0, fine: 0, cards: 0, raised: 0, failed: false }, S.offwSummary || {}); sum.failed = false;
+  const draw = () => { if (VIEW === "home") render(); };
+  draw();
+  try {
+    while (ONLINE && provReady()) {
+      (S.offw || []).filter(e => !LADDER.has(e.id)).forEach(e => settleOffline(e, null));
+      const batch = offwPriority().slice(0, 5); if (!batch.length) break;
+      let res;
+      try { res = await gradeBatch(batch, chainJson); } catch (e) { sum.failed = true; break; }
+      let got = 0;
+      batch.forEach((e, j) => {
+        if (!res[j]) return; got++;
+        if (e.self != null && e.self < 2 && (+res[j].score || 0) >= 2) sum.raised++;
+        if (settleOffline(e, res[j], batch.by)) sum.fine++; else sum.cards++;
+        sum.n++;
+      });
+      S.offwSummary = Object.assign({}, sum); save(); AUTO.done += batch.length; draw(); // counted as it goes: closing mid-run keeps the tally
+      if (!got) { sum.failed = true; break; } // a reply that matched none of them: don't spin on the same five
+      if (!(S.offw || []).length) break;
+      await new Promise(r => setTimeout(r, 6000));
+    }
+  } finally {
+    AUTO = null;
+    if (sum.n || sum.failed) { S.offwSummary = sum; save(); }
+    draw();
+  }
+}
+function autoCard() {
+  const left = (S.offw || []).length, sum = S.offwSummary;
+  if (!left && !(sum && sum.n) && !AUTO) return `<div id="autocard"></div>`;
+  let h = `<div class="card" id="autocard"><span class="label">之前写的句子 · Answers graded later</span>`;
+  if (AUTO) h += `<p class="small"><span class="spin"></span> 正在批改… Grading ${Math.min(AUTO.done, AUTO.n)}/${AUTO.n}</p>`;
+  if (sum && sum.n && !AUTO) h += `<div class="stack" style="gap:6px"><b>批改了 ${sum.n} 句 · Graded ${sum.n}</b>
+    <span class="small">✓ <b>${sum.fine}</b> 句没问题 · fine as written</span>
+    ${sum.cards ? `<span class="small">✎ <b>${sum.cards}</b> 张反馈卡 · feedback card${sum.cards > 1 ? "s" : ""}<br><span class="muted">会穿插在练习里 · they'll turn up in practice</span></span>` : ""}
+    ${sum.raised ? `<span class="small">↑ <b>${sum.raised}</b> 句你判了"不对"，其实意思对 · you marked ${sum.raised > 1 ? "these" : "this"} wrong but the meaning was right; level raised</span>` : ""}
+    <button class="btn ghost" id="offw-ok">知道了 Got it</button></div>`;
+  if (left && !AUTO) h += `<p class="small${sum && sum.n ? " muted" : ""}">${left} 句等着批改，${ONLINE ? "有模型能用时自动进行" : "联网后自动进行"} · ${left} waiting; graded automatically ${ONLINE ? "as soon as a model is available" : "once you're online"}.</p>`;
+  return h + `</div>`;
 }
 // Claude's verdict on the drill's key chunk: "ok" | "wrong" | "missing" (older replies without it count as ok)
 const chunkVerdict = g => ["ok", "wrong", "missing"].includes(g && g.chunk) ? g.chunk : "ok";
@@ -1918,17 +2034,18 @@ const gradeValue = g => [Math.max(0, Math.min(3, Math.round(+(g && g.score) || 0
 const GRADE_RUBRIC = `3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = wrong meaning or ungrammatical.
 A wrong word or a wrong collocation is a word-choice error, so score it 1 even when the meaning is still clear: a verb–object or adjective–noun pair a native speaker wouldn't use, a word whose meaning doesn't fit, or a word-for-word rendering of an English expression. Score 2 when every word is right but the phrasing or word order is off, or a correct word is too casual or too formal for the context (register is 2, not 1).
 Give 3 to anything a native speaker would naturally say, even if it differs from the reference or a more idiomatic option exists; mention such options in the notes without lowering the score. Score the sentence on its own: whether the practiced chunk was used is judged only in "chunk", so a natural answer without the chunk still scores 3 with "chunk": "missing". Do not penalize punctuation.`;
-async function gradeBatch(entries) {
+async function gradeBatch(entries, json) {
   const list = entries.map((e, i) => { const item = LADDER.get(e.id), p = ladParts(item); return `${i + 1}. English: ${item.en}\n   Reference translations (any natural equivalent is fine): ${[p.model, ...(item.alt || [])].join(" / ")}\n   Chunk being practiced: ${p.key}\n   Learner's answer: ${e.raw}`; }).join("\n\n");
-  const prompt = `You are a precise, encouraging Mandarin tutor grading English→Chinese translations by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks. The learner wrote these offline.
+  const prompt = `You are a precise, encouraging Mandarin tutor grading English→Chinese translations by an advanced reader (HSK 6+ recognition) whose weak spot is production: English word order, long modifiers before nouns, literal word choices, and missing natural chunks. The learner wrote these earlier without instant grading.
 
 ${list}
 
 Score each: ${GRADE_RUBRIC}
 Also judge the practiced chunk separately: "ok" if the learner used it (or a form of it) correctly, "wrong" if they used it incorrectly, "missing" if it isn't in the answer (even if the sentence is otherwise fine).
 Reply with only a JSON array, one object per answer in the same order: {"i": answer number, "score": 0-3, "chunk": "ok" | "wrong" | "missing", "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
-  const arr = await AI.json(prompt, { modelTier: "default", effort: "low" });
+  const arr = json ? await json(prompt) : await AI.json(prompt, { modelTier: "default", effort: "low" });
   if (!Array.isArray(arr)) throw { code: "invalid_json" };
+  if (arr._by) entries.by = arr._by;
   return entries.map((e, j) => arr.find(x => x && +x.i === j + 1) || null);
 }
 // one feedback card per block of practice, at the 4th slot
@@ -1947,11 +2064,11 @@ function renderOfflineFb(k, el, done) {
   if (!f || !item) return done();
   const p = ladParts(item), d = new Date(f.t);
   const selfLab = f.self == null ? "" : ` · 你自评 ${f.self >= 3 ? "对了" : f.self === 2 ? "意思对" : "不对"}`;
-  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">离线写的 · Written offline</span><span class="chip">${d.getMonth() + 1}月${d.getDate()}日</span></div>
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">${f.by && f.by !== "Claude" ? "之前写的 · Written earlier" : "离线写的 · Written offline"}</span><span class="chip">${d.getMonth() + 1}月${d.getDate()}日</span></div>
     <p class="prompt-en">${esc(item.en)}</p>
     <div class="stack" style="gap:4px"><span class="small muted">你当时写的 · What you wrote${selfLab}</span><p class="sent" style="font-size:21px">${esc(f.raw)}</p></div>
-    <div id="ofb" class="stack"><p class="small">能看出哪里不太对吗？先想一想。<br><span class="muted">Claude found something to fix. Can you spot it? Think first, then look.</span></p>
-      <button class="btn wide soft" id="reveal">看 Claude 的意见 Show Claude's note</button></div></div>`;
+    <div id="ofb" class="stack"><p class="small">能看出哪里不太对吗？先想一想。<br><span class="muted">${esc(f.by || "Claude")} found something to fix. Can you spot it? Think first, then look.</span></p>
+      <button class="btn wide soft" id="reveal">看批改意见 Show ${esc(f.by || "Claude")}'s note</button></div></div>`;
   $("#reveal", el).onclick = () => {
     f.seen = true; save();
     $("#ofb", el).innerHTML = `<div class="fb ${f.score === 2 ? "mid" : "no"}"><span class="verdict">${f.score === 2 ? "意思对，可以更地道" : "还不对"}</span>
@@ -1965,6 +2082,7 @@ function renderOfflineFb(k, el, done) {
 }
 let GRADING = false;
 async function processPending() {
+  if (!HOSTED) return autoCheck(); // offline copy: one route for everything graded later (step 3)
   const G = grader();
   if (GRADING || !G || !(S.pending || []).length) return;
   GRADING = true;
@@ -3310,7 +3428,7 @@ async function provCall(p, path, body, signal) {
     let m = ""; try { let j = await r.clone().json(); if (Array.isArray(j)) j = j[0]; m = JSON.stringify((j && j.error) || j || ""); } catch (e) {}
     // Gemini answers a model your free tier doesn't include with 429 "… free_tier … limit: 0": waiting never helps
     if (body && /limit:\s*0\b/i.test(m)) throw { code: "model_gone", message: `「${p.model}」不在你的免费额度里 · ${p.model} isn't included in your free tier. Pick another model in Progress → 其他 AI.` };
-    throw { code: "rate_limited", wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
+    throw { code: "rate_limited", daily: /PerDay|per[ _-]?day|daily/i.test(m), wait: +r.headers.get("retry-after") || 0, message: "太快了或今天的免费额度用完了 · Too fast, or today's free quota is used up (429)" };
   }
   if (r.status === 503) throw { code: "busy", wait: +r.headers.get("retry-after") || 0, message: "服务现在太忙 · The model is over capacity right now (503)" };
   if (!r.ok) {
@@ -3346,6 +3464,22 @@ const PROV_TEST = [
   ["L44", "突然开始下大雨了。", 3, "missing", "chat"], ["L30", "运动在缓解压力方面扮演很大的角色。", 1, "missing", "chat"]
 ];
 let PROV_UI = { models: null, busy: false, err: "", res: null, stop: false };
+// 批改顺序 · Grading order: Gemini Flash-Lite first, Groq second; each with its state on this device right now
+function gradeOrderHtml(p) {
+  const st = pstGet(), rows = [
+    { id: "gem", n: "Gemini", base: GEM_BASE, model: st.gone[GEM_BASE + "|" + GEM_ALIAS] ? GEM_PIN : GEM_ALIAS },
+    { id: "groq", n: "Groq", base: GROQ_BASE, model: groqModel(p) }];
+  const status = r => {
+    if (!keyFor(p, r.base)) return `还没有钥匙：点下面的 ${r.n}，贴上钥匙 · No key yet: tap ${r.n} below and paste it`;
+    if (st.gone[r.base + "|" + r.model]) return `<span style="color:var(--bad)">这个模型停用了 · This model is retired${r.id === "groq" ? ": pick another below (Groq → Load models)" : ""}</span>`;
+    if (r.id === "gem" && (st.day.gem || 0) > now()) { const d = new Date(st.day.gem); return `今天的免费额度用完了，${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")} 恢复（美西午夜）· Today's free quota is used up; back at ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")} (midnight Pacific)`; }
+    if ((st.skip[r.id] || 0) > now()) return "刚才没回应，暂时跳过一会儿 · Didn't answer just now; skipped for a minute";
+    return "";
+  };
+  return `<div class="stack" style="gap:6px"><span class="small"><b>批改顺序 · Grading order</b> — 第一个用不了就用第二个，都用不了就自己判断，之后自动补批改。<br><span class="muted">If the first can't grade (busy, limit, unreachable, slow), the second does; if neither can, you grade yourself and it's graded automatically later.</span></span>
+    ${rows.map((r, i) => `<label class="row" style="gap:8px;align-items:center;flex-wrap:nowrap"><input type="checkbox" data-gro="${r.id}" ${gradeOn(p, r.id) ? "checked" : ""} style="width:22px;height:22px;flex:none">
+      <span class="small" style="flex:1;min-width:0"><b>${i + 1}. ${r.n}</b> · ${esc(r.model)}${status(r) ? `<br><span class="muted">${status(r)}</span>` : ""}</span></label>`).join("")}</div>`;
+}
 function provCard() {
   const p = provGet(), u = PROV_UI;
   const res = u.res || [], done = res.filter(x => x.g), n = done.length;
@@ -3355,8 +3489,7 @@ function provCard() {
   const secs = n ? (done.reduce((a, x) => a + x.ms, 0) / n / 1000).toFixed(1) : 0;
   const ready = !!(p.key && p.model);
   return `<span class="label">其他 AI · Another AI</span>
-    <label class="row" style="gap:8px;align-items:center;flex-wrap:nowrap"><input type="checkbox" id="pvuse" ${p.use ? "checked" : ""} ${ready ? "" : "disabled"} style="width:22px;height:22px;flex:none">
-      <span class="small" style="flex:1;min-width:0"><b>练习时用它批改</b> · Grade practice answers with ${ready ? esc(provName(p.model)) : "it"} when online${ready ? "" : " (load models first)"}</span></label>
+    ${gradeOrderHtml(p)}
     <p class="small muted">${(S.ovr || []).length ? `你改判过 ${S.ovr.length} 次 · You've overridden ${S.ovr.length} grade${S.ovr.length > 1 ? "s" : ""}. ` : ""}比较测试：它给 ${PROV_TEST.length} 个已经由 Claude 批改过的句子打分，和 Claude 的分数并排比较。钥匙存在这台设备上；开了 GitHub 同步的话，也存在你的私有 repo 里，别的设备自动拿到。<br>Comparison test: it grades ${PROV_TEST.length} answers Claude already graded, side by side. The key stays on this device and, with GitHub sync on, in your private repo so your other devices get it (never in a code).</p>
     <div class="row" style="gap:6px">${PROV_PRESETS.map(([n, b]) => `<button class="tagc ${p.base.replace(/\/+$/, "") === b ? "on" : ""}" data-pv="${esc(b)}">${n}</button>`).join("")}</div>
     <input class="inp" id="pvbase" placeholder="API 地址 Address" value="${esc(p.base)}" autocapitalize="off" autocorrect="off" spellcheck="false">
@@ -3391,7 +3524,7 @@ function bindProv() {
   const keep = () => { const p = provGet(); p.base = $("#pvbase").value.trim(); p.key = $("#pvkey").value.trim(); const m = $("#pvmodel"); if (m) p.model = m.value; provSet(p); return p; };
   $("#pvbase").onchange = $("#pvkey").onchange = () => { keep(); redraw(); };
   $$("[data-pv]", card).forEach(b => b.onclick = () => { keep(); provSwitch(b.dataset.pv); PROV_UI.models = null; PROV_UI.err = ""; redraw(); });
-  $("#pvuse").onchange = e => { const p = keep(); p.use = e.target.checked; provSet(p); redraw(); if (p.use) processPending(); };
+  $$("[data-gro]", card).forEach(b => b.onchange = e => { const p = keep(); p.grade = Object.assign({}, p.grade, { [b.dataset.gro]: e.target.checked }); provSet(p); redraw(); if (e.target.checked) autoCheck(); });
   const sel = $("#pvmodel"); if (sel) sel.onchange = () => { keep(); redraw(); };
   $("#pvload").onclick = async () => {
     const p = keep(); if (!p.key) { PROV_UI.err = "先填 API key · Enter the key first"; return redraw(); }
