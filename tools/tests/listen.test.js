@@ -160,6 +160,16 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await sleep(3200); ok(await page.evaluate(() => AUD.paused && AUD.currentTime >= 3.1 && AUD.currentTime < 3.6), "…and stops when the next line starts");
   ok(await page.evaluate(() => { AUD.currentTime = 11; syncCue(S.gen.listen.find(x => x.id === "Afile")); return $(".cue.now").dataset.ci; }) === "2", "follow uses the fixed timing");
   await page.click("#tdone"); await sleep(100); ok(await page.locator("#ltime .tpanel").count() === 0, "好了 closes the timing tools");
+  // leaving fixing mode while ↻ plays: it keeps playing, and Follow moves on normally
+  await page.click("#lfix"); await sleep(100);
+  await page.locator('.cues .cue[data-ci="0"]').click(); await page.click("#tre"); await sleep(300);
+  await page.click("#tdone"); await sleep(3500);
+  const rel = await page.evaluate(() => [AUD.paused, AUD.currentTime, LST.stopAt, $(".cue.now") && $(".cue.now").dataset.ci, document.querySelectorAll(".cue.sel").length]);
+  ok(!rel[0] && rel[1] > 3.3 && rel[2] == null, "好了 during ↻: the song keeps playing past the line instead of stopping: " + rel[1].toFixed(1) + " s");
+  ok(rel[3] === "1" && rel[4] === 0, "…and Follow highlights the playing line, not the one you were fixing (line " + rel[3] + ")");
+  await page.evaluate(() => AUD.pause());
+  const ord = await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Afile"); const save0 = JSON.stringify(it.fix || null); it.fix = { 1: { t: 8, c: false } }; it.u = now(); const r = [cueAt(it, 6), cueAt(it, 9), orderNote(it, 1)]; it.fix = JSON.parse(save0) || undefined; if (!it.fix) delete it.fix; it.u = now(); return r; });
+  ok(ord[0] === 2 && ord[1] === 1 && /下一句/.test(ord[2]), "a line set after the next one: Follow still shows whichever started last, and the bar warns: " + ord.slice(0, 2).join(" "));
   await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Afile"); delete it.fix; delete it.tm; it.type = "talk"; it.u = now(); save(); });
   await openItem("Afile"); await page.waitForSelector("#lpp");
   ok(await page.locator("#llostb").count() === 1 && await page.evaluate(() => LST.mode) === "hide", "talk: 'lost it' in the bar, text starts hidden");

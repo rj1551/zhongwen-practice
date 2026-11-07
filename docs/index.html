@@ -3415,7 +3415,11 @@ function secSpan(it, sec, dur) {
   return [before / n * dur, sec[1] < cues.length ? upto / n * dur : Infinity];
 }
 const secLabel = (it, k, dur) => { const s = (it.secs || [])[k]; const sp = s && secSpan(it, s, dur); return `第${k + 1}段 Part ${k + 1}${sp ? ` (${fmtT(sp[0])}–${sp[1] === Infinity ? (dur ? fmtT(dur) : "end") : fmtT(sp[1])})` : ""}`; };
-function cueAt(it, t) { let i = -1; for (let k = 0; k < it.cues.length; k++) { if (cueT(it, k) <= t + 0.05) i = k; else break; } return i; }
+function cueAt(it, t) {
+  const v = cueTimes(it); let i = -1, best = -Infinity;
+  for (let k = 0; k < v.length; k++) if (v[k] != null && v[k] <= t + 0.05 && v[k] >= best) { best = v[k]; i = k; }
+  return i;
+}
 /* ---- views ---- */
 function renderListen(main) {
   if (LST && LST.add) return renderListenAdd(main);
@@ -3585,10 +3589,10 @@ function drawTiming(it) {
     <div class="spread" style="gap:8px;align-items:flex-start"><span class="small" id="tstat" style="min-height:2.6em">${timingStatus(it)}</span><button class="tagc on" id="tdone" style="flex:none">好了 Done</button></div>
     <div class="tbtns"><button class="tagc" data-tn="-0.1">◀ 早 0.1</button><button class="tagc" id="tre" ${sel == null ? "disabled" : ""}>↻ 听这句</button><button class="tagc" data-tn="0.1">晚 0.1 ▶</button><button class="tagc ${carry ? "on" : ""}" id="tcarry">${carry ? "✓ " : ""}后面跟着</button>${sel != null ? `<button class="tagc" id="tunsel">✕ 不选</button>` : ""}<button class="tagc" id="tundo" ${(LST.tundo || []).length ? "" : "disabled"}>撤销 Undo</button><button class="tagc" id="treset" ${it.fix || it.tm ? "" : "disabled"}>重置 Reset</button></div></div>`;
   const after = () => { refreshMarks(it); drawTiming(it); LAST_CUE = -1; syncCue(it, true); };
-  $("#tdone", box).onclick = () => { LST.fix = false; LST.sel = null; refreshMarks(it); $("#lcues").classList.remove("fixing"); const b = $("#lfix"); if (b) b.classList.remove("on"); drawTiming(it); };
+  $("#tdone", box).onclick = () => exitFix(it);
   $$("[data-tn]", box).forEach(b => b.onclick = () => {
     const d = +b.dataset.tn;
-    if (LST.sel != null) { nudgeLine(it, LST.sel, d, cuePref().carry); const c = cuePref().carry, n = c ? carriedCount(it, LST.sel) : 0; timingFlash(it, `第 ${LST.sel + 1} 句 ${fmtD(d)} → ${fmtSec(cueT(it, LST.sel))}${c ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} too` : "") : " · 只这一句 · just this line"}`); }
+    if (LST.sel != null) { nudgeLine(it, LST.sel, d, cuePref().carry); const c = cuePref().carry, n = c ? carriedCount(it, LST.sel) : 0; timingFlash(it, `第 ${LST.sel + 1} 句 ${fmtD(d)} → ${fmtSec(cueT(it, LST.sel))}${c ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} too` : "") : " · 只这一句 · just this line"}${orderNote(it, LST.sel)}`); }
     else { nudgeSong(it, d); timingFlash(it, `整首 ${fmtD(d)} · Whole song moved`); }
     after();
   });
@@ -3599,13 +3603,27 @@ function drawTiming(it) {
   $("#treset", box).onclick = () => { resetTiming(it); LST.sel = null; timingFlash(it, "回到原来的时间（撤销可以找回）· Back to the file's own times (Undo brings yours back)"); after(); };
   fitCues();
 }
+function exitFix(it) {
+  if (!LST) return;
+  Object.assign(LST, { fix: false, sel: null, stopAt: null, tmsg: null });
+  const c = $("#lcues"); if (c) c.classList.remove("fixing");
+  const b = $("#lfix"); if (b) b.classList.remove("on");
+  refreshMarks(it); drawTiming(it); LAST_CUE = -1; syncCue(it, true); // marks the playing line; the list scrolls on at the next line, not now
+}
+// a line set out of order (starting before the line above it, or after the one below) is worth a word
+function orderNote(it, i) {
+  const v = cueTimes(it), t = v[i];
+  if (i > 0 && v[i - 1] != null && t < v[i - 1]) return ` · ⚠ 比上一句还早 · now starts before line ${i}`;
+  if (i + 1 < v.length && v[i + 1] != null && t > v[i + 1]) return ` · ⚠ 比下一句还晚 · now starts after line ${i + 2}`;
+  return "";
+}
 function timingTap(it, i, el) {
   if (!AUD || AUD_ID !== it.id) return toast("音频还没准备好 · The audio isn't ready yet", 2500);
   if (!AUD.paused) {
     const carry = cuePref().carry, before = cueT(it, i), t = Math.max(0, AUD.currentTime - tapLag());
     setLine(it, i, t, carry); LST.sel = i;
     const n = carry ? carriedCount(it, i) : 0;
-    timingFlash(it, `第 ${i + 1} 句 → ${fmtSec(t)}（${fmtD(t - before)}）${carry ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} follow` : "") : " · 只这一句 · only this line"}`);
+    timingFlash(it, `第 ${i + 1} 句 → ${fmtSec(t)}（${fmtD(t - before)}）${carry ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} follow` : "") : " · 只这一句 · only this line"}${orderNote(it, i)}`);
     el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
   } else { LST.sel = LST.sel === i ? null : i; LST.tmsg = null; drawTiming(it); }
   refreshMarks(it); LAST_CUE = -1; syncCue(it, true);
@@ -3683,10 +3701,11 @@ function renderListenItem(main, it) {
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
   $("#lback", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
   $("#ltype", main).onclick = () => { it.type = song ? "talk" : "song"; it.typeMan = true; it.u = now(); save(); toast(song ? "改成谈话（播客、视频、对话）· Now talk" : "改成歌 · Now a song"); renderListenItem(main, it); };
-  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; if (LST.mode === "hide" && LST.fix) { LST.fix = false; LST.sel = null; const f = $("#lfix", main); if (f) f.classList.remove("on"); drawTiming(it); } fitCues(); syncCue(it); });
+  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; if (LST.mode === "hide" && LST.fix) exitFix(it); fitCues(); syncCue(it); });
   const aa = $("#laa", main); if (aa) aa.onclick = () => toggleAa(it, aa);
   const fx = $("#lfix", main); if (fx) fx.onclick = () => {
-    LST.fix = !LST.fix; LST.sel = null; LST.tmsg = null; fx.classList.toggle("on", LST.fix);
+    if (LST.fix) return exitFix(it);
+    LST.fix = true; LST.sel = null; LST.tmsg = null; LST.stopAt = null; fx.classList.add("on");
     if (LST.fix && LST.mode === "hide") { LST.mode = "follow"; renderListenItem(main, it); return; }
     $("#lcues", main).classList.toggle("fixing", LST.fix); refreshMarks(it); drawTiming(it);
   };
@@ -3814,9 +3833,9 @@ async function drawPlayer(it) {
   const pd = () => { draw(); if (LST && LST.id === it.id && LST.onplay) LST.onplay(); };
   AUD.ontimeupdate = draw; AUD.onplay = pd; AUD.onpause = pd; AUD.onloadedmetadata = draw; AUD.onended = draw;
   pp.onclick = () => { if (AUD.paused) { LST.play = true; LST.stopAt = null; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
-  $("#lb5").onclick = () => { AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
-  $("#lf5").onclick = () => { AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };
-  seek.oninput = () => { if (isFinite(AUD.duration)) AUD.currentTime = seek.value / 1000 * AUD.duration; };
+  $("#lb5").onclick = () => { LST.stopAt = null; AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
+  $("#lf5").onclick = () => { LST.stopAt = null; AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };
+  seek.oninput = () => { LST.stopAt = null; if (isFinite(AUD.duration)) AUD.currentTime = seek.value / 1000 * AUD.duration; };
   $("#lrate").onclick = () => { const r = rates[(rates.indexOf(LST.rate || 1) + 1) % rates.length]; LST.rate = r; AUD.playbackRate = r; $("#lrate").textContent = r + "×"; };
   const lb = $("#llostb"); if (lb) lb.onclick = () => LST.lostTap(lb);
   drawTiming(it);
