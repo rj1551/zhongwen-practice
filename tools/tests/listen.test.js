@@ -74,6 +74,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.click("#lpy"); await sleep(150);
   const rt = await page.locator(".cues rt").allTextContents(); console.log("   pinyin:", rt.slice(0, 6).join(" "));
   ok(rt.length >= 4 && rt.some(x => /zhuǎn|nóng/.test(x)), "拼音 shows pinyin over the words");
+  ok(await page.locator(".cues .tk").filter({ hasText: "妳" }).locator("rt").textContent() === "nǐ", "妳 gets pinyin (looked up as 你)");
   await page.click("#lpy"); await sleep(100); ok(await page.locator(".cues rt").count() === 0, "拼音 off again");
   const tk = page.locator(".cues .tk").filter({ hasText: "牡丹" });
   await tk.click(); await sleep(200);
@@ -116,6 +117,11 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.click("#fixreset"); await sleep(100);
   ok(await page.evaluate(() => !S.gen.listen.find(x => x.id === "Afile").tm), "重置 resets it");
   await page.click("#fixdone"); await sleep(100); ok(await page.locator(".fixbox").count() === 0, "好了 closes the panel");
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Afile"); it.cues = Array.from({ length: 30 }, (_, i) => [i * 2, "第" + i + "句"]); delete it.tm; LST.fix = false; renderListenItem($("#main"), it); $("#lcues").hidden = false; AUD.currentTime = 30.5; LAST_CUE = -1; syncCue(it); });
+  await sleep(900);
+  const pos = await page.evaluate(() => { const box = $("#lcues"), now = $(".cue.now"); return Math.round((now.getBoundingClientRect().top - box.getBoundingClientRect().top) / now.offsetHeight); });
+  ok(pos === 1, "follow puts the playing line second from the top (row " + pos + ")");
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Afile"); it.cues = [[1, "第一句"], [3, "第二句"], [5, "第三句"], [40, "第四句很远"]]; save(); });
 
   // ---- 5. tap along ----
   await openItem("Atap"); await page.waitForSelector("#lpp");
@@ -195,6 +201,8 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(purge.noBack, "an emptied bin entry doesn't come back from the other device");
   await page.evaluate(() => { trashListen(S.gen.listen.find(x => x.id === "Atrad")); S.gen.trash[0].t = now() - 31 * 864e5; housekeep(); });
   ok(await page.evaluate(() => S.gen.trash.length) === 0, "bin entries go by themselves after 30 days");
+  const cap = await page.evaluate(() => { for (let i = 0; i < 305; i++) trashAdd("word", "w" + i, { b: { zh: "w" + i, t: now() } }); const n = S.gen.trash.length, newest = S.gen.trash.some(e => e.title === "w304"), oldest = S.gen.trash.some(e => e.title === "w0"); S.gen.trash.slice().forEach(e => purgeTrash(e, true)); save(); return [n, newest, oldest]; });
+  ok(cap[0] === 300 && cap[1] && !cap[2], "the bin keeps at most 300; the oldest go for good first: " + cap.join(" "));
   await page.evaluate(() => { S.gen.mine.push({ id: "Mx1p0", grp: "Mx1", part: 0, np: 1, title: "测试文章", mine: true, reg: "mine", t: now() - 1000, paras: ["你好"], gl: {}, en: "" }); indexGen(); save(); });
   const mine = await page.evaluate(() => { const other = JSON.parse(JSON.stringify(S)); trashMine([S.gen.mine.find(p => p.id === "Mx1p0")]); S = mergeStates(S, other); indexGen(); return [S.gen.mine.some(p => p.id === "Mx1p0"), PSG.has("Mx1p0")]; });
   ok(!mine[0] && !mine[1], "a deleted own text stays deleted after syncing (the test-reading case)");

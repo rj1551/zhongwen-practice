@@ -253,7 +253,7 @@ let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer 
 let SYNC_BYTES = 0, SYNC_FULL = false, LOCAL_FULL = false;
 const SYNC_LIMIT = 256 * 1024;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
-const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 300 }; // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 320 }; // trash: TRASH_MAX purges properly first; this is only a backstop // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
   if (SIM) return;
   S.updatedAt = now();
@@ -772,9 +772,9 @@ function mergeStates(a, b) {
    then it's kept, so nothing changed on purpose is lost. A copy goes to the bin S.gen.trash (synced like other
    generated content) for 30 days: restore it, delete it now, or empty the bin. A listening item's audio (this
    device and the cloud) is removed only when its bin entry goes. Entries gone from the bin: S.trashDone. */
-const TRASH_DAYS = 30;
+const TRASH_DAYS = 30, TRASH_MAX = 300;
 function goneMark(key) { (S.gone = S.gone || {})[key] = now(); }
-function trashAdd(kind, title, data) { const e = { id: "T" + now().toString(36) + uid4(), kind, title, t: now(), u: now(), data }; (S.gen.trash = S.gen.trash || []).push(e); return e; }
+function trashAdd(kind, title, data) { const e = { id: "T" + now().toString(36) + uid4(), kind, title, t: now(), u: now(), data }; (S.gen.trash = S.gen.trash || []).push(e); if (S.gen.trash.length > TRASH_MAX) trashExpire(); return e; }
 function trashListen(it) {
   const i = S.gen.listen.indexOf(it); if (i >= 0) S.gen.listen.splice(i, 1);
   goneMark("listen:" + it.id); const e = trashAdd("listen", it.title, { it, lsn: (S.lsn || {})[it.id] || null }); save(); return e;
@@ -807,7 +807,8 @@ function purgeTrash(e, quiet) {
   if (!quiet) save();
 }
 function trashExpire() {
-  const old = (S.gen.trash || []).filter(e => now() - (e.t || 0) > TRASH_DAYS * 864e5);
+  const all = (S.gen.trash || []).map((e, i) => [e, i]).sort((x, y) => (y[0].t || 0) - (x[0].t || 0) || y[1] - x[1]).map(x => x[0]); // newest first
+  const old = all.filter((e, i) => i >= TRASH_MAX || now() - (e.t || 0) > TRASH_DAYS * 864e5);
   if (old.length) { old.forEach(e => purgeTrash(e, true)); save(); }
 }
 // audio of items deleted for good on another device: remove this device's copy too (only ids marked deleted)
@@ -1002,8 +1003,13 @@ function loadCedict() {
 }
 const pyKey = s => String(s || "").normalize("NFC").toLowerCase().replace(/[\s'’·\/]/g, "");
 // Every reading of a word: the passage's in-context reading first, then the one you studied in Anki, then the rest.
+// Taiwan/older variant forms CC-CEDICT files under another character (our copy keeps simplified headwords only)
+const ZH_VARIANT = { "妳": "你", "祢": "你", "牠": "它", "祂": "他", "姊": "姐", "喫": "吃", "唸": "念", "痲": "麻" };
+const unVariant = s => s.replace(/[妳祢牠祂姊喫唸痲]/g, c => ZH_VARIANT[c]);
 function lookupAll(tok, gl = {}) {
-  const key = tok.replace(/\//g, "");
+  const key0 = tok.replace(/\//g, ""), alt = unVariant(key0);
+  if (alt !== key0 && !DICT.has(key0) && !(CED && CED.has(key0)) && !gl[key0]) return lookupAll(alt, gl);
+  const key = key0;
   const d = DICT.get(key), g = gl[key] || gl[tok];
   const ced = (CED && CED.get(key)) || [];
   const cedGl = py => { const hit = ced.find(([cp]) => pyKey(cp) === pyKey(py)); return hit ? hit[1] : ""; };
@@ -2714,7 +2720,7 @@ function segmentText(text, gl = {}) {
   while (i < ch.length) {
     if (/[A-Za-z0-9]/.test(ch[i])) { let j = i; while (j < ch.length && /[A-Za-z0-9.%]/.test(ch[j])) j++; out.push(ch.slice(i, j).join("")); i = j; continue; }
     let len = 1;
-    if (!isPunct(ch[i])) for (let L = Math.min(6, ch.length - i); L > 1; L--) { const w = ch.slice(i, i + L).join(""); if (DICT.has(w) || gl[w] || (CED && CED.has(w))) { len = L; break; } }
+    if (!isPunct(ch[i])) for (let L = Math.min(6, ch.length - i); L > 1; L--) { const w = ch.slice(i, i + L).join(""); const v = unVariant(w); if (DICT.has(w) || gl[w] || (CED && CED.has(w)) || (v !== w && (DICT.has(v) || (CED && CED.has(v))))) { len = L; break; } }
     out.push(ch.slice(i, i + len).join("")); i += len;
   }
   return out;
@@ -3707,7 +3713,10 @@ function syncCue(it) {
   const i = cueAt(it, AUD.currentTime); if (i === LAST_CUE && $(".cue.now")) return; LAST_CUE = i;
   $$(".cue").forEach(c => c.classList.toggle("now", +c.dataset.ci === i));
   const el = $(`.cue[data-ci="${i}"]`), box = $("#lcues");
-  if (el && box) box.scrollTop = el.offsetTop - box.offsetTop - box.clientHeight / 3; // scroll the list, never the page
+  if (el && box) { // scroll the list, never the page: the playing line second from the top, the one before it above it
+    const prev = el.previousElementSibling, top = (prev || el).offsetTop - box.offsetTop - 4;
+    try { box.scrollTo({ top, behavior: "smooth" }); } catch (e) { box.scrollTop = top; }
+  }
 }
 // lines near each "lost it" (the line playing, and the one before it: you usually notice a moment late)
 function lostLines(it, lost) {
