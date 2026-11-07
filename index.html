@@ -391,7 +391,7 @@ function syncInfo() {
 // Read every document, merge them into what this device has, then write back whatever differs.
 function pullRemote() {
   if (!COL) return SYNCQ;
-  return queueSync(pullInner).then(() => { remoteDirty = true; pushRemote(); processSentences(); if (!HOSTED) autoCheck(); });
+  return queueSync(pullInner).then(() => { if (!HOSTED) { applyRepoPacks(); outboxSoon(); } remoteDirty = true; pushRemote(); processSentences(); if (!HOSTED) autoCheck(); });
 }
 async function pullInner() {
   {
@@ -501,12 +501,15 @@ function ghKeysTouched() {
 function ghCollection(cfg) {
   const st = { head: null, headTree: null, tree: {}, cache: {} }; // tree: path → blob sha; cache: blob sha → parsed file
   let prep = null; // a commit built ahead of time: { sig, commit, tree, files, plan }
-  const KEYS = "settings/keys.json";
+  const KEYS = "settings/keys.json", OUTB = "outbox.json";
+  // the note to Claude goes up when it differs from the one in the repo
+  const outboxFile = () => OUTBOX && OUTBOX_DIRTY && (!st.tree[OUTB] || stable(st.cache[st.tree[OUTB]]) !== stable(OUTBOX)) ? { path: OUTB, content: JSON.stringify(OUTBOX, null, 1) } : null;
   const keysFile = () => st.tree[KEYS] ? st.cache[st.tree[KEYS]] : null;
   const track = async f => { GH.busy++; ghDraw(); try { const v = await f(); return v; } catch (e) { if (e.code !== "conflict") { GH.err = e; } throw e; } finally { GH.busy--; ghDraw(); } };
   return {
     gh: true, cfg,
-    extraDirty() { return !!ghKeysPlan(keysFile(), ghCfg() || cfg).send; },
+    extraDirty() { return !!ghKeysPlan(keysFile(), ghCfg() || cfg).send || !!outboxFile(); },
+    packs() { return Object.keys(st.tree).filter(p => p.startsWith("packs/")).sort().map(p => st.cache[st.tree[p]]).filter(pk => pk && pk.zwpack === 1 && packIdOk(pk.id)); },
     get: () => track(async () => {
       let head = null;
       try { head = (await ghApi(cfg, "/git/ref/heads/" + cfg.branch)).object.sha; } catch (e) { if (e.code !== "empty") throw e; }
@@ -515,7 +518,7 @@ function ghCollection(cfg) {
         if (head) {
           headTree = (await ghApi(cfg, "/git/commits/" + head)).tree.sha;
           const t = await ghApi(cfg, "/git/trees/" + headTree + "?recursive=1");
-          for (const e of t.tree || []) if (e.type === "blob" && (/^progress\/[\w-]+\.json$/.test(e.path) || e.path === KEYS)) tree[e.path] = e.sha;
+          for (const e of t.tree || []) if (e.type === "blob" && (/^progress\/[\w-]+\.json$/.test(e.path) || /^packs\/[\w.-]+\.json$/.test(e.path) || e.path === KEYS || e.path === OUTB)) tree[e.path] = e.sha;
         }
         const need = [...new Set(Object.values(tree))].filter(s => !(s in st.cache));
         for (let i = 0; i < need.length; i += 6) await Promise.all(need.slice(i, i + 6).map(async sha => {
@@ -568,18 +571,20 @@ function ghCollection(cfg) {
     const files = Object.keys(changed).sort().map(id => ({ path: "progress/" + id + ".json", content: changed[id] })); // stable JSON (sorted keys)
     const plan = ghKeysPlan(keysFile(), ghCfg() || cfg);
     if (plan.send) files.push({ path: KEYS, content: JSON.stringify({ v: 1, t: now(), from: ghDevice(), note: "Keys for the other AI (Groq/Gemini…). Written by the app. Scheduled Claude runs must never read this file.", prov: plan.send }, null, 1) });
+    const ob = outboxFile(); if (ob) files.push(ob);
     return { files, plan, sig: st.head + "|" + files.filter(x => x.path !== KEYS).map(x => x.path + "=" + x.content).join("|") + "|" + (plan.send ? stable(plan.send) : "") };
   }
   async function build(f) {
     const tree = await ghApi(cfg, "/git/trees", "POST", { base_tree: st.headTree, tree: f.files.map(x => ({ path: x.path, mode: "100644", type: "blob", content: x.content })) });
-    const parts = f.files.filter(x => x.path !== KEYS).length;
-    const commit = await ghApi(cfg, "/git/commits", "POST", { message: `sync · ${ghDevice()} · ${parts} part${parts === 1 ? "" : "s"}${f.plan.send ? " + keys" : ""}`, tree: tree.sha, parents: [st.head] });
+    const parts = f.files.filter(x => x.path.startsWith("progress/")).length;
+    const commit = await ghApi(cfg, "/git/commits", "POST", { message: `sync · ${ghDevice()} · ${parts} part${parts === 1 ? "" : "s"}${f.plan.send ? " + keys" : ""}${f.files.some(x => x.path === OUTB) ? " + outbox" : ""}`, tree: tree.sha, parents: [st.head] });
     return { sig: f.sig, commit: commit.sha, tree, files: f.files, plan: f.plan };
   }
   function done(p) {
     const shas = {}; for (const e of p.tree.tree || []) shas[e.path] = e.sha;
     for (const x of p.files) { const s = shas[x.path]; if (s) { st.tree[x.path] = s; st.cache[s] = JSON.parse(x.content); } else delete st.tree[x.path]; }
     st.head = p.commit; st.headTree = p.tree.sha; prep = null;
+    if (p.files.some(x => x.path === OUTB)) OUTBOX_DIRTY = false;
     if (p.plan.send) ghPatchCfg(x => x.keysFp = stable(p.plan.send));
     GH.err = null;
   }
@@ -716,6 +721,8 @@ function mergeStates(a, b) {
   const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = byId(gm[k] || [], o.gen[k] || [], "id"); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [] }, gm);
   // listening history: union of sessions from both sides
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
+  m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
+  m.packLog = byId(m.packLog || [], o.packLog || [], "id").sort((p, q) => q.t - p.t).slice(0, 20);
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
   m.graded = byId(m.graded || [], o.graded || [], "k").sort((p, q) => q.t - p.t).slice(0, 20);
@@ -3638,8 +3645,8 @@ Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | b
   genStatus("passage", `<span class="spin"></span> 生成中…（通常 20–60 秒）`, true);
   try {
     const j = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("passage", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
-    if (!j || !Array.isArray(j.paras) || !j.paras.length || !Array.isArray(j.qs) || j.qs.length < 2) throw { code: "invalid_json" };
-    const p = { id: "G" + now().toString(36) + uid4(), title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : kind, paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" ? j.gl : {}, en: String(j.en || ""), qs: toQs(j.qs), gen: true };
+    const p = makePassage(j, kind, "G" + now().toString(36) + uid4());
+    if (!p) throw { code: "invalid_json" };
     S.gen.passages.push(p); PSG.set(p.id, p); save(); loadCedict();
     if (quiet) return 1;
     genStatus("passage", `✓ 新短文已生成：<b>${esc(p.title)}</b>（在下面“没读过”里）`, false);
@@ -3679,7 +3686,7 @@ function renderMe(main) {
   ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><div id="syncinfo">${syncInfo()}</div></div>` : ""}
   ${HOSTED ? "" : `<div class="card" id="ghcard">${ghCard()}</div>`}
   ${HOSTED ? "" : `<div class="card" id="provcard">${provCard()}</div>`}
-  ${stockCard()}
+  ${HOSTED ? stockCard() : packCard()}
   ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
   ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad" data-genkey="lad" ${GEN.ladBusy ? "disabled" : ""}>生成 8 道新题 Generate</button><div id="st-lad" class="small muted">${GEN.lad || ""}</div></div>` : ""}
   <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
@@ -3695,7 +3702,7 @@ function renderMe(main) {
   $("#imp").onclick = importUI;
   const gl = $("#genlad"); if (gl) gl.onclick = () => genLadder();
   const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
-  bindStock();
+  if (HOSTED) bindStock(); else bindPackCard();
   bindRefit();
 }
 /* ---------- saved words: newest 20, the rest behind "show all" (with search); add words; tags; export ---------- */
@@ -3855,6 +3862,24 @@ async function mergeCode(raw, fail) {
   if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
   S = mergeStates(S, data); S.lastImport = now(); indexGen(); migrateFsrs(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
 }
+/* ---------- shared checks for generated content: the Generate buttons and packs use the same ones ---------- */
+function makeLadder(x, id) {
+  if (!x || typeof x.zh !== "string" || (x.zh.match(/\[/g) || []).length !== 1 || (x.zh.match(/\]/g) || []).length !== 1 || !x.zh.includes("|") || !x.en || !Array.isArray(x.cx) || x.cx.length < 3 || !Array.isArray(x.bad) || x.bad.length < 2) return null;
+  const item = { id, en: String(x.en), zh: x.zh, alt: (Array.isArray(x.alt) ? x.alt : []).map(String), cx: x.cx.slice(0, 3).map(String), bad: x.bad.slice(0, 2).map(String), why: String(x.why || ""), tag: String(x.tag || "ai"), gen: true };
+  if (Array.isArray(x.near) && x.near.length) item.near = x.near.slice(0, 5).map(String);
+  return item;
+}
+function makeSen(x, id) {
+  if (!x || typeof x.s !== "string" || !x.s.includes("|") || !Array.isArray(x.opts) || x.opts.length !== 4) return null;
+  const item = { id, s: x.s, q: String(x.q || "What does it say?"), opts: x.opts.map(String), frames: (Array.isArray(x.frames) ? x.frames : []).filter(f => Array.isArray(f) && f.length >= 2).map(f => [String(f[0]), String(f[1])]).slice(0, 5), gen: true };
+  if (Array.isArray(x.ft) && x.ft.length === 4) item.ft = x.ft.map((f, j) => j > 0 && Number.isInteger(f) && f >= 0 && f < item.frames.length ? f : null);
+  return item;
+}
+function makePassage(j, kind, id) {
+  if (!j || !Array.isArray(j.paras) || !j.paras.length || !j.paras.every(x => typeof x === "string" && x.includes("|")) || !Array.isArray(j.qs) || j.qs.length < 2) return null;
+  const qs = toQs(j.qs); if (qs.length < 2) return null;
+  return { id, title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : PSG_KINDS.includes(kind) ? kind : "xhs", paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" && !Array.isArray(j.gl) ? j.gl : {}, en: String(j.en || ""), qs, gen: true };
+}
 async function genSen(quiet) {
   const genStatus = quiet ? () => {} : window.genStatus;
 
@@ -3873,9 +3898,7 @@ Reply with only a JSON array of 10 objects:
     let added = 0;
     S.gen.sen = S.gen.sen || [];
     arr.forEach((x, i) => {
-      if (!x || typeof x.s !== "string" || !x.s.includes("|") || !Array.isArray(x.opts) || x.opts.length !== 4) return;
-      const item = { id: "GS" + now().toString(36) + uid4() + i, s: x.s, q: String(x.q || "What does it say?"), opts: x.opts.map(String), frames: (Array.isArray(x.frames) ? x.frames : []).filter(f => Array.isArray(f) && f.length >= 2).map(f => [String(f[0]), String(f[1])]).slice(0, 5), gen: true };
-      if (Array.isArray(x.ft) && x.ft.length === 4) item.ft = x.ft.map((f, j) => j > 0 && Number.isInteger(f) && f >= 0 && f < item.frames.length ? f : null);
+      const item = makeSen(x, "GS" + now().toString(36) + uid4() + i); if (!item) return;
       S.gen.sen.push(item); SEN.set(item.id, item); added++;
     });
     save();
@@ -3901,9 +3924,7 @@ Reply with only a JSON array of 8 objects:
     if (!Array.isArray(arr)) throw { code: "invalid_json" };
     let added = 0;
     arr.forEach((x, i) => {
-      if (!x || typeof x.zh !== "string" || (x.zh.match(/\[/g) || []).length !== 1 || !x.en || !Array.isArray(x.cx) || x.cx.length < 3 || !Array.isArray(x.bad) || x.bad.length < 2) return;
-      const item = { id: "G" + now().toString(36) + uid4() + i, en: String(x.en), zh: x.zh, alt: (x.alt || []).map(String), cx: x.cx.slice(0, 3).map(String), bad: x.bad.slice(0, 2).map(String), why: String(x.why || ""), tag: String(x.tag || "ai"), gen: true };
-      if (Array.isArray(x.near) && x.near.length) item.near = x.near.slice(0, 5).map(String);
+      const item = makeLadder(x, "G" + now().toString(36) + uid4() + i); if (!item) return;
       S.gen.ladder.push(item); LADDER.set(item.id, item); added++;
     });
     save();
@@ -3923,8 +3944,17 @@ const STOCKERS = [
 ];
 const PSG_KINDS = ["xhs", "news", "travel", "book"];
 // minutes/day × days, or trip dates (from/to, "YYYY-MM-DD"): with both dates set they decide the number of days
+// average minutes on the days you practised in the last 2 weeks (never below 15; 30 if there's no history yet)
+function autoMins() {
+  const m = []; for (let i = 1; i <= 14; i++) { const d = S.log[dayKey(now() - i * DAY)]; if (d && d.sec > 60) m.push(d.sec / 60); }
+  return m.length ? Math.max(15, Math.round(m.reduce((a, b) => a + b, 0) / m.length / 5) * 5) : 30;
+}
 const stockCfg = () => {
   const c = Object.assign({ mins: 60, days: 21 }, (S.settings || {}).stock);
+  if (!HOSTED) { // offline copy: keep N weeks ahead (default 2) at your real practice time, unless trip dates are set
+    const st = (S.settings || {}).stock || {};
+    c.ahead = st.ahead || 2; c.days = c.ahead * 7; c.autoM = !st.minsSet; c.mins = c.autoM ? autoMins() : (st.mins || 30);
+  }
   c.trip = !!(c.from && c.to && c.to >= c.from);
   if (c.trip) c.days = Math.round((new Date(c.to + "T00:00") - new Date(c.from + "T00:00")) / DAY) + 1;
   return c;
@@ -3940,7 +3970,7 @@ function forecast(days, mins) {
   SIM = true; S = JSON.parse(JSON.stringify(S)); BUDGET_MINS = mins;
   try {
     let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    let covered = 0;
+    let covered = 0, simDays = 0; const used0 = { lad: 0, sen: 0 };
     // v23: each simulated day runs the real session builder (reviews, same-day repeats, divider, new-item budget)
     // for `mins` minutes; typed cards ~90 s, others ~25 s; 85% of drills and 90% of other cards right.
     const cfg = stockCfg(), tripStart = cfg.trip ? new Date(cfg.from + "T00:00").getTime() : 0;
@@ -3953,6 +3983,7 @@ function forecast(days, mins) {
         const block = buildBlock(8, used, rnd).filter(c => c.t !== "div" && !c.re);
         if (!block.length) break;
         for (const c of block) {
+          if ((c.t === "lad" || c.t === "sen") && !S.items[c.id]) used0[c.t]++; // a new drill / parsing sentence used up
           if (c.t === "rr") { const pp = PSG.get(c.id), r0 = S.reads[c.id], cpm = (r0 && (r0.lastCpm || r0.cpm)) || 80, rs = pp ? psgChars(pp) / cpm * 60 : 120; recordReread(c.id, cpm); sec += rs; CLOCK_OFF += rs * 1000; continue; }
           if (c.t === "lad") { const ok = rnd() < 0.85; recordLadder(c.id, c.r || 5, ok ? 3 : 0, ok && (c.r === 4 || c.r === 5) ? "x" : undefined); sec += c.r === 4 || c.r === 5 ? 90 : 25; }
           else { const ok = rnd() < 0.9; if (c.t === "bank") recordBox("B:" + c.id, "bank", ok, "ctx"); else if (c.t === "sen") recordSen(c.id, ok, 1); else if (c.t === "frag") recordBox(c.id, "frag", ok, null); else recordBox(c.id, c.t, ok, c.t); sec += 25; }
@@ -3960,10 +3991,12 @@ function forecast(days, mins) {
           if (sec >= mins * 60) break;
         }
       }
+      simDays = d;
       if (sec < mins * 60 * 0.9) break;
       covered = d;
     }
-    return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days / 2), t: keepS.updatedAt };
+    const perDay = { lad: +(used0.lad / Math.max(1, simDays)).toFixed(1), sen: +(used0.sen / Math.max(1, simDays)).toFixed(1) };
+    return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days / 2), t: keepS.updatedAt, perDay };
   } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; BUDGET_MINS = null; }
 }
 let STOCK = null;
@@ -3994,7 +4027,7 @@ function stockCard() {
     <div id="st-body">${stockStatus()}</div>
     ${AI ? `<div class="row"><button class="btn soft" id="st-go" ${STOCK && STOCK.running ? "hidden" : ""}>开始备货 Stock up</button><button class="btn ghost" id="st-stop" ${STOCK && STOCK.running ? "" : "hidden"}>停止 Stop</button></div>` : ""}</div>`;
 }
-function refreshStock() { const b = $("#st-body"); if (b) b.innerHTML = stockStatus(); const g = $("#st-go"), x = $("#st-stop"); if (g) g.hidden = !!(STOCK && STOCK.running); if (x) x.hidden = !(STOCK && STOCK.running); }
+function refreshStock() { if (!HOSTED) { const c = $("#packcard"); if (c) { c.outerHTML = packCard(); bindPackCard(); } return; } const b = $("#st-body"); if (b) b.innerHTML = stockStatus(); const g = $("#st-go"), x = $("#st-stop"); if (g) g.hidden = !!(STOCK && STOCK.running); if (x) x.hidden = !(STOCK && STOCK.running); }
 function updateForecast() {
   const cfg = stockCfg();
   FORECAST = null; refreshStock();
@@ -4037,6 +4070,144 @@ async function stockUp() {
   STOCK.running = false;
   FORECAST = forecast(cfg.days, cfg.mins);
   if (VIEW === "me") render(); else toast("备货完成 · Stock-up finished");
+}
+
+/* ============ packs + the note to Claude (step 4a, offline copy) ============
+   A pack is one JSON file of new material written by Claude (the daily run, or any chat):
+     { "zwpack": 1, "id": "2026-11-07", "made": "…", "by": "…",
+       "ladder": [drill…], "sen": [parsing sentence…], "passages": [{ "kind": "xhs|news|travel|book", title, paras, gl, en, qs }] }
+   Each piece goes through the same checks as the Generate buttons (makeLadder / makeSen / makePassage) and gets an
+   id made from the pack's id and its position, so the same pack applied on two devices can't make duplicates.
+   Applied pack ids are kept in S.packsDone (synced), so a pack is never applied twice. Packs arrive from packs/*.json
+   in the private repo on every sync, or pasted in Progress → 备货. */
+function packIdOk(id) { return typeof id === "string" && /^[\w.-]{1,60}$/.test(id); }
+function parsePack(text) {
+  let pk; try { pk = typeof text === "string" ? parseLooseJson(text) : text; } catch (e) { pk = null; }
+  if (!pk || pk.zwpack !== 1 || !packIdOk(pk.id)) throw { message: "这不是内容包 · That isn't a pack (it should start with {\"zwpack\": 1, \"id\": …})" };
+  return pk;
+}
+function applyPack(pk, src) {
+  if ((S.packsDone || []).includes(pk.id)) return { dup: true, lad: 0, sen: 0, psg: 0, bad: 0 };
+  const pre = "K" + pk.id.replace(/[^\w]/g, "") + "-", r = { lad: 0, sen: 0, psg: 0, bad: 0 };
+  (Array.isArray(pk.ladder) ? pk.ladder : []).forEach((x, i) => {
+    const id = pre + "L" + i; if (LADDER.has(id)) return;
+    const it = makeLadder(x, id); if (!it) { r.bad++; return; }
+    S.gen.ladder.push(it); LADDER.set(id, it); r.lad++;
+  });
+  (Array.isArray(pk.sen) ? pk.sen : []).forEach((x, i) => {
+    const id = pre + "S" + i; if (SEN.has(id)) return;
+    const it = makeSen(x, id); if (!it) { r.bad++; return; }
+    (S.gen.sen = S.gen.sen || []).push(it); SEN.set(id, it); r.sen++;
+  });
+  (Array.isArray(pk.passages) ? pk.passages : []).forEach((x, i) => {
+    const id = pre + "P" + i; if (PSG.has(id)) return;
+    const it = makePassage(x, x && x.kind, id); if (!it) { r.bad++; return; }
+    S.gen.passages.push(it); PSG.set(id, it); r.psg++;
+  });
+  S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
+  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
+  save(); if (r.psg) loadCedict();
+  return r;
+}
+const packSummary = r => [r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+// after every sync: apply packs from the repo this device's progress hasn't seen
+function applyRepoPacks() {
+  if (!COL || !COL.packs) return;
+  const tot = { lad: 0, sen: 0, psg: 0, bad: 0 }; let n = 0;
+  for (const pk of COL.packs()) {
+    if ((S.packsDone || []).includes(pk.id)) continue;
+    try { const r = applyPack(pk, "repo"); n++; for (const k in tot) tot[k] += r[k] || 0; } catch (e) {}
+  }
+  if (n) { toast("新内容到了 · New material: " + packSummary(tot), 5000); if (VIEW === "me" || VIEW === "home" || (VIEW === "read" && !(READ && READ.pid))) render(); }
+}
+// a seeded order (same all day), so the note doesn't change, and cause a new commit, on every sync
+function dayShuffle(list) { const d = dayKey(); const h = x => { let v = 2166136261; for (const c of d + x) { v ^= c.charCodeAt(0); v = Math.imul(v, 16777619); } v ^= v >>> 15; v = Math.imul(v, 2246822507); v ^= v >>> 13; return v >>> 0; }; return list.slice().sort((a, b) => h(a) - h(b)); }
+// what the next generation should aim at: the same lists the Generate buttons use
+function genHints() {
+  const pool = []; for (const [w, d] of DICT) if ((d.tier === "l" || d.tier === "f" || d.tier === "k") && w.length >= 2) pool.push(w);
+  return {
+    missedDrills: [...LADDER.values()].filter(x => { const it = S.items[x.id]; return it && it.n > it.ok; }).slice(0, 15).map(x => ladParts(x).key + " (" + x.en + ")"),
+    forgottenWords: dayShuffle(pool).slice(0, 30),
+    misreadStructures: Object.values(S.items).filter(it => it.t === "frag" && it.p).sort((a, b) => (a.due || 0) - (b.due || 0)).map(it => it.p).slice(0, 12),
+    recentDrillsEn: S.gen.ladder.slice(-40).map(x => x.en) // so new drills don't repeat these
+  };
+}
+// The note to Claude (outbox.json in the private repo): what's short and what to aim at. Computed on this device
+// (forecast = the real scheduler run forward, no AI), at most every 20 min, and kept until the next compute.
+let OUTBOX = null, OUTBOX_AT = 0, OUTBOX_DIRTY = false; // dirty = recomputed here and not yet written (so two devices never overwrite each other's note in a loop)
+function shortage(f, cfg) {
+  const out = { ladder: 0, sen: 0, passages: Math.max(0, f.needPsg - f.unread) };
+  if (f.days < cfg.days) {
+    const gap = cfg.days - f.days;
+    out.ladder = Math.max(8, Math.ceil((f.perDay.lad || 3) * gap * 1.2));
+    out.sen = Math.max(10, Math.ceil((f.perDay.sen || 4) * gap * 1.2));
+  }
+  out.ladder = Math.min(out.ladder, Math.max(0, GEN_CAP.ladder - S.gen.ladder.length));
+  out.sen = Math.min(out.sen, Math.max(0, GEN_CAP.sen - (S.gen.sen || []).length));
+  out.passages = Math.min(out.passages, Math.max(0, GEN_CAP.passages - S.gen.passages.length));
+  return out;
+}
+function computeOutbox() {
+  const cfg = stockCfg(), f = forecast(cfg.days, cfg.mins);
+  FORECAST = f;
+  OUTBOX = { v: 1, day: dayKey(), target: cfg.trip ? { mode: "trip", from: cfg.from, to: cfg.to, days: cfg.days, mins: cfg.mins } : { mode: "ahead", days: cfg.days, mins: cfg.mins },
+    covered: f.days, unreadPassages: f.unread, perDay: f.perDay, short: shortage(f, cfg),
+    room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
+    hints: genHints(), requests: [], packsDone: (S.packsDone || []).slice(-60) };
+  OUTBOX_AT = now(); OUTBOX_DIRTY = true;
+  return OUTBOX;
+}
+function outboxSoon(force) {
+  if (HOSTED || !COL || !COL.gh) return;
+  if (!force && OUTBOX && now() - OUTBOX_AT < 20 * MIN && OUTBOX.day === dayKey()) return;
+  setTimeout(() => { if (busyView() && !force) return; try { computeOutbox(); remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 3000); refreshStock(); } catch (e) {} }, 400);
+}
+
+/* ---------- the offline copy's stock card: target + what's short + deliveries + paste a pack ---------- */
+function packCard() {
+  const cfg = stockCfg(), f = FORECAST, sh = f ? shortage(f, cfg) : null, log = S.packLog || [];
+  const sel = (id, opts, v, lab) => `<select id="${id}" style="font:inherit;font-size:16px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)">${opts.map(o => `<option value="${o[0]}" ${String(o[0]) === String(v) ? "selected" : ""}>${o[1]}</option>`).join("")}</select>`;
+  const st = (S.settings || {}).stock || {};
+  let status = `<p class="small muted"><span class="spin"></span> 估算中… Estimating…</p>`;
+  if (f) {
+    const okC = f.days >= cfg.days, okP = f.unread >= f.needPsg;
+    status = `<p class="small">练习卡够用 Practice cards last: <b>${okC ? `≥ ${cfg.days}` : f.days} 天 days</b> ${okC ? "✓" : `/ ${cfg.days}`}<br>没读过的短文 Unread passages: <b>${f.unread}</b> / ${f.needPsg} ${okP ? "✓" : ""}</p>
+      ${sh.ladder || sh.sen || sh.passages ? `<p class="small">还缺 Short: ${[sh.ladder ? `${sh.ladder} 造句 drills` : "", sh.sen ? `${sh.sen} 短句 sentences` : "", sh.passages ? `${sh.passages} 短文 passages` : ""].filter(Boolean).join(" · ")}<br><span class="muted">${COL && COL.gh ? "Claude 每天的任务会补上（大的缺口分几天）· Claude's daily run fills this (big gaps over a few days)." : "连上 GitHub 同步后，Claude 每天的任务会补上；也可以把内容包贴在下面 · With GitHub sync on, Claude's daily run fills this; or paste a pack below."}</span></p>` : `<p class="small">✓ 够了 · Nothing short.</p>`}`;
+  }
+  return `<div class="card" id="packcard"><span class="label">备货 · Stock</span>
+    <p class="small muted">算法在这台设备上算：把真实的复习安排往后跑，看材料够几天（不用 AI）。Worked out on this device by running the real scheduler forward (no AI).</p>
+    ${cfg.trip ? `<div class="row small"><b>行程 Trip: ${cfg.days} 天 days</b> · 每天 Daily ${sel("pk-mins", [["auto", `自动 Auto (≈${autoMins()} 分钟)`], [15, "15 分钟"], [30, "30 分钟"], [60, "60 分钟"], [90, "90 分钟"]], st.minsSet ? st.mins : "auto")}</div>`
+      : `<div class="row small">保持领先 Keep ${sel("pk-ahead", [[1, "1 周 week"], [2, "2 周 weeks"], [3, "3 周 weeks"], [4, "4 周 weeks"]], cfg.ahead)} ahead · 每天 Daily ${sel("pk-mins", [["auto", `自动 Auto (≈${autoMins()} 分钟)`], [15, "15 分钟"], [30, "30 分钟"], [60, "60 分钟"], [90, "90 分钟"]], st.minsSet ? st.mins : "auto")}</div>`}
+    <div class="row small" style="gap:6px">行程日期 Trip dates:
+      <input type="date" id="pk-from" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.from || "")}"> → <input type="date" id="pk-to" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.to || "")}">
+      ${cfg.from || cfg.to ? `<button class="btn ghost" id="pk-clr" style="min-height:34px;padding:6px 10px">清除 Clear</button>` : ""}</div>
+    <div id="st-body">${status}</div>
+    ${log.length ? `<p class="small">上次到货 Last delivery: <b>${new Date(log[0].t).getMonth() + 1}月${new Date(log[0].t).getDate()}日</b> · ${esc(packSummary(log[0]))}${log[0].bad ? ` <span class="muted">(${log[0].bad} 个格式不对，没用 · ${log[0].bad} malformed, skipped)</span>` : ""}</p>` : ""}
+    <details><summary class="small" style="cursor:pointer">粘贴内容包 · Paste a pack</summary>
+      <p class="small muted">从任何一个 Claude 聊天里拿到的内容包，贴在这里。Paste a pack from any Claude chat.</p>
+      <textarea class="inp" id="pk-text" rows="3" placeholder='{"zwpack": 1, "id": …}' autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-size:16px"></textarea>
+      <button class="btn soft" id="pk-go">加进来 Add it</button><div id="pk-msg" class="small"></div></details></div>`;
+}
+function bindPackCard() {
+  const c = $("#packcard"); if (!c) return;
+  const setStock = (patch, redraw) => {
+    S.settings = Object.assign({}, S.settings, { stock: Object.assign({}, (S.settings || {}).stock, patch) }); save();
+    FORECAST = null; if (redraw) render(); else refreshStock();
+    setTimeout(() => { if (COL && COL.gh) outboxSoon(true); else { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); } }, 30);
+  };
+  const a = $("#pk-ahead"); if (a) a.onchange = () => setStock({ ahead: +a.value }, false);
+  $("#pk-mins").onchange = e => setStock(e.target.value === "auto" ? { minsSet: false } : { minsSet: true, mins: +e.target.value }, false);
+  $("#pk-from").onchange = $("#pk-to").onchange = () => setStock({ from: $("#pk-from").value || undefined, to: $("#pk-to").value || undefined }, true);
+  const clr = $("#pk-clr"); if (clr) clr.onclick = () => setStock({ from: undefined, to: undefined }, true);
+  $("#pk-go").onclick = () => {
+    const msg = $("#pk-msg");
+    try {
+      const pk = parsePack($("#pk-text").value), r = applyPack(pk, "paste");
+      msg.innerHTML = r.dup ? "这个内容包已经加过了 · This pack was already added." : `✓ ${esc(packSummary(r))}${r.bad ? ` · ${r.bad} 个格式不对，没用 · ${r.bad} malformed, skipped` : ""}`;
+      if (!r.dup) { $("#pk-text").value = ""; FORECAST = null; outboxSoon(true); if (!(COL && COL.gh)) setTimeout(() => { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30); }
+    } catch (e) { msg.innerHTML = `<span style="color:var(--bad)">${esc(e.message || String(e))}</span>`; }
+  };
+  if (!FORECAST || FORECAST.t !== S.updatedAt) setTimeout(() => { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30);
 }
 
 /* ============ one-time: rescore a placement taken before timing counted ============ */
