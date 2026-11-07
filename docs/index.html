@@ -173,6 +173,7 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .lbar input[type=range]{margin:2px 0}
 .lctl{display:flex;align-items:center;justify-content:center;gap:6px}
 .lctl .btn{padding:6px 12px;min-height:40px} .lctl #lpp{min-width:58px;font-size:17px} .lctl .lt{min-width:34px;text-align:center;font-variant-numeric:tabular-nums}
+.plrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding-bottom:4px;border-bottom:1px solid var(--line)} .plrow .tagc{font-size:13px;padding:4px 10px}
 .tpanel{display:flex;flex-direction:column;gap:6px;padding:4px 0 6px;border-bottom:1px solid var(--line);margin-bottom:2px}
 .tbtns{display:flex;flex-wrap:wrap;gap:6px} .tbtns .tagc{font-size:13px;padding:5px 10px} .tbtns .tagc:disabled{opacity:.4}
 .cue.fixed::before{content:"✓";font-size:.5em;color:var(--accent);margin-right:4px;vertical-align:middle}
@@ -2933,6 +2934,7 @@ function allTags() {
   const n = {};
   for (const p of (S.gen.mine || [])) if (p.part === 0) for (const t of p.tags || []) n[t] = (n[t] || 0) + 1;
   for (const b of Object.values(S.bank)) for (const t of b.tags || []) n[t] = (n[t] || 0) + 1;
+  for (const it of S.gen.listen || []) for (const t of it.tags || []) n[t] = (n[t] || 0) + 1;
   return Object.keys(n).sort((a, b) => n[b] - n[a]);
 }
 function tagInput(id, value) {
@@ -3067,7 +3069,7 @@ function renderMineText(main) {
       <button class="btn ghost" id="del">删除这篇 Delete this text</button></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
-  $("#ttags").onchange = () => { const tags = parseTags($("#ttags").value); g.forEach(p => p.tags = tags); save(); };
+  $("#ttags").onchange = () => { const tags = parseTags($("#ttags").value); g.forEach(p => { p.tags = tags; p.u = now(); }); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); };
   const open = (p, re) => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!re }; render(); window.scrollTo(0, 0); };
   $("#go").onclick = () => next ? open(next) : open(g[0], true);
   $$("[data-part]", main).forEach(b => b.onclick = () => { const p = PSG.get(b.dataset.part); open(p, !!S.reads[p.id]); });
@@ -3429,6 +3431,7 @@ function renderListen(main) {
   const list = all.filter(it => LFILT === "all" || (LFILT === "song") === (itemType(it) === "song"));
   main.innerHTML = `<div class="top"><div><h1>听力</h1><p class="date">Native audio: a file on this phone, or a link to Bilibili, a podcast app, YouTube…</p></div></div>
     <button class="btn wide" id="ladd">+ 添加 Add audio</button>
+    ${plSongs().length && LFILT !== "talk" ? `<div class="row" style="gap:6px"><button class="btn soft" id="plall" style="flex:1">▶ 连播全部歌 · Play all songs (${plSongs().length})</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf0">🔀 随机 Shuffle</button></div>` : ""}
     ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
     <div id="r2list"></div>
     ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${itemType(it) === "song" ? "🎵" : "🎙"} ${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
@@ -3441,8 +3444,10 @@ function renderListen(main) {
     const ua = $("#r2upall"); if (ua) ua.onclick = () => { list.filter(it => it.kind === "file" && !it.r2 && !it.r2gone && have.has(it.id)).forEach(it => { it.r2want = true; it.u = now(); }); save(); render(); r2Kick(); };
   });
   $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
+  const pa = $("#plall", main); if (pa) pa.onclick = () => plStart();
+  const ps = $("#plshuf0", main); if (ps) ps.onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} render(); };
   // songs with timings open in Follow; everything else starts with the text hidden (as before)
-  $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
+  $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); if (PL) { const j = PL.ids.indexOf(b.dataset.l); if (j >= 0) PL.i = j; else PL = null; } LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
 }
 /* ---- transcript editor (new items and existing ones): subtitle file, paste, or LRCLIB lookup ----
    LRCLIB (lrclib.net) is a free database of timed lyrics. Searched straight from your browser; the results only
@@ -3456,7 +3461,8 @@ function trEditorHtml(f) {
       <input class="inp" id="lra" placeholder="歌手 Artist (optional)" value="${esc(lr.a || "")}">
       <button class="btn soft" id="lrgo" ${lr.busy ? "disabled" : ""}>${lr.busy ? '<span class="spin"></span> 搜索中… Searching' : "搜索 Search"}</button>
       ${lr.err ? `<span class="small" style="color:var(--bad)">${esc(lr.err)}</span>` : ""}
-      ${lr.res ? (lr.res.length ? `<div class="stack" style="gap:4px">${lrOrder(lr.res, f.dur).slice(0, 8).map(i => { const r = lr.res[i], near = lrNear(r, f.dur); return `<button class="pitem" data-lr="${i}" style="padding:8px 12px;gap:2px"><span class="zh"><b>${esc(r.trackName)}</b> · ${esc(r.artistName)}</span><span class="small muted">${esc(r.albumName || "")}${r.duration ? " · " + fmtT(r.duration) : ""} · ${r.syncedLyrics ? "有时间 timed" : r.plainLyrics ? "只有文字 text only" : "没有歌词 no lyrics"}${near ? " · ✓ 时长对得上 length matches your file" : ""}</span></button>`; }).join("")}</div>` : `<span class="small muted">没找到 · Nothing found. Try fewer words, or the title only.</span>`) : ""}
+      ${lr.res && lr.res.length && f.dur ? `<span class="small">你的音频 Your audio: <b>${fmtT(f.dur)}</b></span>` : ""}
+      ${lr.res ? (lr.res.length ? `<div class="stack" style="gap:4px">${lrOrder(lr.res, f.dur).slice(0, 8).map(i => { const r = lr.res[i], near = lrNear(r, f.dur); return `<button class="pitem" data-lr="${i}" style="padding:8px 12px;gap:2px"><span class="zh"><b>${esc(r.trackName)}</b> · ${esc(r.artistName)}</span><span class="small muted">${esc(r.albumName || "")}${r.duration ? ` · <b>${fmtT(r.duration)}</b>${lrDiff(r, f.dur)}` : ""} · ${r.syncedLyrics ? "有时间 timed" : r.plainLyrics ? "只有文字 text only" : "没有歌词 no lyrics"}${near ? " · ✓ 对得上 matches" : ""}</span></button>`; }).join("")}</div>` : `<span class="small muted">没找到 · Nothing found. Try fewer words, or the title only.</span>`) : ""}
     </div>
     <span class="small">字幕文件 Subtitle / lyrics file (.srt .vtt .lrc .txt)</span>${filePick("ltf", ".srt,.vtt,.lrc,.txt,text/plain", "选文件 Choose file", f.trName)}
     <textarea class="inp" id="ltr" rows="5" lang="zh-CN" placeholder="或者粘贴文字 Or paste the transcript (with or without [00:12.30] / SRT timings)" style="font-family:var(--f-zh)">${esc(f.tr || "")}</textarea>
@@ -3465,6 +3471,7 @@ function trEditorHtml(f) {
 // LRCLIB results: same length as the file = within 1 s as shown (3:55 matches 3:54–3:56); closest first, then ones
 // with timings, otherwise LRCLIB's order. Ordered when drawn too, so choosing the audio after searching still sorts.
 const lrSec = x => Math.round(+x || 0);
+const lrDiff = (r, dur) => { if (!dur || !r.duration) return ""; const d = lrSec(r.duration) - lrSec(dur); return !d ? "（一样长 same length）" : `（${d > 0 ? "长" : "短"} ${Math.abs(d)} 秒 · ${Math.abs(d)} s ${d > 0 ? "longer" : "shorter"}）`; };
 const lrNear = (r, dur) => !!(dur && r.duration && Math.abs(lrSec(r.duration) - lrSec(dur)) <= 1);
 function lrOrder(res, dur) {
   const k = r => [dur && r.duration ? Math.abs(lrSec(r.duration) - lrSec(dur)) : 1e9, r.syncedLyrics ? 0 : 1];
@@ -3475,7 +3482,7 @@ function trCount(tr) { if (!tr || !tr.trim()) return ""; const c = parseCues(tr)
 const LR_CACHE = new Map();
 function bindTrEditor(main, f, keep, redraw) {
   const lrKeep = () => { f.lr = Object.assign({}, f.lr, { q: $("#lrq", main).value, a: $("#lra", main).value }); };
-  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); f.trName = file.name; f.src = null; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
+  $("#ltf", main).onchange = async e => { const file = e.target.files[0]; if (!file) return; keep(); lrKeep(); f.tr = await file.text(); f.trName = file.name; f.src = null; f.srcLabel = "文件 File · " + file.name; if (!f.title) f.title = file.name.replace(/\.[^.]+$/, ""); redraw(); };
   // update the line count in place (a full redraw here would swallow a tap on Save made while the box is focused)
   $("#ltr", main).oninput = () => { const n = $("#ltrn", main); if (n) n.textContent = trCount($("#ltr", main).value); };
   $("#lrgo", main).onclick = async () => {
@@ -3500,7 +3507,7 @@ function bindTrEditor(main, f, keep, redraw) {
     Object.assign(f.lr, { busy: false, err: res ? "" : err, res: res ? res.slice(0, 20) : null }); // all kept; the 8 closest are shown
     redraw();
   };
-  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; f.trName = ""; f.src = "lrclib"; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
+  $$("[data-lr]", main).forEach(b => b.onclick = () => { keep(); lrKeep(); const r = f.lr.res[+b.dataset.lr]; f.tr = r.syncedLyrics || r.plainLyrics || ""; f.trName = ""; f.src = "lrclib"; f.srcLabel = `LRCLIB · ${r.trackName} · ${r.artistName}${r.duration ? " · " + fmtT(r.duration) : ""}`; if (!f.title) f.title = r.trackName; f.lr.res = null; redraw(); });
 }
 // the file's length (to match LRCLIB results); null if it can't be read
 function fileDuration(file) {
@@ -3539,6 +3546,7 @@ function renderListenAdd(main) {
     if (cues.length) it.cues = cues;
     const tags = parseTags(f.tags); if (tags.length) it.tags = tags;
     it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: f.dur });
+    if ((it.cues || []).length) it.trLabel = f.srcLabel || "粘贴的 Pasted";
     if (f.kind === "file") { const kept = await audioPut(id, f.file); if (!kept) toast("这个页面不能长期保存音频，这次可以听 · This page can't keep the file; it plays this time only. The offline copy keeps it.", 4500); }
     if (f.kind === "file" && !HOSTED) it.r2want = true; // goes to the cloud (if set up), with a progress bar
     S.gen.listen.push(it); save();
@@ -3694,12 +3702,14 @@ function renderListenItem(main, it) {
       ${file && hasTr && !timed && !LST.tap ? `<button class="btn soft" id="ltapgo">${it.tap && it.tap.length ? `继续打拍子 Continue tapping along (${it.tap.length}/${it.cues.length})` : "打拍子对时间 · Tap along to time the lines"}</button><span class="small muted" style="margin-top:-6px">No timings? Play it once and tap as each line starts; then the text can follow along.</span>` : ""}
       ${LST.edit ? `<div class="stack" style="gap:8px">${trEditorHtml(LST.edit)}<div id="lerr" class="small" style="color:var(--bad)"></div>
           <div class="row"><button class="btn" id="ltrsave">保存文字 Save transcript</button><button class="btn ghost" id="ltrcancel">取消 Cancel</button></div>
-          ${hasTr ? `<span class="small muted">换文字会删掉根据旧文字出的问题和对好的时间 · Replacing it removes questions and timing fixes made for the old one.</span>` : ""}</div>`
-        : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? "换文字 Replace transcript / lyrics" : "加文字 Add transcript / lyrics"}</button>`}
+          ${hasTr ? `<span class="small muted">${trKeepable(it) ? `现在的${song ? "歌词" : "文字"}（和你的时间调整）会留在“之前的”里，随时可以换回来 · The current version and your timing fixes are kept under Earlier versions, so you can switch back.` : "文字很长，旧的不保留；根据旧文字出的问题也会删掉 · Long text: the old version isn't kept, and questions made for it go."}</span>` : ""}</div>`
+        : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? (song ? "换歌词 Try other lyrics (LRCLIB or a file)" : "换文字 Replace transcript / lyrics") : "加文字 Add transcript / lyrics"}</button>
+          ${(it.trPrev || []).length ? `<div class="stack" style="gap:4px">${it.trLabel ? `<span class="small muted">现在用的 Now using: ${esc(it.trLabel)}</span>` : ""}<span class="small">之前的${song ? "歌词" : "文字"} · Earlier versions (switching keeps the current one here too):</span>${it.trPrev.map((v, k) => `<button class="btn ghost" data-trv="${k}" style="text-align:left;justify-content:flex-start">↩ ${esc(v.label || "之前的 Earlier")} <span class="small muted">· ${v.cues.length} 行${v.fix ? " · 有你的时间调整 your timing fixes" : ""}</span></button>`).join("")}</div>` : ""}`}
+      ${tagInput("ltags", (it.tags || []).join(" "))}
       <div id="lqs" class="small muted"></div>
       <div id="r2item" class="stack" style="gap:6px"></div>
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
-  $("#lback", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
+  $("#lback", main).onclick = () => { stopAudio(); closeSheet(); LST = null; PL = null; render(); };
   $("#ltype", main).onclick = () => { it.type = song ? "talk" : "song"; it.typeMan = true; it.u = now(); save(); toast(song ? "改成谈话（播客、视频、对话）· Now talk" : "改成歌 · Now a song"); renderListenItem(main, it); };
   $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; if (LST.mode === "hide" && LST.fix) exitFix(it); fitCues(); syncCue(it); });
   const aa = $("#laa", main); if (aa) aa.onclick = () => toggleAa(it, aa);
@@ -3743,7 +3753,13 @@ function renderListenItem(main, it) {
   };
   const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
   const lqa = $("#lqask", main); if (lqa) lqa.onclick = () => { addReq({ rid: "q:listen:" + it.id, kind: "questions", target: "listen", id: it.id }); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
-  const te = $("#ltredit", main); if (te) te.onclick = () => { LST.edit = { title: it.title, tr: "", dur: it.dur || (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : null) }; renderListenItem(main, it); };
+  const te = $("#ltredit", main); if (te) te.onclick = () => {
+    LST.edit = { title: it.title, tr: "", dur: it.dur || (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : null), lr: { q: it.title } };
+    renderListenItem(main, it);
+    if (song && hasTr && navigator.onLine) { const g = $("#lrgo", main); if (g) g.click(); } // songs: show LRCLIB's other versions straight away
+  };
+  $$("[data-trv]", main).forEach(b => b.onclick = () => { trSwitch(it, +b.dataset.trv); LST.tundo = []; LST.sel = null; LAST_CUE = -1; toast("换回来了 · Switched; the other version is kept too"); renderListenItem(main, it); });
+  const lt = $("#ltags", main); if (lt) { bindTagInput(main); lt.onchange = () => { const tags = parseTags(lt.value); if (tags.length) it.tags = tags; else delete it.tags; it.u = now(); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); }; }
   if (LST.edit) {
     const f = LST.edit, keep = () => { f.tr = $("#ltr", main).value; };
     bindTrEditor(main, f, keep, () => renderListenItem(main, it));
@@ -3755,7 +3771,9 @@ function renderListenItem(main, it) {
       if (n > LISTEN_TR_MAX) return err(`文字太长（${n} 字，最多 ${LISTEN_TR_MAX}）· Transcript too long (${n} characters; max ${LISTEN_TR_MAX}).`);
       const total = S.gen.listen.reduce((a, x) => a + (x === it ? 0 : cueChars(x.cues)), 0);
       if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了 · Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
+      if (trKeepable(it)) it.trPrev = [trVersion(it), ...(it.trPrev || [])].slice(0, TR_VERSIONS);
       it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs", "fix"]) delete it[k];
+      it.trLabel = f.srcLabel || "粘贴的 Pasted";
       if (!it.typeMan) it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: it.dur });
       it.u = now(); save(); LST.tundo = []; LST.sel = null;
       LST.edit = null; LAST_CUE = -1; toast(`文字已保存 · Transcript saved (${cues.length} lines${isTimed(it) ? ", timed" : ""})`); renderListenItem(main, it);
@@ -3766,6 +3784,70 @@ function renderListenItem(main, it) {
     toastAction("已删除，可以在“进度 → 最近删除”找回 · Deleted (Progress → Recently deleted)", "撤销 Undo", () => { restoreTrash(e); render(); }, 5000);
   };
   drawPlayer(it); drawR2Item(it); fitCues();
+}
+/* ---- 连播 Play all songs (2026-11-07; learner: all songs as one playlist for now, mostly screen on, locked screen if
+   the phone allows). Songs = file items of type song, in list order or shuffled (🔀, per device); repeats from the top.
+   When a song ends the next one loads and plays, even on another tab (no page change there) or with the screen
+   locked where the phone keeps running the page; opening the listening tab shows it. Offline, songs whose audio
+   isn't on this device are skipped. Lock-screen / headphone controls through the Media Session API. */
+let PL = null; // {ids, i}
+const plShuffle = () => { try { return localStorage.getItem("zwlgf:plshuf") === "1"; } catch (e) { return false; } };
+const plSongs = () => (S.gen.listen || []).slice().sort((a, b) => b.t - a.t).filter(it => it.kind === "file" && itemType(it) === "song");
+function plOrder(firstId) { let ids = plSongs().map(x => x.id); if (plShuffle()) ids = shuffle(ids); if (firstId) ids = [firstId, ...ids.filter(x => x !== firstId)]; return ids; }
+async function plCanPlay(it) { if (AUD_ID === it.id || await audioGet(it.id)) return true; return !!(it.r2 && r2Cfg() && navigator.onLine); }
+function plStart(firstId) { PL = { ids: plOrder(firstId), i: -1 }; if (!PL.ids.length) { PL = null; return; } return plGo(1); }
+async function plGo(step) {
+  if (!PL) return; const n = PL.ids.length;
+  for (let k = 1; k <= n; k++) {
+    const j = ((PL.i + step * k) % n + n) % n, it = (S.gen.listen || []).find(x => x.id === PL.ids[j]);
+    if (it && await plCanPlay(it)) { PL.i = j; return plOpen(it); }
+  }
+  toast("没有能播放的歌 · No songs can play here" + (navigator.onLine ? "" : " (offline: only downloaded ones)"), 3500); PL = null; if (VIEW === "listen") render();
+}
+async function plOpen(it) {
+  const rate = LST && LST.rate;
+  LST = { id: it.id, mode: isTimed(it) ? "follow" : "hide", lost: [], rate: rate || 1 };
+  await plLoad(it);
+  if (VIEW === "listen") { render(); window.scrollTo(0, 0); }
+}
+async function plLoad(it) {
+  if (AUD_ID !== it.id) {
+    let blob = await audioGet(it.id);
+    if (!blob && it.r2 && r2Cfg() && navigator.onLine) { try { await r2Fetch1(it); blob = await audioGet(it.id); } catch (e) {} }
+    if (!blob) return;
+    stopAudio(); if (!AUD) { AUD = document.createElement("audio"); AUD.preload = "metadata"; AUD.hidden = true; document.body.append(AUD); }
+    AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; AUD.playbackRate = (LST && LST.rate) || 1;
+    AUD.ontimeupdate = null; AUD.onplay = AUD.onpause = null; AUD.onended = () => plEnded(it);
+  }
+  mediaMeta(it);
+  try { await AUD.play(); } catch (e) {}
+}
+function plEnded(it) { if (PL && PL.ids[PL.i] === it.id) plGo(1); }
+const plOn = it => !!(PL && PL.ids[PL.i] === it.id);
+function mediaMeta(it) {
+  try {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({ title: it.title || "", artist: PL ? `连播 ${PL.i + 1}/${PL.ids.length}` : "中文练功房", album: "中文练功房" });
+    const h = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch (e) {} };
+    h("play", () => AUD && AUD.play()); h("pause", () => AUD && AUD.pause());
+    h("seekbackward", () => { if (AUD) AUD.currentTime = Math.max(0, AUD.currentTime - 5); });
+    h("seekforward", () => { if (AUD) AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); });
+    h("previoustrack", PL ? () => plGo(-1) : null); h("nexttrack", PL ? () => plGo(1) : null);
+  } catch (e) {}
+}
+/* ---- earlier versions of an item's text (learner: LRC files are often off, so try another and go back if it's
+   worse). Replacing keeps the current one, with its timing fixes and questions, in it.trPrev (newest first, at most
+   3; only texts up to 8,000 characters, i.e. songs and short clips). Switching swaps them, so nothing is lost. */
+const TR_VERSIONS = 3, TR_KEEP_MAX = 8000;
+const trKeepable = it => (it.cues || []).length > 0 && cueChars(it.cues) <= TR_KEEP_MAX;
+function trVersion(it) { const v = { cues: it.cues, label: it.trLabel || "之前的 Earlier", t: now() }; for (const k of ["fix", "tm", "qs", "gl", "secs"]) if (it[k]) v[k] = it[k]; return v; }
+function trSwitch(it, k) {
+  const v = (it.trPrev || [])[k]; if (!v) return;
+  const cur = trKeepable(it) ? trVersion(it) : null, rest = it.trPrev.filter((x, j) => j !== k);
+  for (const f of ["fix", "tm", "qs", "gl", "secs", "tap", "qcut"]) delete it[f];
+  it.cues = v.cues; it.trLabel = v.label; for (const f of ["fix", "tm", "qs", "gl", "secs"]) if (v[f]) it[f] = v[f];
+  it.trPrev = (cur ? [cur, ...rest] : rest).slice(0, TR_VERSIONS); if (!it.trPrev.length) delete it.trPrev;
+  it.u = now(); save();
 }
 // questions after listening: with sections, the ones for the sections you heard this time (all of them for links,
 // or if nothing was played)
@@ -3816,7 +3898,9 @@ async function drawPlayer(it) {
   dropBar(true);
   const rates = [0.75, 0.9, 1, 1.25], talk = itemType(it) !== "song";
   const bar = document.createElement("div"); bar.className = "lbar"; bar.id = "lbar";
+  const pl = plOn(it);
   bar.innerHTML = `<div class="in"><div id="ltime"></div>
+    ${pl ? `<div class="plrow"><span class="small">🎵 连播 ${PL.i + 1}/${PL.ids.length}</span><span class="row" style="gap:6px"><button class="tagc" id="plprev" aria-label="Previous song">⏮</button><button class="tagc" id="plnext" aria-label="Next song">⏭</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf">🔀 随机</button><button class="tagc" id="plstop" aria-label="Stop playing all">✕</button></span></div>` : ""}
     <input type="range" id="lseek" min="0" max="1000" value="0" aria-label="Position">
     <div class="lctl"><span class="small muted lt" id="lpos">0:00</span><button class="btn ghost" id="lb5" aria-label="Back 5 s">⟲5</button><button class="btn" id="lpp" aria-label="Play">▶</button><button class="btn ghost" id="lf5" aria-label="Forward 5 s">5⟳</button><button class="tagc" id="lrate">${LST.rate || 1}×</button>${talk ? `<button class="btn soft" id="llostb">没跟上${LST.lost.length ? ` (${LST.lost.length})` : ""}</button>` : ""}<span class="small muted lt" id="ldur"></span></div></div>`;
   document.body.append(bar); placeBar();
@@ -3831,7 +3915,13 @@ async function drawPlayer(it) {
     if (LST && LST.id === it.id && !AUD.paused) { if (LST.fromT == null) LST.fromT = AUD.currentTime; LST.maxT = Math.max(LST.maxT || 0, AUD.currentTime); }
   };
   const pd = () => { draw(); if (LST && LST.id === it.id && LST.onplay) LST.onplay(); };
-  AUD.ontimeupdate = draw; AUD.onplay = pd; AUD.onpause = pd; AUD.onloadedmetadata = draw; AUD.onended = draw;
+  AUD.ontimeupdate = draw; AUD.onplay = pd; AUD.onpause = pd; AUD.onloadedmetadata = draw; AUD.onended = () => { draw(); plEnded(it); };
+  mediaMeta(it);
+  if (pl) {
+    $("#plprev").onclick = () => plGo(-1); $("#plnext").onclick = () => plGo(1);
+    $("#plstop").onclick = () => { PL = null; mediaMeta(it); drawPlayer(it); };
+    $("#plshuf").onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} PL.ids = [it.id, ...plOrder().filter(x => x !== it.id)]; PL.i = 0; drawPlayer(it); };
+  }
   pp.onclick = () => { if (AUD.paused) { LST.play = true; LST.stopAt = null; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
   $("#lb5").onclick = () => { LST.stopAt = null; AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
   $("#lf5").onclick = () => { LST.stopAt = null; AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };

@@ -97,7 +97,22 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const rows = await page.locator("[data-lr]").allTextContents(), names = rows.map(r => r.trim()[0]);
   ok(names.join("") === "DEBCAF", "LRCLIB: closest first, timed before untimed at the same length");
   ok(rows.filter(r => r.includes("对得上")).map(r => r.trim()[0]).join("") === "DEBC", "LRCLIB: only 3:54–3:56 match a 3:55 file");
+  ok(await page.locator("text=你的音频 Your audio").textContent() === "你的音频 Your audio: 3:55", "LRCLIB: your audio's length is shown above the results");
+  ok(rows[0].includes("3:55（一样长 same length）") && rows[2].includes("3:54（短 1 秒 · 1 s shorter）") && rows[3].includes("3:56（长 1 秒 · 1 s longer）"), "each result shows its length and how far off it is: " + rows[2].split("·").slice(-3).join("·").trim());
   await page.click("#ltrcancel");
+  // switching lyrics keeps the old version (with its timing fixes); switching back restores it
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); it.fix = { 1: { t: 2.5, c: true } }; it.trLabel = "LRCLIB · 测试 · x · 3:55"; it.type = "song"; it.u = now(); save(); renderListenItem($("#main"), it); });
+  await page.click("#ltredit"); await sleep(200);
+  await page.fill("#ltr", "[00:02.00]新的第一句\n[00:04.00]新的第二句"); await page.click("#ltrsave"); await sleep(200);
+  let vv = await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); return { now: it.cues[0][1], prev: (it.trPrev || []).map(v => v.cues[0][1] + "|" + !!v.fix), label: it.trLabel, fix: !!it.fix }; });
+  ok(vv.now === "新的第一句" && vv.prev[0] === "我看着你的头发|true" && !vv.fix, "new lyrics in; the old ones are kept with their timing fixes: " + JSON.stringify(vv.prev));
+  ok(await page.locator("[data-trv]").count() === 1 && (await page.locator("[data-trv]").textContent()).includes("LRCLIB · 测试"), "…listed under Earlier versions with where they came from");
+  await page.click('[data-trv="0"]'); await sleep(200);
+  vv = await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); return { now: it.cues[0][1], fix: it.fix && it.fix[1].t, prev: (it.trPrev || []).map(v => v.cues[0][1]) }; });
+  ok(vv.now === "我看着你的头发" && vv.fix === 2.5 && vv.prev[0] === "新的第一句", "switching back restores them (fixes too) and keeps the newer ones: " + JSON.stringify(vv));
+  await page.fill("#ltags", "周杰伦 KTV"); await page.locator("#ltags").dispatchEvent("change"); await sleep(100);
+  ok(JSON.stringify(await page.evaluate(() => S.gen.listen.find(x => x.id === "Atest").tags)) === '["周杰伦","KTV"]', "tags can be changed on a song after adding it");
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); delete it.fix; delete it.trPrev; delete it.tags; it.u = now(); save(); });
 
   // ---- 4. player bar + Aa menu + fix timing line by line ----
   await openItem("Afile"); await page.waitForSelector("#lpp");
@@ -218,6 +233,38 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(sec.nq === 9 && sec.secs && sec.secs.length === 3, "an answer with 3 questions per section is applied (9 questions)");
   ok(sec.heard.length === 3 && sec.heard.every(q => q.startsWith("s1")), "listened 21:40–25:00 → only that section's questions: " + sec.heard.join(", "));
   ok(sec.all === 9, "nothing played (or a link) → all the questions");
+
+  // ---- 6b. play all songs ----
+  await page.evaluate(async w => {
+    const b = new Blob([Uint8Array.from(atob(w), c => c.charCodeAt(0))], { type: "audio/wav" }), T = now();
+    S.gen.listen = S.gen.listen.filter(x => !["Along", "Atimed"].includes(x.id));
+    S.gen.listen.forEach(x => { if (x.kind === "file") x.type = "talk"; });
+    for (const [k, id] of ["P1", "P2", "P3", "P4"].entries()) { S.gen.listen.push({ id, title: "歌" + id, kind: "file", type: "song", t: T + 100 - k, dur: 2, cues: [[0, id + "第一句"], [1, id + "第二句"]] }); if (id !== "P3") await audioPut(id, b); }
+    save(); try { localStorage.setItem("zwlgf:plshuf", "0"); } catch (e) {}
+  }, wav(2));
+  await page.click('#tabs button[data-tab="listen"]'); await sleep(300);
+  ok((await page.locator("#plall").textContent()).includes("(4)"), "▶ 连播全部歌 on the list (4 songs)");
+  await page.click("#plall"); await page.waitForFunction(() => AUD_ID === "P1" && !AUD.paused, null, { timeout: 5000 });
+  await sleep(300);
+  ok(await page.locator(".plrow").count() === 1 && (await page.locator(".plrow").textContent()).includes("1/4"), "the first song opens and plays; the bar shows 连播 1/4 with ⏮ ⏭ 🔀 ✕");
+  await page.waitForFunction(() => AUD_ID === "P2" && !AUD.paused, null, { timeout: 6000 });
+  ok(await page.evaluate(() => LST.id) === "P2" && await page.locator("h2").first().textContent() === "歌P2", "when it ends the next song opens and plays");
+  await page.evaluate(() => setView("home")); await sleep(200);
+  await page.waitForFunction(() => AUD_ID === "P4" && !AUD.paused, null, { timeout: 6000 });
+  ok(await page.evaluate(() => VIEW) === "home", "on another tab it keeps going to the next song without changing your page, skipping one whose audio isn't here (P3)");
+  await page.click('#tabs button[data-tab="listen"]'); await sleep(300);
+  ok(await page.evaluate(() => LST.id) === "P4" && await page.locator("#lbar .plrow").count() === 1, "opening 听 shows the song that's playing");
+  await page.click("#plnext"); await page.waitForFunction(() => AUD_ID === "P1", null, { timeout: 5000 });
+  ok(true, "⏭ after the last song goes round to the first");
+  await page.click("#plprev"); await page.waitForFunction(() => AUD_ID === "P4", null, { timeout: 5000 });
+  ok(true, "⏮ goes back (skipping the missing one)");
+  await page.click("#plshuf"); await sleep(150);
+  ok(await page.evaluate(() => PL.ids.length === 4 && PL.ids[0] === "P4" && PL.i === 0 && localStorage.getItem("zwlgf:plshuf") === "1"), "🔀 shuffles the rest, keeps the current song");
+  ok(await page.evaluate(() => navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) === "歌P4", "lock-screen info is set (Media Session)");
+  await page.click("#plstop"); await sleep(150);
+  ok(await page.evaluate(() => PL) === null && await page.locator(".plrow").count() === 0, "✕ stops playing all; the song itself stays");
+  await page.evaluate(() => { AUD.pause(); try { localStorage.setItem("zwlgf:plshuf", "0"); } catch (e) {} S.gen.listen = S.gen.listen.filter(x => !/^P\d$/.test(x.id)); save(); });
+  await page.click("#lback"); await sleep(150);
 
   // ---- 7. deleting sticks; Recently deleted ----
   const del = await page.evaluate(() => {
