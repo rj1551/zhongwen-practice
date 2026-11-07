@@ -165,7 +165,7 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .cues ruby, .reading ruby{ruby-position:over} .cues rt, .reading rt{font-family:var(--f-ui,inherit);font-size:max(11px,.42em);font-weight:400;color:var(--muted);letter-spacing:0}
 .cues.py .cue, .reading.py p{line-height:2.1}
 .cgo{font-size:12px;color:var(--muted);padding:2px 6px;margin-right:4px;vertical-align:middle;border-radius:6px;border:1px solid var(--line);background:var(--surface)}
-.cues.fixing .cue{box-shadow:inset 0 0 0 1px var(--line);margin-bottom:3px;cursor:pointer} .cues.fixing .cgo{display:none}
+.cues.fixing .cue{box-shadow:inset 0 0 0 1px var(--line);cursor:pointer} .cues.fixing .cgo{visibility:hidden} /* nothing moves when 对时间 turns on or off */
 .cue.pop{animation:cueflash .6s ease} @keyframes cueflash{0%{background:var(--accent);color:var(--accent-ink)}}
 .lbar{position:fixed;left:0;right:0;z-index:6;display:flex;justify-content:center;pointer-events:none}
 .lbar .in{pointer-events:auto;width:100%;max-width:640px;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(0,0,0,.08);padding:6px 12px 8px;display:flex;flex-direction:column;gap:4px}
@@ -3583,7 +3583,7 @@ function drawTiming(it) {
   box.innerHTML = `<div class="tpanel">
     <div class="spread" style="gap:8px;align-items:flex-start"><span class="small" id="tstat" style="min-height:2.6em">${timingStatus(it)}</span><button class="tagc on" id="tdone" style="flex:none">好了 Done</button></div>
     <div class="tbtns"><button class="tagc" data-tn="-0.1">◀ 早 0.1</button><button class="tagc" id="tre" ${sel == null ? "disabled" : ""}>↻ 听这句</button><button class="tagc" data-tn="0.1">晚 0.1 ▶</button><button class="tagc ${carry ? "on" : ""}" id="tcarry">${carry ? "✓ " : ""}后面跟着</button>${sel != null ? `<button class="tagc" id="tunsel">✕ 不选</button>` : ""}<button class="tagc" id="tundo" ${(LST.tundo || []).length ? "" : "disabled"}>撤销 Undo</button><button class="tagc" id="treset" ${it.fix || it.tm ? "" : "disabled"}>重置 Reset</button></div></div>`;
-  const after = () => { refreshMarks(it); drawTiming(it); LAST_CUE = -1; syncCue(it); };
+  const after = () => { refreshMarks(it); drawTiming(it); LAST_CUE = -1; syncCue(it, true); };
   $("#tdone", box).onclick = () => { LST.fix = false; LST.sel = null; refreshMarks(it); $("#lcues").classList.remove("fixing"); const b = $("#lfix"); if (b) b.classList.remove("on"); drawTiming(it); };
   $$("[data-tn]", box).forEach(b => b.onclick = () => {
     const d = +b.dataset.tn;
@@ -3607,7 +3607,7 @@ function timingTap(it, i, el) {
     timingFlash(it, `第 ${i + 1} 句 → ${fmtSec(t)}（${fmtD(t - before)}）${carry ? (n ? ` · 后面 ${n} 句跟着 · ${n} later line${n > 1 ? "s" : ""} follow` : "") : " · 只这一句 · only this line"}`);
     el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
   } else { LST.sel = LST.sel === i ? null : i; LST.tmsg = null; drawTiming(it); }
-  refreshMarks(it); LAST_CUE = -1; syncCue(it);
+  refreshMarks(it); LAST_CUE = -1; syncCue(it, true);
 }
 // the transcript box fills the screen down to the player bar, so you never scroll the page while following
 function fitCues() {
@@ -3825,12 +3825,12 @@ async function drawPlayer(it) {
 function placeBar() { const bar = $("#lbar"); if (!bar) return; const tabs = $("#tabs"), h = tabs && !tabs.hidden ? tabs.offsetHeight : 0; bar.style.bottom = h + "px"; $("#main").style.paddingBottom = (bar.offsetHeight + h + 24) + "px"; }
 function dropBar(keepPad) { const b = $("#lbar"); if (b) b.remove(); const p = $("#aapop"); if (p && !keepPad) p.remove(); if (!keepPad) $("#main").style.paddingBottom = ""; }
 let LAST_CUE = -1;
-function syncCue(it) {
+function syncCue(it, noScroll) {
   if (!LST || !isTimed(it) || !AUD || LST.mode !== "follow") return;
   const i = cueAt(it, AUD.currentTime); if (i === LAST_CUE && $(".cue.now")) return; LAST_CUE = i;
   $$(".cue").forEach(c => c.classList.toggle("now", +c.dataset.ci === i));
   const el = $(`.cue[data-ci="${i}"]`), box = $("#lcues");
-  if (el && box) { // scroll the list, never the page: the playing line second from the top, the one before it above it
+  if (el && box && !noScroll) { // scroll the list, never the page: the playing line second from the top, the one before it above it
     const prev = el.previousElementSibling, top = (prev || el).offsetTop - box.offsetTop - 4;
     try { box.scrollTo({ top, behavior: "smooth" }); } catch (e) { box.scrollTop = top; }
   }
