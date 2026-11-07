@@ -257,7 +257,7 @@ function save() {
   const json = JSON.stringify(S);
   try { localStorage.setItem(LS_KEY, json); } catch (e) { LOCAL_FULL = true; }
   // GitHub: one commit per write, so wait for a pause (15 s after the last answer; also written when the app is put away)
-  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, COL.gh ? 15000 : 2500); }
+  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, COL.gh ? 15000 : 2500); if (COL.gh) ghPrepareSoon(); }
 }
 /* ---------- account sync: progress split across several documents ----------
    Storage layout only. Your progress is still one state object in the app and merging still works on whole
@@ -447,11 +447,11 @@ const GH = {
 const ghDevice = () => { const u = navigator.userAgent; return /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Android/.test(u) ? "Android" : /Macintosh/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows" : "device"; };
 const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(String(s).replace(/\s/g, "")), c => c.charCodeAt(0)));
 const b64enc = s => { const b = new TextEncoder().encode(s); let t = ""; for (let i = 0; i < b.length; i += 0x8000) t += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(t); };
-async function ghApi(cfg, path, method, body) {
+async function ghApi(cfg, path, method, body, keepalive) {
   let r;
   try {
     r = await fetch("https://api.github.com/repos/" + cfg.repo + path, {
-      method: method || "GET", cache: "no-store",
+      method: method || "GET", cache: "no-store", keepalive: !!keepalive,
       headers: Object.assign({ Authorization: "Bearer " + cfg.token, Accept: "application/vnd.github+json" }, body ? { "Content-Type": "application/json" } : {}),
       body: body ? JSON.stringify(body) : undefined });
   } catch (e) { throw { code: "network", message: "连不上 GitHub · Can't reach GitHub" }; }
@@ -501,6 +501,7 @@ function ghKeysTouched() {
 }
 function ghCollection(cfg) {
   const st = { head: null, headTree: null, tree: {}, cache: {} }; // tree: path → blob sha; cache: blob sha → parsed file
+  let prep = null; // a commit built ahead of time: { sig, commit, tree, files, plan }
   const KEYS = "settings/keys.json";
   const keysFile = () => st.tree[KEYS] ? st.cache[st.tree[KEYS]] : null;
   const track = async f => { GH.busy++; ghDraw(); try { const v = await f(); return v; } catch (e) { if (e.code !== "conflict") { GH.err = e; } throw e; } finally { GH.busy--; ghDraw(); } };
@@ -533,27 +534,56 @@ function ghCollection(cfg) {
       const docs = Object.keys(st.tree).filter(p => p.startsWith("progress/") && st.cache[st.tree[p]]).map(p => { const v = st.cache[st.tree[p]]; return { id: p.slice(9, -5), exists: true, data: () => v }; });
       return { docs };
     }),
+    /* Saving takes three requests (tree, commit, move the branch). Closing a tab or killing the app can cut that off,
+       so after each answer the first two are done ahead of time (prepare); leaving the app then needs only the last,
+       tiny request, sent with keepalive so the browser finishes it even after the page is gone (flush). A prepared
+       commit is used only if it holds exactly the current changes on top of the commit this device last saw. */
+    prepare: changed => (async () => {
+      const f = filesFor(changed);
+      if (!f.files.length || !st.head || (prep && prep.sig === f.sig)) return;
+      prep = await build(f);
+    })(),
+    flush(changed) {
+      const f = filesFor(changed);
+      if (!f.files.length || !prep || prep.sig !== f.sig) return null;
+      const p = prep;
+      const req = ghApi(cfg, "/git/refs/heads/" + cfg.branch, "PATCH", { sha: p.commit, force: false }, true); // starts now, inside the event
+      return track(async () => { await req; done(p); });
+    },
     setMany: changed => track(async () => {
-      const files = Object.keys(changed).map(id => ({ path: "progress/" + id + ".json", content: changed[id] })); // stable JSON (sorted keys)
-      const plan = ghKeysPlan(keysFile(), ghCfg() || cfg);
-      if (plan.take) ghKeysApply(plan.take);
-      if (plan.send) files.push({ path: KEYS, content: JSON.stringify({ v: 1, t: now(), from: ghDevice(), note: "Keys for the other AI (Groq/Gemini…). Written by the app. Scheduled Claude runs must never read this file.", prov: plan.send }, null, 1) });
-      if (!files.length) return;
+      const plan0 = ghKeysPlan(keysFile(), ghCfg() || cfg);
+      if (plan0.take) ghKeysApply(plan0.take);
+      const f = filesFor(changed);
+      if (!f.files.length) return;
       if (!st.head) { // brand-new empty repo: Git's data API needs a first commit to build on
         await ghApi(cfg, "/contents/README.md", "PUT", { message: "start", content: b64enc("# zhongwen-data\n\nPrivate progress for 中文练功房.\n") });
         throw { code: "conflict" }; // read again (no longer empty), then write
       }
-      const tree = await ghApi(cfg, "/git/trees", "POST", { base_tree: st.headTree, tree: files.map(f => ({ path: f.path, mode: "100644", type: "blob", content: f.content })) });
-      const parts = files.filter(f => f.path !== KEYS).length;
-      const commit = await ghApi(cfg, "/git/commits", "POST", { message: `sync · ${ghDevice()} · ${parts} part${parts === 1 ? "" : "s"}${plan.send ? " + keys" : ""}`, tree: tree.sha, parents: [st.head] });
-      await ghApi(cfg, "/git/refs/heads/" + cfg.branch, "PATCH", { sha: commit.sha, force: false }); // refused (422) if another device wrote first
-      const shas = {}; for (const e of tree.tree || []) shas[e.path] = e.sha;
-      for (const f of files) { const s = shas[f.path]; if (s) { st.tree[f.path] = s; st.cache[s] = JSON.parse(f.content); } else delete st.tree[f.path]; }
-      st.head = commit.sha; st.headTree = tree.sha;
-      if (plan.send) ghPatchCfg(x => x.keysFp = stable(plan.send));
-      GH.err = null;
+      const p = prep && prep.sig === f.sig ? prep : await build(f);
+      await ghApi(cfg, "/git/refs/heads/" + cfg.branch, "PATCH", { sha: p.commit, force: false }); // refused (422) if another device wrote first
+      done(p);
     })
   };
+  // the files one write would contain, and a signature saying exactly what it is built on
+  function filesFor(changed) {
+    const files = Object.keys(changed).sort().map(id => ({ path: "progress/" + id + ".json", content: changed[id] })); // stable JSON (sorted keys)
+    const plan = ghKeysPlan(keysFile(), ghCfg() || cfg);
+    if (plan.send) files.push({ path: KEYS, content: JSON.stringify({ v: 1, t: now(), from: ghDevice(), note: "Keys for the other AI (Groq/Gemini…). Written by the app. Scheduled Claude runs must never read this file.", prov: plan.send }, null, 1) });
+    return { files, plan, sig: st.head + "|" + files.filter(x => x.path !== KEYS).map(x => x.path + "=" + x.content).join("|") + "|" + (plan.send ? stable(plan.send) : "") };
+  }
+  async function build(f) {
+    const tree = await ghApi(cfg, "/git/trees", "POST", { base_tree: st.headTree, tree: f.files.map(x => ({ path: x.path, mode: "100644", type: "blob", content: x.content })) });
+    const parts = f.files.filter(x => x.path !== KEYS).length;
+    const commit = await ghApi(cfg, "/git/commits", "POST", { message: `sync · ${ghDevice()} · ${parts} part${parts === 1 ? "" : "s"}${f.plan.send ? " + keys" : ""}`, tree: tree.sha, parents: [st.head] });
+    return { sig: f.sig, commit: commit.sha, tree, files: f.files, plan: f.plan };
+  }
+  function done(p) {
+    const shas = {}; for (const e of p.tree.tree || []) shas[e.path] = e.sha;
+    for (const x of p.files) { const s = shas[x.path]; if (s) { st.tree[x.path] = s; st.cache[s] = JSON.parse(x.content); } else delete st.tree[x.path]; }
+    st.head = p.commit; st.headTree = p.tree.sha; prep = null;
+    if (p.plan.send) ghPatchCfg(x => x.keysFp = stable(p.plan.send));
+    GH.err = null;
+  }
 }
 function ghStart(cfg) {
   COL = ghCollection(cfg); PULLED = false; REMOTE = {}; GH.err = null; GH.lastOk = cfg.lastOk || 0;
@@ -634,8 +664,26 @@ function ghHomeCard() {
     <p class="small">${esc(GH.err.message || "")}<br>练习照常，进度先存在这台设备上 · Practice works as usual; progress is kept on this device until sync works again.</p>
     <button class="btn" id="gh-fix">去同步设置 Open sync settings</button></div>`;
 }
-// putting the app away: write now instead of waiting the 15 s (the phone may suspend the page soon)
-const ghFlush = () => { if (COL && COL.gh && PULLED && ONLINE && (remoteDirty || COL.extraDirty())) { clearTimeout(remoteTimer); remoteDirty = true; pushRemote(); } };
+// what differs from the last read/write (the GitHub layer has no size limit per part)
+function changedDocs() {
+  const docs = splitState(S), changed = {};
+  for (const id in docs) { const st = stable(docs[id]); if (REMOTE[id] === st || (REMOTE[id] === undefined && emptyDoc(docs[id]))) continue; changed[id] = st; }
+  return changed;
+}
+// a few seconds after each answer: build the next commit ahead of time (1.5 s later) (see prepare/flush in ghCollection)
+let ghPrepTimer = null;
+function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
+// putting the app away: write now instead of waiting the 15 s. If the commit is ready, one keepalive request finishes
+// the job even if the tab is closed or the app killed; otherwise the normal write starts (and may be cut off).
+const ghFlush = () => {
+  if (!(COL && COL.gh && PULLED && ONLINE) || !(remoteDirty || COL.extraDirty())) return;
+  clearTimeout(remoteTimer);
+  const job = !remoteBusy && COL.flush(changedDocs());
+  if (!job) { remoteDirty = true; pushRemote(); return; }
+  const snap = changedDocs(); remoteBusy = true;
+  queueSync(async () => { try { await job; for (const id in snap) REMOTE[id] = snap[id]; } catch (e) {} })
+    .then(() => { remoteBusy = false; remoteDirty = true; pushRemote(); }); // anything newer, or a refused write: the normal path
+};
 document.addEventListener("visibilitychange", () => { if (document.hidden) ghFlush(); });
 addEventListener("pagehide", ghFlush);
 
