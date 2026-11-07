@@ -161,7 +161,14 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .sheet.pop .in{border-radius:14px;border-bottom:1px solid var(--line);max-height:60vh}
 .pitem.done{opacity:.62;background:transparent}
 .cue{display:block;padding:4px 8px;margin:0 -8px;border-radius:8px;font-family:var(--f-zh);font-size:19px;line-height:1.7;text-align:left;width:calc(100% + 16px)}
-.cues .cue{font-size:var(--cuefs,25px);line-height:1.5;padding:6px 8px} .cues .cue.now{font-weight:700}
+.cues .cue{font-size:var(--cuefs,25px);line-height:1.5;padding:6px 8px;margin:0;width:auto;overflow-wrap:anywhere} .cues .cue.now{font-weight:700}
+.cues{overflow-x:hidden;overscroll-behavior-x:none;touch-action:pan-y} .cues .tk{white-space:normal}
+.cues ruby, .reading ruby{ruby-position:over} .cues rt, .reading rt{font-family:var(--f-ui,inherit);font-size:max(11px,.42em);font-weight:400;color:var(--muted);letter-spacing:0}
+.cues.py .cue, .reading.py p{line-height:2.1}
+.cgo{font-size:12px;color:var(--muted);padding:2px 6px;margin-right:4px;vertical-align:middle;border-radius:6px;border:1px solid var(--line);background:var(--surface)}
+.cues.fixing .cue{box-shadow:inset 0 0 0 1px var(--line);margin-bottom:3px;cursor:pointer} .cues.fixing .cgo{display:none}
+.cue.pop{animation:cueflash .6s ease} @keyframes cueflash{0%{background:var(--accent);color:var(--accent-ink)}}
+.fixbox{padding:10px 12px;border:1px solid var(--accent);border-radius:12px;background:var(--accent-soft)}
 .cue.now{background:var(--accent-soft)} .cue.lost{box-shadow:inset 3px 0 0 var(--gold);background:var(--gold-soft)}
 .cues{max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:2px}
 .lostbtn{font-size:18px;min-height:64px}
@@ -247,7 +254,7 @@ let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer 
 let SYNC_BYTES = 0, SYNC_FULL = false, LOCAL_FULL = false;
 const SYNC_LIMIT = 256 * 1024;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
-const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80 }; // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 300 }; // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
   if (SIM) return;
   S.updatedAt = now();
@@ -407,7 +414,7 @@ async function pullInner() {
     const remote = joinDocs(list.filter(d => d.id !== "state-v1-backup"));
     if (remote) {
       const before = stable(S);
-      S = mergeStates(S, remote); indexGen(); migrateFsrs(); if (C) rescoreLastPlacement();
+      S = mergeStates(S, remote); indexGen(); migrateFsrs(); if (C) rescoreLastPlacement(); housekeep();
       try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
       if (stable(S) !== before && !busyView()) render();
     }
@@ -752,8 +759,90 @@ function mergeStates(a, b) {
   m.placed = !!(m.placed || o.placed);
   if (!m.skills && o.skills) { m.skills = o.skills; m.recent = o.recent || {}; }
   for (const k of ["segSeen", "lastExport", "lastImport", "mig"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
+  { const g = Object.assign({}, m.gone); for (const k in o.gone || {}) g[k] = Math.max(g[k] || 0, o.gone[k] || 0); m.gone = g; }
+  m.trashDone = [...new Set([...(m.trashDone || []), ...(o.trashDone || [])])].slice(-1000);
+  applyGone(m);
   m.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
   return m;
+}
+
+/* ---------- deleting that sticks across devices + 最近删除 Recently deleted (2026-11-07) ----------
+   Merging never throws anything away, so a deleted item used to come back from the other device's copy.
+   Now a delete is recorded in S.gone {"listen:<id>" | "mine:<partId>" | "bank:<word>": time} (synced, latest
+   time wins) and merging drops those, unless the item was changed after the delete (it.u / added time later):
+   then it's kept, so nothing changed on purpose is lost. A copy goes to the bin S.gen.trash (synced like other
+   generated content) for 30 days: restore it, delete it now, or empty the bin. A listening item's audio (this
+   device and the cloud) is removed only when its bin entry goes. Entries gone from the bin: S.trashDone. */
+const TRASH_DAYS = 30;
+function goneMark(key) { (S.gone = S.gone || {})[key] = now(); }
+function trashAdd(kind, title, data) { const e = { id: "T" + now().toString(36) + uid4(), kind, title, t: now(), u: now(), data }; (S.gen.trash = S.gen.trash || []).push(e); return e; }
+function trashListen(it) {
+  const i = S.gen.listen.indexOf(it); if (i >= 0) S.gen.listen.splice(i, 1);
+  goneMark("listen:" + it.id); const e = trashAdd("listen", it.title, { it, lsn: (S.lsn || {})[it.id] || null }); save(); return e;
+}
+function trashMine(parts) {
+  const ids = new Set(parts.map(p => p.id));
+  S.gen.mine = S.gen.mine.filter(p => !ids.has(p.id)); ids.forEach(id => { PSG.delete(id); goneMark("mine:" + id); });
+  const e = trashAdd("mine", (parts[0] && parts[0].title) || "", { parts }); save(); return e;
+}
+function trashWord(w) {
+  const b = S.bank[w]; if (!b) return null;
+  const e = trashAdd("word", w, { b, item: S.items["B:" + w] || null });
+  delete S.bank[w]; delete S.items["B:" + w]; goneMark("bank:" + w); save(); return e;
+}
+function trashDrop(e) { S.gen.trash = (S.gen.trash || []).filter(x => x.id !== e.id); S.trashDone = (S.trashDone || []).concat([e.id]).slice(-1000); }
+function restoreTrash(e) {
+  if (!e) return; const d = e.data || {}, t = now(), g = S.gone || {};
+  if (e.kind === "listen" && d.it) { const it = Object.assign({}, d.it, { u: t }); if (!S.gen.listen.some(x => x.id === it.id)) S.gen.listen.push(it); if (d.lsn && !(S.lsn || {})[it.id]) (S.lsn = S.lsn || {})[it.id] = d.lsn; delete g["listen:" + it.id]; }
+  if (e.kind === "mine") for (const p0 of d.parts || []) { const p = Object.assign({}, p0, { u: t }); if (!S.gen.mine.some(x => x.id === p.id)) { S.gen.mine.push(p); PSG.set(p.id, p); } delete g["mine:" + p.id]; }
+  if (e.kind === "word" && d.b) { const w = e.title; if (!S.bank[w]) S.bank[w] = Object.assign({}, d.b, { u: t }); if (d.item && !S.items["B:" + w]) S.items["B:" + w] = d.item; delete g["bank:" + w]; }
+  trashDrop(e); save();
+}
+// for good: the bin entry goes, and a listening item's audio with it (unless the item is back in the list)
+function purgeTrash(e, quiet) {
+  trashDrop(e);
+  if (e.kind === "listen" && e.data && e.data.it && !S.gen.listen.some(x => x.id === e.data.it.id)) {
+    const it = e.data.it; audioDel(it.id);
+    if (it.r2 && it.r2.key && !HOSTED) { S.r2del = (S.r2del || []).concat([it.r2.key]); setTimeout(r2Kick, 300); }
+  }
+  if (!quiet) save();
+}
+function trashExpire() {
+  const old = (S.gen.trash || []).filter(e => now() - (e.t || 0) > TRASH_DAYS * 864e5);
+  if (old.length) { old.forEach(e => purgeTrash(e, true)); save(); }
+}
+// audio of items deleted for good on another device: remove this device's copy too (only ids marked deleted)
+async function audioGc() {
+  if (!S.gone) return;
+  const alive = new Set([...(S.gen.listen || []).map(x => x.id), ...(S.gen.trash || []).filter(e => e.kind === "listen" && e.data && e.data.it).map(e => e.data.it.id)]);
+  for (const k of await audioKeys()) if (S.gone["listen:" + k] && !alive.has(k)) audioDel(k);
+}
+function housekeep() { trashExpire(); audioGc().catch(() => {}); }
+// used by mergeStates: drop what was deleted (and not changed since), and bin entries emptied anywhere
+function applyGone(st) {
+  const g = st.gone || {}, dead = (k, u) => g[k] && (u || 0) <= g[k];
+  st.gen.mine = (st.gen.mine || []).filter(p => !dead("mine:" + p.id, p.u || p.t));
+  st.gen.listen = (st.gen.listen || []).filter(it => !dead("listen:" + it.id, it.u || it.t));
+  for (const w in st.bank || {}) { const b = st.bank[w]; if (dead("bank:" + w, Math.max(b.u || 0, b.t || 0))) delete st.bank[w]; }
+  for (const id in st.items || {}) if (id.startsWith("B:") && !(st.bank || {})[id.slice(2)] && g["bank:" + id.slice(2)]) delete st.items[id];
+  const td = new Set(st.trashDone || []); st.gen.trash = (st.gen.trash || []).filter(e => !td.has(e.id));
+  return st;
+}
+function trashCardHtml() {
+  const list = (S.gen.trash || []).slice().sort((a, b) => b.t - a.t);
+  if (!list.length) return "";
+  const icon = { listen: "🎧", mine: "📄", word: "🔤" }, kindName = { listen: "听力 Listening", mine: "我的文章 Your text", word: "生词 Saved word" };
+  return `<div class="card stack" id="trashcard"><span class="label">最近删除 · Recently deleted (${list.length})</span>
+    <p class="small muted">删掉的东西在这里放 ${TRASH_DAYS} 天，两台设备都一样，可以找回。<br>Deleted things wait here for ${TRASH_DAYS} days on all your devices, so you can bring them back. Listening audio stays in the cloud until then.</p>
+    <div class="stack" style="gap:6px">${list.map(e => { const left = Math.max(1, Math.ceil(TRASH_DAYS - (now() - e.t) / 864e5)); return `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><span class="zh" style="flex:1;min-width:140px">${icon[e.kind] || ""} ${esc(e.title || "无标题")} <span class="small muted">· ${kindName[e.kind] || ""} · 还剩 ${left} 天 ${left} day${left > 1 ? "s" : ""} left</span></span><button class="btn soft" data-trr="${esc(e.id)}">恢复 Restore</button><button class="btn ghost" data-trx="${esc(e.id)}">永久删除 Delete now</button></div>`; }).join("")}</div>
+    <button class="btn ghost" id="trashall">清空 Empty the bin</button></div>`;
+}
+function bindTrashCard(scope) {
+  const find = id => (S.gen.trash || []).find(e => e.id === id);
+  $$("[data-trr]", scope).forEach(b => b.onclick = () => { const e = find(b.dataset.trr); if (e) { restoreTrash(e); toast("已恢复 · Restored: " + (e.title || "")); } render(); });
+  const twice = (b, label, fn) => { if (b.dataset.sure) return fn(); b.dataset.sure = 1; b.textContent = label; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; render(); } }, 4000); };
+  $$("[data-trx]", scope).forEach(b => b.onclick = () => twice(b, "再点一次，删掉就找不回 · Tap again: can't be undone", () => { const e = find(b.dataset.trx); if (e) purgeTrash(e); render(); }));
+  const all = $("#trashall", scope); if (all) all.onclick = () => twice(all, `再点一次清空 ${(S.gen.trash || []).length} 个，找不回 · Tap again to delete all for good`, () => { (S.gen.trash || []).slice().forEach(e => purgeTrash(e, true)); save(); toast("清空了 · Bin emptied"); render(); });
 }
 
 /* ============ connection status ============ */
@@ -888,6 +977,7 @@ function indexGen() {
   S.gen.ladder.forEach(x => LADDER.set(x.id, x));
   (S.gen.passages || []).forEach(x => PSG.set(x.id, x));
   ((S.gen || {}).sen || []).forEach(x => SEN.set(x.id, x));
+  { const mine = new Set(((S.gen || {}).mine || []).map(x => x.id)); for (const [id, p] of PSG) if (p.mine && !mine.has(id)) PSG.delete(id); } // deleted on another device
   ((S.gen || {}).mine || []).forEach(x => PSG.set(x.id, x));
   for (const id in QFIX) { const p = PSG.get(id); if (p && p.qs && !p.qs.some(q => q.ex)) p.qs = JSON.parse(JSON.stringify(QFIX[id])); }
 }
@@ -2679,7 +2769,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   $("button", t).onclick = () => { fn(); t.remove(); };
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
-function removeFromBank(word) { delete S.bank[word]; delete S.items["B:" + word]; save(); }
+function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet();
   const tok = paras[pi][ti], word = tok.replace(/\//g, "");
@@ -2694,7 +2784,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const rds = A ? A.readings : [];
   const multi = rds.length > 1;
   const rdHtml = r => `<div class="rd"><b>${esc(r.py)}</b>${multi && r.here ? '<span class="rtag here">这里 here</span>' : ""}${multi && r.anki && !r.here ? '<span class="rtag">你学过 Anki</span>' : ""}<span>${esc(r.gl)}</span></div>`;
-  sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
+  sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${p.trad && ZHC && toTrad(word) !== word ? `<span class="w" style="font-size:22px;color:var(--muted)">${esc(toTrad(word))}</span>` : ""}${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
     ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? `词典里没有这个词 · This word isn't in the dictionary.${chars.length > 1 || parts.length ? "<br>下面是每个部分的意思 · Here's what each part means." : ""}` : "完整词典还在加载… The full dictionary is still loading."}</p>`}
     <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more && rds.length ? `<button class="btn ghost" id="more">更多 More</button>` : ""}</div>
     <div id="moreb" ${rds.length ? "hidden" : ""}>
@@ -2737,7 +2827,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
     S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? L.gl : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
     if (p.tags && p.tags.length) S.bank[word].tags = p.tags.slice();
     save(); closeSheet();
-    toastAction("已加入 " + word, "撤销 Undo", () => { removeFromBank(word); toast("已撤销 Undone"); });
+    toastAction("已加入 " + word, "撤销 Undo", () => { removeFromBank(word, false); toast("已撤销 Undone"); });
   };
 }
 function closeSheet() { const s = $("#sheet"); if (s) s.remove(); document.body.style.paddingBottom = ""; }
@@ -2965,10 +3055,9 @@ function renderMineText(main) {
   const aq = $("#addq"); if (aq) aq.onclick = () => mineQuestions(g);
   const ak = $("#askq"); if (ak) ak.onclick = () => { needQ.forEach(p => addReq({ rid: "q:mine:" + p.id, kind: "questions", target: "mine", id: p.id })); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
   $("#del").onclick = () => {
-    const ids = new Set(g.map(p => p.id)), saved = g.slice();
-    S.gen.mine = S.gen.mine.filter(p => !ids.has(p.id)); ids.forEach(id => PSG.delete(id)); save();
+    const e = trashMine(g.slice());
     READ = null; render();
-    toastAction("已删除 Deleted", "撤销 Undo", () => { S.gen.mine.push(...saved); saved.forEach(p => PSG.set(p.id, p)); save(); render(); }, 5000);
+    toastAction("已删除，可以在“进度 → 最近删除”找回 · Deleted (Progress → Recently deleted)", "撤销 Undo", () => { restoreTrash(e); render(); }, 5000);
   };
 }
 // finishing a part with no questions: speed shown, not counted in the reading-speed stat
@@ -3135,7 +3224,7 @@ function sentWaitHtml() {
    just the player and your "lost it" marks. Audio files stay on the device they were added on (too big to sync);
    the item, transcript, questions and your listening history sync like everything else.
    Shared with the karaoke mode planned next (lyrics = timed transcript). */
-const LISTEN_TR_MAX = 15000, LISTEN_TR_TOTAL = 120000;
+const LISTEN_TR_MAX = 40000, LISTEN_TR_TOTAL = 400000; // 40,000 ≈ 2½ hours of speech (raised 2026-11-07)
 let LST = null, AUD = null, AUD_URL = null, AUD_ID = null;
 const MEM_AUDIO = new Map(); // fallback when this page can't use on-device storage
 /* ---- on-device audio storage (IndexedDB) ---- */
@@ -3184,35 +3273,113 @@ const AUDIO_ACCEPT = "audio/*,video/mp4,.mp3,.m4a,.aac,.wav,.ogg,.opus";
 const filePick = (id, accept, label, chosen) => `<span class="row" style="gap:8px;align-items:center"><label class="btn soft fpick">${label}<input type="file" id="${id}" accept="${accept}"></label><span class="small ${chosen ? "" : "muted"}">${chosen ? "已选 " + esc(chosen) : "还没选 Nothing chosen"}</span></span>`;
 const isTimed = it => (it.cues || []).length > 0 && it.cues[0][0] != null;
 const fmtT = x => { x = Math.max(0, Math.floor(x || 0)); return Math.floor(x / 60) + ":" + String(x % 60).padStart(2, "0"); };
-/* ---- simplified → traditional (KTV screens often show traditional): data/s2t.txt from OpenCC (tools/mks2t.py),
-   loaded the first time 繁 is turned on, then kept offline. Longest phrase first (头发 → 頭髮, 干净 → 乾淨), else the
-   character's most common form. Display only: lookups and everything stored stay simplified. */
-let S2T = null, S2T_P = null, S2T_MAX = 1;
-function loadS2T() {
-  if (S2T_P) return S2T_P;
-  S2T_P = fetch("data/s2t.txt").then(r => { if (!r.ok) throw 0; return r.text(); }).then(t => {
-    const m = new Map();
-    for (const line of t.split("\n")) { if (!line || line[0] === "#") continue; const i = line.indexOf("\t"); if (i < 1) continue; const k = line.slice(0, i); m.set(k, line.slice(i + 1)); S2T_MAX = Math.max(S2T_MAX, Array.from(k).length); }
-    return (S2T = m);
-  }).catch(e => { S2T_P = null; throw e; });
-  return S2T_P;
+/* ---- simplified ⇄ traditional: data/zhconv.txt from OpenCC (tools/mkzhconv.py), loaded when a listening item
+   with text opens, then kept offline. Lyrics files are often traditional (濃轉淡): they're turned into simplified
+   for word splitting, lookups and saving, and shown in whichever script you pick. Longest phrase first, then the
+   character. Every mapping keeps the length, so converted text lines up with the original character for character. */
+let ZHC = null, ZHC_P = null;
+function loadZhc() {
+  if (ZHC_P) return ZHC_P;
+  ZHC_P = fetch("data/zhconv.txt").then(r => { if (!r.ok) throw 0; return r.text(); }).then(t => {
+    const z = { s2t: new Map(), t2s: new Map(), mx: { s2t: 1, t2s: 1 } }; let cur = null;
+    for (const line of t.split("\n")) {
+      if (line.startsWith("## ")) { cur = line.slice(3).trim(); continue; }
+      if (!cur || !line || line[0] === "#") continue;
+      const i = line.indexOf("\t"); if (i < 1) continue; const k = line.slice(0, i);
+      z[cur].set(k, line.slice(i + 1)); z.mx[cur] = Math.max(z.mx[cur], Array.from(k).length);
+    }
+    return (ZHC = z);
+  }).catch(e => { ZHC_P = null; throw e; });
+  return ZHC_P;
 }
-function toTrad(s) {
-  if (!S2T) return s;
-  const a = Array.from(String(s)); let out = "";
+function zhConv(s, dir) {
+  if (!ZHC) return String(s);
+  const M = ZHC[dir], mx = ZHC.mx[dir], a = Array.from(String(s)); let out = "";
   for (let i = 0; i < a.length;) {
-    let n = Math.min(S2T_MAX, a.length - i), v = null;
-    for (; n > 1; n--) { v = S2T.get(a.slice(i, i + n).join("")); if (v != null) break; }
-    if (n > 1) { out += v; i += n; } else { out += S2T.get(a[i]) || a[i]; i++; }
+    let n = Math.min(mx, a.length - i), v = null;
+    for (; n > 1; n--) { v = M.get(a.slice(i, i + n).join("")); if (v != null) break; }
+    if (n > 1) { out += v; i += n; } else { out += M.get(a[i]) || a[i]; i++; }
   }
   return out;
 }
-// per-device display settings for the transcript on an item's page: size step and 简/繁
+const toTrad = s => zhConv(s, "s2t"), toSimp = s => zhConv(s, "t2s");
+// per-device display settings for transcripts and lyrics: size step, 简/繁, pinyin
 const CUE_FS = [19, 22, 25, 28, 32];
-function cuePref() { try { return Object.assign({ fs: 2, tr: false }, JSON.parse(localStorage.getItem("zwlgf:cuepref") || "{}")); } catch (e) { return { fs: 2, tr: false }; } }
+function cuePref() { try { return Object.assign({ fs: 2, tr: false, py: false }, JSON.parse(localStorage.getItem("zwlgf:cuepref") || "{}")); } catch (e) { return { fs: 2, tr: false, py: false }; } }
 function setCuePref(o) { try { localStorage.setItem("zwlgf:cuepref", JSON.stringify(Object.assign(cuePref(), o))); } catch (e) {} }
-const cueText = x => cuePref().tr && S2T ? toTrad(x) : x;
-function cueAt(it, t) { let i = -1; for (let k = 0; k < it.cues.length; k++) { if (it.cues[k][0] <= t + 0.05) i = k; else break; } return i; }
+// one line → words: s = simplified (split, looked up, saved), d = shown (your script; the file's own characters kept
+// where they already are in that script)
+function lineToks(it, i) {
+  const raw = it.cues[i][1], simp = toSimp(raw), toks = segmentText(simp, it.gl || {}), tr = cuePref().tr;
+  const ra = Array.from(raw), same = Array.from(simp).length === ra.length; let at = 0;
+  return toks.map(s => {
+    const n = Array.from(s).length, orig = same ? ra.slice(at, at + n).join("") : s; at += n;
+    return { s, d: tr ? (orig !== s ? orig : toTrad(s)) : s };
+  });
+}
+function lineHtml(it, i, toks, key, looked) {
+  const py = cuePref().py;
+  return toks.map((t, ti) => {
+    if (Array.from(t.s).every(isPunct) || /^\p{Extended_Pictographic}+$/u.test(t.s) || !t.s.trim()) return esc(t.d);
+    const k = key + ":" + ti, L = py ? lookup(t.s, it.gl || {}) : null;
+    const inner = L && L.py ? `<ruby>${esc(t.d)}<rt>${esc(L.py)}</rt></ruby>` : esc(t.d);
+    return `<span class="tk ${looked && looked.has(k) ? "looked" : ""}" data-k="${k}">${inner}</span>`;
+  }).join("");
+}
+/* ---- timing fixes (file items): it.tm = {a, b, an: [[stamp in the file, heard at], …]} → a line starts at
+   a × stamp + b. One tapped line = everything shifts by the same amount (the usual LRCLIB problem: another release
+   with a longer or shorter intro); two tapped lines far apart also fix a slow drift. ±0.2 s nudges move b. */
+const TAP_LAG = 0.2; // people tap a little after they hear a line start
+const cueT = (it, i) => { const c = it.cues[i][0]; if (c == null) return null; const tm = it.tm; return tm ? Math.max(0, tm.a * c + tm.b) : c; };
+function fitTiming(it) {
+  const an = (it.tm && it.tm.an || []).slice().sort((p, q) => p[0] - q[0]); if (!an.length) { delete it.tm; return; }
+  const last = it.tm.last || an[an.length - 1], lo = an[0], hi = an[an.length - 1];
+  let a = 1, b = last[1] - last[0];
+  if (hi[0] - lo[0] >= 30) { const s = (hi[1] - lo[1]) / (hi[0] - lo[0]); if (s > 0.95 && s < 1.05) { a = s; b = lo[1] - s * lo[0]; } }
+  it.tm = { a: +a.toFixed(5), b: +b.toFixed(2), an, last };
+}
+function anchorLine(it, i, heard) {
+  const x = it.cues[i][0]; if (x == null) return;
+  const an = ((it.tm && it.tm.an) || []).filter(p => Math.abs(p[0] - x) >= 20); // a new tap near an old one replaces it
+  const p = [x, +Math.max(0, heard - TAP_LAG).toFixed(2)]; an.push(p);
+  it.tm = { an, last: p }; fitTiming(it); it.u = now(); save();
+}
+function nudgeTiming(it, d) {
+  if (!it.tm) it.tm = { a: 1, b: 0, an: [] };
+  it.tm.b = +(it.tm.b + d).toFixed(2); it.tm.an = (it.tm.an || []).map(p => [p[0], +(p[1] + d).toFixed(2)]); if (it.tm.last) it.tm.last = [it.tm.last[0], +(it.tm.last[1] + d).toFixed(2)];
+  it.u = now(); save();
+}
+const fmtShift = it => { const b = it.tm ? it.tm.b : 0; return (b >= 0 ? "+" : "−") + Math.abs(b).toFixed(1) + " s"; };
+/* ---- sections of long transcripts: about 20 minutes each (by time when timed, else ~5,000 characters, roughly
+   20 minutes of speech). It still plays as one piece; each section gets its own 3 questions, and after listening
+   you get the questions for the sections you heard this time. A short tail joins the section before it. */
+const SEC_SECONDS = 1200, SEC_CHARS = 5000;
+function listenSections(it) {
+  const cues = it.cues || []; if (!cues.length) return [];
+  const timed = isTimed(it), out = [];
+  let from = 0, acc = 0;
+  for (let i = 0; i < cues.length; i++) {
+    if (timed) { if (i > from && cues[i][0] - cues[from][0] >= SEC_SECONDS) { out.push([from, i]); from = i; } }
+    else { acc += charCount(cues[i][1]); if (acc >= SEC_CHARS && i + 1 < cues.length) { out.push([from, i + 1]); from = i + 1; acc = 0; } }
+  }
+  out.push([from, cues.length]);
+  if (out.length > 1) { // a short tail (under a quarter of a section) joins the one before it
+    const [f, t] = out[out.length - 1];
+    const len = timed ? (cues[t - 1][0] - cues[f][0]) / SEC_SECONDS : cues.slice(f, t).reduce((x, c) => x + charCount(c[1]), 0) / SEC_CHARS;
+    if (len < 0.25) { out.pop(); out[out.length - 1][1] = t; }
+  }
+  return out;
+}
+// where a section starts and ends in the audio (seconds); untimed text: assume an even pace through the file
+function secSpan(it, sec, dur) {
+  const cues = it.cues;
+  if (isTimed(it)) return [cueT(it, sec[0]), sec[1] < cues.length ? cueT(it, sec[1]) : Infinity];
+  if (!dur) return null;
+  const n = cueChars(cues), before = cueChars(cues.slice(0, sec[0])), upto = cueChars(cues.slice(0, sec[1]));
+  return [before / n * dur, sec[1] < cues.length ? upto / n * dur : Infinity];
+}
+const secLabel = (it, k, dur) => { const s = (it.secs || [])[k]; const sp = s && secSpan(it, s, dur); return `第${k + 1}段 Part ${k + 1}${sp ? ` (${fmtT(sp[0])}–${sp[1] === Infinity ? (dur ? fmtT(dur) : "end") : fmtT(sp[1])})` : ""}`; };
+function cueAt(it, t) { let i = -1; for (let k = 0; k < it.cues.length; k++) { if (cueT(it, k) <= t + 0.05) i = k; else break; } return i; }
 /* ---- views ---- */
 function renderListen(main) {
   if (LST && LST.add) return renderListenAdd(main);
@@ -3333,49 +3500,118 @@ function renderListenAdd(main) {
     if (it.r2want) setTimeout(r2Kick, 300);
   };
 }
-const cuesHtml = it => (it.cues || []).map((c, i) => `<button class="cue" data-ci="${i}">${esc(cueText(c[1]))}</button>`).join("");
+// the transcript on an item's page: words tap for the dictionary; ▶ plays from a line (file + timings)
+function cuesHtml(it) {
+  const go = isTimed(it) && it.kind === "file";
+  LST.ptoks = (it.cues || []).map((c, i) => lineToks(it, i));
+  return LST.ptoks.map((toks, i) => `<div class="cue" data-ci="${i}">${go ? `<button class="cgo" data-go="${i}" aria-label="从这句播放 Play from here">▶</button>` : ""}${lineHtml(it, i, toks, i, LST.looked)}</div>`).join("");
+}
+function fixHtml(it) {
+  return `<div class="fixbox stack" style="gap:6px"><span class="small"><b>对时间 · Fix timing</b>：边听边点——听到哪一句刚开始唱，就马上点那一句（点哪儿都行）。所有的句子会一起挪过去。<br>While it plays, tap a line the moment you hear it start (anywhere on the line). Every line moves to match. Tap a second line much later in the song if the timing drifts.</span>
+    <div class="row" style="gap:6px;align-items:center"><span class="small">现在 Now: <b>${fmtShift(it)}</b>${it.tm && it.tm.a !== 1 ? ` · ×${it.tm.a.toFixed(3)}` : ""}</span><button class="tagc" data-nudge="-0.2">早 0.2 s earlier</button><button class="tagc" data-nudge="0.2">晚 0.2 s later</button>${it.tm ? `<button class="tagc" id="fixreset">重置 Reset</button>` : ""}<button class="tagc on" id="fixdone">好了 Done</button></div></div>`;
+}
+function tapHtml(it) {
+  const st = it.tap || [], k = st.length, n = it.cues.length;
+  return `<div class="fixbox stack" style="gap:10px"><span class="small"><b>打拍子 · Tap along</b>：播放，每句一开始就点大按钮。慢一点也可以（0.75×）。<br>Play it and tap the big button the moment each line starts. Slower speed works too. ${k}/${n}</span>
+    ${k ? `<div class="small muted zh">${esc(it.cues[k - 1][1])}</div>` : ""}
+    <div class="zh" style="font-size:var(--cuefs,25px);line-height:1.5;font-weight:700">${k < n ? esc(it.cues[k][1]) : "✓"}</div>
+    <button class="btn wide" id="tapgo" style="min-height:72px;font-size:18px">${AUD && AUD_ID === it.id && !AUD.paused ? "这一句开始了 · Starts now" : "▶ 播放 Play"}</button>
+    <div class="row"><button class="btn ghost" id="tapundo" ${k ? "" : "disabled"}>撤销 Undo</button><button class="btn ghost" id="tapstop">先停 Stop (keeps your taps)</button></div></div>`;
+}
 function renderListenItem(main, it) {
-  const timed = isTimed(it), hasTr = (it.cues || []).length > 0;
+  const timed = isTimed(it), hasTr = (it.cues || []).length > 0, file = it.kind === "file", pref = cuePref();
   if (!timed && LST.mode === "follow") LST.mode = "hide";
+  if (!LST.looked) LST.looked = new Set();
+  if (!(timed && file)) LST.fix = false;
+  if (!(file && hasTr && !timed)) LST.tap = false;
+  const secs = listenSections(it);
+  const pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags, trad: pref.tr };
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="chip">${it.kind === "link" ? "🔗 链接" : "🎧 文件"}</span></div>
     <div class="card stack"><h2 class="zh">${esc(it.title)}</h2>
       <div id="lplay"></div>
       ${it.kind === "link" && !hasTr ? "" : `<button class="btn soft lostbtn" id="llost">没跟上 · Lost it${LST.lost.length ? ` <span class="small">(${LST.lost.length})</span>` : ""}</button>
-      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. It doesn't rewind. ${timed && it.kind === "file" ? "Afterwards you'll see the exact lines." : it.kind === "link" ? "This page can't see where the other app is, so afterwards you mark the lines yourself." : "Afterwards you'll see roughly where (exact lines need a timed transcript)."}</p>`}
-      ${hasTr ? `<div class="row" style="gap:6px"><span class="small">文字 Text:</span>${[["hide", "隐藏 Hidden"], ...(timed ? [["follow", "跟着看 Follow"]] : []), ["all", "全文 All"]].map(([m, l]) => `<button class="tagc ${LST.mode === m ? "on" : ""}" data-mode="${m}">${l}</button>`).join("")}</div>
-        <div class="row" id="lcuectl" style="gap:6px" ${LST.mode === "hide" ? "hidden" : ""}><button class="tagc ${cuePref().tr ? "" : "on"}" data-scr="s">简体</button><button class="tagc ${cuePref().tr ? "on" : ""}" data-scr="t">繁體</button><span style="width:8px"></span><button class="tagc" data-fs="-1" aria-label="Smaller text">字 −</button><button class="tagc" data-fs="1" aria-label="Bigger text">字 +</button></div>
-        <div class="cues" id="lcues" style="--cuefs:${CUE_FS[cuePref().fs] || 25}px" ${LST.mode === "hide" ? "hidden" : ""}>${cuesHtml(it)}</div>` : ""}
+      <p class="small muted" style="margin-top:-6px">Tap whenever you lose the thread, then keep listening. It doesn't rewind. ${timed && file ? "Afterwards you'll see the exact lines." : it.kind === "link" ? "This page can't see where the other app is, so afterwards you mark the lines yourself." : "Afterwards you'll see roughly where (exact lines need a timed transcript)."}</p>`}
+      ${LST.tap ? `<div id="ltap">${tapHtml(it)}</div>` : hasTr ? `<div class="row" style="gap:6px"><span class="small">文字 Text:</span>${[["hide", "隐藏 Hidden"], ...(timed ? [["follow", "跟着看 Follow"]] : []), ["all", "全文 All"]].map(([m, l]) => `<button class="tagc ${LST.mode === m ? "on" : ""}" data-mode="${m}">${l}</button>`).join("")}${timed && file ? `<button class="tagc ${LST.fix ? "on" : ""}" id="lfix" style="margin-left:auto">⏱ 对时间 Fix timing</button>` : ""}</div>
+        <div class="row" id="lcuectl" style="gap:6px" ${LST.mode === "hide" ? "hidden" : ""}><button class="tagc ${pref.tr ? "" : "on"}" data-scr="s">简体</button><button class="tagc ${pref.tr ? "on" : ""}" data-scr="t">繁體</button><button class="tagc ${pref.py ? "on" : ""}" id="lpy">拼音 Pinyin</button><button class="tagc" data-fs="-1" aria-label="Smaller text">字 −</button><button class="tagc" data-fs="1" aria-label="Bigger text">字 +</button></div>
+        <div id="lfixbox">${LST.fix && LST.mode !== "hide" ? fixHtml(it) : ""}</div>
+        <div class="cues ${LST.fix ? "fixing" : ""} ${pref.py ? "py" : ""}" id="lcues" style="--cuefs:${CUE_FS[pref.fs] || 25}px" ${LST.mode === "hide" ? "hidden" : ""}>${cuesHtml(it)}</div>` : ""}
       <button class="btn wide" id="ldone" style="margin-top:18px">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
     <div class="card stack"><span class="label">这一条 · This item</span>
-      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : HOSTED ? `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>` : reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : `<button class="btn soft" id="lqask">请 Claude 出题 · Ask Claude for questions</button>${(it.cues || []).map(c => c[1]).join("\n").length > 6000 ? `<span class="small muted">文字很长：问题只会问前面大约 6,000 字（大约前 25 分钟）· Long transcript: questions cover only the first ~6,000 characters (roughly the first 25 minutes).</span>` : ""}`) : ""}
+      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : HOSTED ? `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>` : reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : `<button class="btn soft" id="lqask">请 Claude 出题 · Ask Claude for questions</button>`) : ""}
+      ${hasTr && secs.length > 1 ? `<span class="small muted">文字很长：分成 ${secs.length} 段（每段大约 20 分钟），每段 3 个问题。播放还是一整段；听完以后问你听过的那几段。<br>Long transcript: ${secs.length} sections of about 20 minutes, 3 questions each. It still plays as one piece; afterwards you get the questions for the sections you heard.</span>` : ""}
+      ${file && hasTr && !timed && !LST.tap ? `<button class="btn soft" id="ltapgo">${it.tap && it.tap.length ? `继续打拍子 Continue tapping along (${it.tap.length}/${it.cues.length})` : "打拍子对时间 · Tap along to time the lines"}</button><span class="small muted" style="margin-top:-6px">No timings? Play it once and tap as each line starts; then the text can follow along.</span>` : ""}
       ${LST.edit ? `<div class="stack" style="gap:8px">${trEditorHtml(LST.edit)}<div id="lerr" class="small" style="color:var(--bad)"></div>
           <div class="row"><button class="btn" id="ltrsave">保存文字 Save transcript</button><button class="btn ghost" id="ltrcancel">取消 Cancel</button></div>
-          ${hasTr ? `<span class="small muted">换文字会删掉根据旧文字出的问题 · Replacing it removes questions made from the old transcript.</span>` : ""}</div>`
+          ${hasTr ? `<span class="small muted">换文字会删掉根据旧文字出的问题和对好的时间 · Replacing it removes questions and timing fixes made for the old one.</span>` : ""}</div>`
         : `${!hasTr ? `<span class="small muted">没有文字：只有播放和“没跟上”记录。 No transcript yet: player and "lost it" marks only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? "换文字 Replace transcript / lyrics" : "加文字 Add transcript / lyrics"}</button>`}
       <div id="lqs" class="small muted"></div>
       <div id="r2item" class="stack" style="gap:6px"></div>
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
-  $("#lback", main).onclick = () => { stopAudio(); LST = null; render(); };
-  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = $("#lcuectl", main).hidden = LST.mode === "hide"; syncCue(it); });
-  const redrawCues = () => { const box = $("#lcues", main); if (!box) return; box.innerHTML = cuesHtml(it); box.style.setProperty("--cuefs", (CUE_FS[cuePref().fs] || 25) + "px"); bindCues(); LAST_CUE = -1; syncCue(it); };
+  $("#lback", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
+  $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = $("#lcuectl", main).hidden = LST.mode === "hide"; drawFix(); syncCue(it); });
+  const bindCues = () => {
+    $$("#lcues .tk", main).forEach(el => el.onclick = e => {
+      if (LST.fix) return; e.stopPropagation();
+      const [pi, ti] = el.dataset.k.split(":").map(Number); LST.looked.add(el.dataset.k); el.classList.add("looked");
+      openSheet(Object.assign(pp, { trad: cuePref().tr }), LST.ptoks.map(l => l.map(t => t.s)), pi, ti, el);
+    });
+    $$("[data-go]", main).forEach(b => b.onclick = e => { if (LST.fix) return; e.stopPropagation(); const t = cueT(it, +b.dataset.go); if (AUD && AUD_ID === it.id && t != null) { AUD.currentTime = t; AUD.play(); } });
+    $$("#lcues .cue", main).forEach(el => el.onclick = () => {
+      if (!LST.fix) return;
+      if (!AUD || AUD_ID !== it.id || (AUD.paused && !AUD.currentTime)) return toast("先播放，听到那一句再点 · Play first, then tap a line as you hear it start", 3000);
+      anchorLine(it, +el.dataset.ci, AUD.currentTime); el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+      drawFix(); LAST_CUE = -1; syncCue(it);
+    });
+  };
+  const redrawCues = () => { const box = $("#lcues", main); if (!box) return; box.innerHTML = cuesHtml(it); box.style.setProperty("--cuefs", (CUE_FS[cuePref().fs] || 25) + "px"); box.classList.toggle("py", cuePref().py); bindCues(); LAST_CUE = -1; syncCue(it); };
+  const drawFix = () => {
+    const box = $("#lfixbox", main); if (!box) return;
+    box.innerHTML = LST.fix && LST.mode !== "hide" ? fixHtml(it) : ""; $("#lcues", main).classList.toggle("fixing", !!LST.fix);
+    const fb = $("#lfix", main); if (fb) fb.classList.toggle("on", !!LST.fix);
+    $$("[data-nudge]", box).forEach(b => b.onclick = () => { nudgeTiming(it, +b.dataset.nudge); drawFix(); LAST_CUE = -1; syncCue(it); });
+    const rs = $("#fixreset", box); if (rs) rs.onclick = () => { delete it.tm; it.u = now(); save(); drawFix(); LAST_CUE = -1; syncCue(it); };
+    const dn = $("#fixdone", box); if (dn) dn.onclick = () => { LST.fix = false; drawFix(); };
+  };
+  const fx = $("#lfix", main); if (fx) fx.onclick = () => { LST.fix = !LST.fix; if (LST.fix && LST.mode === "hide") { LST.mode = "follow"; renderListenItem(main, it); return; } drawFix(); };
+  drawFix();
   $$("[data-fs]", main).forEach(b => b.onclick = () => { setCuePref({ fs: Math.max(0, Math.min(CUE_FS.length - 1, cuePref().fs + +b.dataset.fs)) }); redrawCues(); });
+  const py = $("#lpy", main); if (py) py.onclick = () => { setCuePref({ py: !cuePref().py }); py.classList.toggle("on", cuePref().py); redrawCues(); };
   $$("[data-scr]", main).forEach(b => b.onclick = async () => {
     const tr = b.dataset.scr === "t";
-    if (tr && !S2T) { b.innerHTML = '<span class="spin"></span> 繁體'; try { await loadS2T(); } catch (e) { b.textContent = "繁體"; return toast("繁体字表要联网下载一次 · The traditional-character table needs to download once (go online)", 4000); } b.textContent = "繁體"; }
+    if (!ZHC) { const l = b.textContent; b.innerHTML = '<span class="spin"></span> ' + l; try { await loadZhc(); } catch (e) { b.textContent = l; return toast("简繁字表要联网下载一次 · The simplified/traditional table needs to download once (go online)", 4000); } b.textContent = l; }
     setCuePref({ tr }); $$("[data-scr]", main).forEach(x => x.classList.toggle("on", x === b)); redrawCues();
   });
-  if (cuePref().tr && !S2T && hasTr) loadS2T().then(() => { if ($("#lcues", main)) redrawCues(); }).catch(() => {});
+  if (hasTr && !ZHC) loadZhc().then(() => { if ($("#lcues", main)) redrawCues(); }).catch(() => {});
+  bindCues();
   if ($("#llost", main)) $("#llost", main).onclick = () => {
-    LST.lost.push(it.kind === "file" && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null);
+    LST.lost.push(file && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null);
     const b = $("#llost", main); b.innerHTML = `没跟上 · Lost it <span class="small">(${LST.lost.length})</span>`; b.classList.remove("pop"); void b.offsetWidth; b.classList.add("combo", "pop"); setTimeout(() => b.classList.remove("combo"), 400);
   };
-  const bindCues = () => $$("[data-ci]", main).forEach(b => b.onclick = () => { const c = it.cues[+b.dataset.ci]; if (timed && AUD && AUD_ID === it.id && c[0] != null) { AUD.currentTime = c[0]; AUD.play(); } });
-  bindCues();
+  // tap along (untimed text): one tap per line start; the taps are kept on the item until every line has one
+  const drawTap = () => {
+    const box = $("#ltap", main); if (!box) return; box.innerHTML = tapHtml(it);
+    $("#tapgo", box).onclick = () => {
+      if (!AUD || AUD_ID !== it.id) return toast("音频还没准备好 · The audio isn't ready yet", 2500);
+      if (AUD.paused) { AUD.play().then(drawTap).catch(() => toast("播放不了这个文件 · Can't play this file")); return; }
+      const st = it.tap = it.tap || [], t = Math.max(0, AUD.currentTime - TAP_LAG);
+      st.push(+(st.length ? Math.max(st[st.length - 1] + 0.05, t) : t).toFixed(2)); it.u = now();
+      if (st.length >= it.cues.length) {
+        it.cues = it.cues.map((c, i) => [st[i], c[1]]); delete it.tap; delete it.tm; delete it.secs; save();
+        LST.tap = false; LST.mode = "follow"; toast("时间对好了 · Timed! The text can follow along now; 对时间 fine-tunes it.", 4000); renderListenItem(main, it); return;
+      }
+      save(); drawTap();
+    };
+    $("#tapundo", box).onclick = () => { const st = it.tap || []; const x = st.pop(); it.u = now(); save(); if (AUD && AUD_ID === it.id && x != null) AUD.currentTime = Math.max(0, x - 2); drawTap(); };
+    $("#tapstop", box).onclick = () => { LST.tap = false; if (AUD) AUD.pause(); renderListenItem(main, it); };
+  };
+  const tg = $("#ltapgo", main); if (tg) tg.onclick = () => { LST.tap = true; if (it.tap && it.tap.length && AUD && AUD_ID === it.id) AUD.currentTime = Math.max(0, it.tap[it.tap.length - 1] - 2); renderListenItem(main, it); };
+  if (LST.tap) { drawTap(); LST.onplay = drawTap; } else LST.onplay = null;
   $("#ldone", main).onclick = () => {
-    if (AUD) AUD.pause();
+    if (AUD) AUD.pause(); closeSheet();
     (S.lsn = S.lsn || {})[it.id] = ((S.lsn || {})[it.id] || []).concat([{ t: now(), lost: LST.lost.slice() }]).slice(-20);
     save();
-    Object.assign(LST, { review: true, quiz: !!(it.qs && it.qs.length), qi: 0, score: 0, looked: new Set() }); render(); window.scrollTo(0, 0);
+    const qlist = listenQuizList(it);
+    Object.assign(LST, { review: true, quiz: qlist.length > 0, qlist, qi: 0, score: 0, looked: new Set(), tap: false, fix: false }); render(); window.scrollTo(0, 0);
   };
   const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
   const lqa = $("#lqask", main); if (lqa) lqa.onclick = () => { addReq({ rid: "q:listen:" + it.id, kind: "questions", target: "listen", id: it.id }); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
@@ -3391,16 +3627,25 @@ function renderListenItem(main, it) {
       if (n > LISTEN_TR_MAX) return err(`文字太长（${n} 字，最多 ${LISTEN_TR_MAX}）· Transcript too long (${n} characters; max ${LISTEN_TR_MAX}).`);
       const total = S.gen.listen.reduce((a, x) => a + (x === it ? 0 : cueChars(x.cues)), 0);
       if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了 · Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
-      it.cues = cues; delete it.qs; delete it.gl; delete it.qcut; it.u = now(); save();
+      it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs"]) delete it[k]; it.u = now(); save();
       LST.edit = null; LAST_CUE = -1; toast(`文字已保存 · Transcript saved (${cues.length} lines${isTimed(it) ? ", timed" : ""})`); renderListenItem(main, it);
     };
   }
   $("#ldel", main).onclick = () => {
-    const idx = S.gen.listen.indexOf(it); S.gen.listen.splice(idx, 1); stopAudio(); save(); LST = null; render();
-    let undone = false; setTimeout(() => { if (!undone && !S.gen.listen.includes(it)) { audioDel(it.id); if (it.r2 && it.r2.key) { S.r2del = (S.r2del || []).concat([it.r2.key]); save(); r2Kick(); } } }, 6000);
-    toastAction("已删除 · Deleted", "撤销 Undo", () => { undone = true; S.gen.listen.splice(idx, 0, it); save(); render(); }, 5000);
+    stopAudio(); closeSheet(); const e = trashListen(it); LST = null; render();
+    toastAction("已删除，可以在“进度 → 最近删除”找回 · Deleted (Progress → Recently deleted)", "撤销 Undo", () => { restoreTrash(e); render(); }, 5000);
   };
   drawPlayer(it); drawR2Item(it);
+}
+// questions after listening: with sections, the ones for the sections you heard this time (all of them for links,
+// or if nothing was played)
+function listenQuizList(it) {
+  const qs = it.qs || [];
+  if (!qs.some(q => q.sec != null) || !(it.secs && it.secs.length > 1) || it.kind !== "file" || LST.maxT == null) return qs;
+  const dur = (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : 0) || it.dur || 0;
+  const heard = new Set(it.secs.map((s, k) => { const sp = secSpan(it, s, dur); return sp && sp[0] <= LST.maxT && sp[1] > (LST.fromT || 0) ? k : -1; }).filter(k => k >= 0));
+  const out = qs.filter(q => q.sec == null || heard.has(q.sec));
+  return out.length ? out : qs;
 }
 async function drawR2Item(it) {
   const box = $("#r2item"); if (!box) return;
@@ -3446,8 +3691,10 @@ async function drawPlayer(it) {
     pp.textContent = AUD.paused ? "▶ 播放" : "❚❚ 暂停";
     if (isFinite(AUD.duration)) { $("#ldur").textContent = fmtT(AUD.duration); if (!seek.matches(":active")) seek.value = Math.round(AUD.currentTime / AUD.duration * 1000); }
     $("#lpos").textContent = fmtT(AUD.currentTime); syncCue(it);
+    if (LST && LST.id === it.id && !AUD.paused) { if (LST.fromT == null) LST.fromT = AUD.currentTime; LST.maxT = Math.max(LST.maxT || 0, AUD.currentTime); }
   };
-  AUD.ontimeupdate = draw; AUD.onplay = draw; AUD.onpause = draw; AUD.onloadedmetadata = draw; AUD.onended = draw;
+  const pd = () => { draw(); if (LST && LST.id === it.id && LST.onplay) LST.onplay(); };
+  AUD.ontimeupdate = draw; AUD.onplay = pd; AUD.onpause = pd; AUD.onloadedmetadata = draw; AUD.onended = draw;
   pp.onclick = () => { if (AUD.paused) { LST.play = true; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
   $("#lb5").onclick = () => { AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
   $("#lf5").onclick = () => { AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };
@@ -3475,9 +3722,11 @@ function lostLines(it, lost) {
   return out;
 }
 function renderListenReview(main, it) {
-  if (LST.quiz && LST.qi < it.qs.length) {
-    const q = it.qs[LST.qi], right = q.opts[0], opts = shuffle(q.opts);
-    main.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${LST.qi + 1}/${it.qs.length} · ${esc(it.title)}</span><p class="prompt-en">${esc(q.q)}</p>
+  const QL = LST.qlist || it.qs || [];
+  if (!ZHC && (it.cues || []).length && !LST.zhcTried) { LST.zhcTried = true; loadZhc().then(() => { if (LST && LST.review && LST.id === it.id) render(); }).catch(() => {}); }
+  if (LST.quiz && LST.qi < QL.length) {
+    const q = QL[LST.qi], right = q.opts[0], opts = shuffle(q.opts);
+    main.innerHTML = `<div class="card" id="cc"><span class="label">问题 ${LST.qi + 1}/${QL.length} · ${esc(it.title)}${q.sec != null && it.secs && it.secs.length > 1 ? " · " + secLabel(it, q.sec, it.dur) : ""}</span><p class="prompt-en">${esc(q.q)}</p>
       <div class="opts">${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o)}</button>`).join("")}</div></div>`;
     bindOpts(main, b => {
       const ok = opts[+b.dataset.i] === right; if (ok) LST.score++;
@@ -3487,29 +3736,30 @@ function renderListenReview(main, it) {
     });
     return;
   }
-  if (LST.quiz && LST.score != null && !LST.saved) { const h = S.lsn[it.id]; if (h && h.length) { h[h.length - 1].score = LST.score; h[h.length - 1].nq = it.qs.length; save(); } LST.saved = true; }
+  if (LST.quiz && LST.score != null && !LST.saved) { const h = S.lsn[it.id]; if (h && h.length) { h[h.length - 1].score = LST.score; h[h.length - 1].nq = QL.length; save(); } LST.saved = true; }
   const timed = isTimed(it), file = it.kind === "file", exact = timed && file;
   if (!LST.marks) LST.marks = lostLines(it, LST.lost);
   const marks = LST.marks, canMark = !exact && LST.lost.length > 0 && (it.cues || []).length > 0;
   const rough = !exact && file && marks.size > 0;
-  const pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags };
-  LST.paras = (it.cues || []).map(c => segmentText(c[1], it.gl || {}));
-  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="small muted">没跟上 ${LST.lost.length} 次${LST.quiz ? ` · 问题 ${LST.score}/${it.qs.length}` : ""}</span></div>
+  const pp = { id: "A:" + it.id, gl: it.gl || {}, tags: it.tags, trad: cuePref().tr };
+  const ltoks = (it.cues || []).map((c, i) => lineToks(it, i));
+  LST.paras = ltoks.map(l => l.map(t => t.s)); // simplified, for lookups and saving
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><span class="small muted">没跟上 ${LST.lost.length} 次${LST.quiz ? ` · 问题 ${LST.score}/${QL.length}` : ""}</span></div>
     <div class="card stack"><span class="label">对一下 · Check against the text</span>
       ${(it.cues || []).length ? `<p class="small muted">${canMark ? (rough ? `没跟上 ${LST.lost.length} 次。黄色是按时间估计的大概位置，点 ⚑ 改一下 · Yellow = roughly where (estimated from the time); tap ⚑ to fix it. ` : `没跟上 ${LST.lost.length} 次。点 ⚑ 标出大概在哪儿 · Tap ⚑ on the lines where you lost it. `) : marks.size ? "黄色 = 你没跟上的地方 · Yellow = where you lost it. " : ""}Tap any word you didn't catch or know: it's looked up and can go into review.${timed && file ? " ▶ replays a line." : ""}</p>
-        <div class="reading" id="lrd" style="gap:4px">${LST.paras.map((toks, li) => `<p class="${marks.has(li) ? "cue lost" : "cue"}" data-li="${li}" style="margin:0">${canMark ? `<button class="tagc ${marks.has(li) ? "on" : ""}" data-mk="${li}" style="margin-right:6px" aria-label="Lost it here">⚑</button>` : ""}${exact ? `<button class="tagc" data-rl="${li}" style="margin-right:6px">▶</button>` : ""}${toks.map((t, ti) => tokHtml(t, li + ":" + ti, LST.looked.has(li + ":" + ti))).join("")}</p>`).join("")}</div>`
+        <div class="reading ${cuePref().py ? "py" : ""}" id="lrd" style="gap:4px">${ltoks.map((toks, li) => `<p class="${marks.has(li) ? "cue lost" : "cue"}" data-li="${li}" style="margin:0">${canMark ? `<button class="tagc ${marks.has(li) ? "on" : ""}" data-mk="${li}" style="margin-right:6px" aria-label="Lost it here">⚑</button>` : ""}${exact ? `<button class="tagc" data-rl="${li}" style="margin-right:6px">▶</button>` : ""}${lineHtml(it, li, toks, li, LST.looked)}</p>`).join("")}</div>`
       : `<p class="small muted">没有文字，没法对 · No transcript to check against. You lost the thread ${LST.lost.length} time${LST.lost.length === 1 ? "" : "s"}${LST.lost.some(x => x != null) ? " at " + LST.lost.filter(x => x != null).map(fmtT).join(", ") : ""}.</p>`}
       <button class="btn wide" id="lagain">再听一遍 Listen again</button><button class="btn ghost wide" id="llist">回到列表 Back to list</button></div>
     ${!HOSTED && it.r2 && r2Cfg() ? `<div class="card stack" id="r2done"><p class="small">这一条听完了吗？可以从云端删除，省空间（这台设备上还留着）。<br>Finished with this one? You can remove it from the cloud to save space (it stays on this device).</p><button class="btn ghost" id="r2rmdone">从云端删除 · Remove from cloud</button></div>` : ""}`;
   $("#lback", main).onclick = $("#llist", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
   const rmd = $("#r2rmdone", main); if (rmd) rmd.onclick = async () => { rmd.disabled = true; if (await r2RemoveCloud(it)) { const c = $("#r2done", main); if (c) c.remove(); } else rmd.disabled = false; };
-  $("#lagain", main).onclick = () => { closeSheet(); LST = { id: it.id, mode: LST.mode, lost: [], rate: LST.rate }; if (AUD) AUD.currentTime = 0; render(); window.scrollTo(0, 0); };
+  $("#lagain", main).onclick = () => { closeSheet(); LST = { id: it.id, mode: LST.mode, lost: [], rate: LST.rate, looked: new Set() }; if (AUD) AUD.currentTime = 0; render(); window.scrollTo(0, 0); };
   $$(".tk", main).forEach(el => el.onclick = () => { const [pi, ti] = el.dataset.k.split(":").map(Number); LST.looked.add(el.dataset.k); el.classList.add("looked"); openSheet(pp, LST.paras, pi, ti, el); });
   const saveMarks = () => { const h = (S.lsn || {})[it.id]; if (h && h.length) { h[h.length - 1].lines = [...marks].sort((a, b) => a - b); save(); } };
   if (canMark && !LST.marksSaved) { LST.marksSaved = true; if (marks.size) saveMarks(); }
   $$("[data-mk]", main).forEach(b => b.onclick = () => { const i = +b.dataset.mk; marks.has(i) ? marks.delete(i) : marks.add(i); b.classList.toggle("on", marks.has(i)); b.parentElement.classList.toggle("lost", marks.has(i)); saveMarks(); });
   $$("[data-rl]", main).forEach(b => b.onclick = async () => {
-    const i = +b.dataset.rl, start = it.cues[i][0], end = i + 1 < it.cues.length ? it.cues[i + 1][0] : null;
+    const i = +b.dataset.rl, start = cueT(it, i), end = i + 1 < it.cues.length ? cueT(it, i + 1) : null;
     if (AUD_ID !== it.id) { const blob = await audioGet(it.id); if (!blob) return toast("这台设备上没有这个音频 · The audio isn't on this device"); if (!AUD) { AUD = document.createElement("audio"); AUD.hidden = true; document.body.append(AUD); } stopAudio(); AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; }
     AUD.playbackRate = LST.rate || 1; AUD.currentTime = start;
     AUD.ontimeupdate = () => { if (end != null && AUD.currentTime >= end) AUD.pause(); };
@@ -3994,6 +4244,7 @@ function renderMe(main) {
   <div class="card" id="refitcard">${refitCard()}</div>
   <div class="card"><span class="label">设置 · Settings</span>
     <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="onetap" style="margin-top:3px;flex:none" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
+  ${trashCardHtml()}
   <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately. Traditional characters (听 tab, 繁體) come from <a href="https://github.com/BYVoid/OpenCC" target="_blank" rel="noopener">OpenCC</a> (Apache-2.0).</p></div>
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
@@ -4020,6 +4271,7 @@ function renderMe(main) {
   const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
   if (HOSTED) bindStock(); else bindPackCard();
   bindRefit();
+  bindTrashCard(main);
 }
 /* ---------- saved words: newest 20, the rest behind "show all" (with search); add words; tags; export ---------- */
 const BANK_SHOW = 20;
@@ -4050,7 +4302,7 @@ function bindBank() {
   const card = $("#bankcard"); if (!card) return;
   const redraw = () => { card.innerHTML = bankCard(); bindBank(); };
   bindBankAdd(card, redraw);
-  $$(".rmw", card).forEach(b => b.onclick = () => { const w = b.dataset.w; const saved = S.bank[w]; removeFromBank(w); redraw(); toastAction("已移出 " + w, "撤销 Undo", () => { S.bank[w] = saved; save(); redraw(); }); });
+  $$(".rmw", card).forEach(b => b.onclick = () => { const w = b.dataset.w; const e = removeFromBank(w); redraw(); toastAction("已移出 " + w, "撤销 Undo", () => { restoreTrash(e); redraw(); }); });
   $$("[data-btag]", card).forEach(b => b.onclick = () => { BANK_TAG = b.dataset.btag; redraw(); });
   const more = $("#bankmore", card); if (more) more.onclick = () => { BANK_ALL = !BANK_ALL; BANK_Q = ""; redraw(); if (!BANK_ALL) card.scrollIntoView({ block: "nearest" }); };
   const ex = $("#bankexp", card); if (ex) ex.onclick = () => { BANK_EXP = !BANK_EXP; redraw(); };
@@ -4176,7 +4428,7 @@ async function mergeCode(raw, fail) {
   let data;
   try { data = JSON.parse(json); } catch (e) { return fail(cut); }
   if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
-  S = mergeStates(S, data); S.lastImport = now(); indexGen(); migrateFsrs(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
+  S = mergeStates(S, data); S.lastImport = now(); indexGen(); migrateFsrs(); housekeep(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
 }
 /* ---------- shared checks for generated content: the Generate buttons and packs use the same ones ---------- */
 function makeLadder(x, id) {
@@ -4413,7 +4665,12 @@ function outboxRequests() {
   const out = wordsNeedingSentence().sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 150).map(b => ({ rid: "w:" + b.zh, kind: "sentence", w: b.zh, py: b.py || "", gl: String(b.gl || "").slice(0, 120) }));
   for (const q of S.req || []) {
     if (q.kind === "regrade") { const it = LADDER.get(q.id); if (!it) continue; const lp = ladParts(it); out.push({ rid: q.rid, kind: "regrade", drill: q.id, en: it.en, ref: [lp.model, ...(it.alt || [])], key: lp.key, answer: q.raw, model: q.by, modelScore: q.score, modelChunk: q.chunk || null }); }
-    else if (q.kind === "questions") out.push({ rid: q.rid, kind: "questions", target: q.target, id: q.id });
+    else if (q.kind === "questions") {
+      const r = { rid: q.rid, kind: "questions", target: q.target, id: q.id };
+      // long transcripts: ~20-minute sections (line ranges [from, to)), 3 questions each, answered as "secs"
+      if (q.target === "listen") { const it = (S.gen.listen || []).find(x => x.id === q.id); const secs = it ? listenSections(it) : []; if (secs.length > 1) r.sections = secs; }
+      out.push(r);
+    }
     else if (q.kind === "passage") out.push({ rid: q.rid, kind: "passage", genre: q.genre || null, topic: q.topic || "" });
   }
   return out;
@@ -4430,7 +4687,9 @@ function applyAnswers(pk, r) {
   }
   for (const a of Array.isArray(pk.questions) ? pk.questions : []) {
     const rid = String(a && a.rid || ""), m = rid.match(/^q:(mine|listen):(.+)$/); if (!m) { r.bad++; continue; }
-    const qs = toQs(a.qs); if (qs.length < 2) { r.bad++; continue; }
+    // a sectioned listening answer: "secs": [{qs: [3]}, …] in section order → one list, each question marked with its section
+    const secQs = Array.isArray(a.secs) ? a.secs.flatMap((x, k) => toQs(x && x.qs).map(q => Object.assign(q, { sec: k }))) : null;
+    const qs = secQs || toQs(a.qs); if (qs.length < 2) { r.bad++; continue; }
     if (m[1] === "mine") {
       const part = (S.gen.mine || []).find(x => x.id === m[2]); if (!part) { doneReq(rid); continue; }
       const plain = part.paras.map(x => x.replace(/[|\/]/g, ""));
@@ -4438,8 +4697,8 @@ function applyAnswers(pk, r) {
       part.qs = qs; if (a.gl && typeof a.gl === "object") part.gl = a.gl; if (a.en) part.en = String(a.en); part.u = now();
     } else {
       const it = (S.gen.listen || []).find(x => x.id === m[2]); if (!it) { doneReq(rid); continue; }
-      it.qs = qs; if (a.gl && typeof a.gl === "object") it.gl = a.gl; it.u = now();
-      if ((it.cues || []).map(c => c[1]).join("\n").length > 6000) it.qcut = true;
+      it.qs = qs; if (a.gl && typeof a.gl === "object") it.gl = a.gl; it.u = now(); delete it.qcut;
+      if (secQs) it.secs = listenSections(it); else delete it.secs;
     }
     doneReq(rid); r.qs++;
   }
@@ -4717,6 +4976,7 @@ function rescoreLastPlacement() {
   rescoreLastPlacement();
   migrateSen();
   migrateFsrs();
+  housekeep();
   render();
   drawOffline();
   connectRemote();

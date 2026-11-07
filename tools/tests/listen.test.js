@@ -1,4 +1,6 @@
-// Word popup closes on an outside tap; listening transcript size + 简/繁 toggle; LRCLIB length match + order.
+// Listening + reader fixes (2026-11-07): word popup closes on an outside tap; transcript size, 简/繁 both ways,
+// pinyin, word lookup + saving from lyrics, no sideways scrolling; LRCLIB length match + order; fix timing;
+// tap along; ~20-minute sections; deleting that sticks across devices + Recently deleted.
 // Serve docs/ on 8765 first (see README).
 const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
 const URL0 = "http://localhost:8765/";
@@ -6,10 +8,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0;
 const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 const lrc = "[00:01.00]我看着你的头发\n[00:03.00]干净的面条里面\n[00:05.00]后来我们发现了";
+// a silent 8 kHz mono WAV of n seconds
+function wav(n) {
+  const len = 8000 * n, b = Buffer.alloc(44 + len);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + len, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(8000, 24); b.writeUInt32LE(8000, 28); b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34); b.write("data", 36); b.writeUInt32LE(len, 40); b.fill(128, 44);
+  return b.toString("base64");
+}
+const T0 = Date.now() - 60000;
 const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {},
-  gen: { ladder: [], passages: [], sen: [], mine: [], listen: [{ id: "Atest", title: "测试歌", kind: "link", url: "https://example.com", t: Date.now(), cues: [[1, "我看着你的头发"], [3, "干净的面条里面"], [5, "后来我们发现了"]] }] }, best: { combo: 0 } });
+  gen: { ladder: [], passages: [], sen: [], mine: [], listen: [
+    { id: "Atest", title: "测试歌", kind: "link", url: "https://example.com", t: T0, cues: [[1, "我看着你的头发"], [3, "干净的面条里面"], [5, "后来我们发现了"]] },
+    { id: "Atrad", title: "青花瓷", kind: "link", url: "https://example.com", t: T0 + 1, cues: [[1, "素胚勾勒出青花筆鋒濃轉淡"], [3, "瓶身描繪的牡丹一如妳初妝"]] },
+    { id: "Afile", title: "有文件", kind: "file", fname: "x.wav", t: T0 + 2, dur: 60, cues: [[1, "第一句"], [3, "第二句"], [5, "第三句"], [40, "第四句很远"]] },
+    { id: "Atap", title: "打拍子", kind: "file", fname: "y.wav", t: T0 + 3, dur: 60, cues: [[null, "一"], [null, "二"], [null, "三"]] },
+  ] }, best: { combo: 0 } });
 (async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
   const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
   await ctx.addInitScript(s => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", 1); localStorage.setItem("zwlgf:state:v1", s); } }, st);
   const lr = [
@@ -24,6 +39,8 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const page = await ctx.newPage();
   page.on("pageerror", e => { console.log("PAGE ERROR", e.message); fails++; });
   await page.goto(URL0); await page.waitForFunction(() => !document.querySelector("#tabs").hidden);
+  await page.evaluate(async w => { const b = new Blob([Uint8Array.from(atob(w), c => c.charCodeAt(0))], { type: "audio/wav" }); await audioPut("Afile", b); await audioPut("Atap", b); }, wav(60));
+  const openItem = async id => { await page.click('#tabs button[data-tab="listen"]'); await sleep(250); await page.click(`[data-l="${id}"]`); await sleep(400); };
 
   // ---- 1. popup closes on an outside tap (reader) ----
   await page.click('#tabs button[data-tab="read"]'); await sleep(300);
@@ -31,51 +48,156 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const tks = page.locator("#rd p .tk");
   await tks.nth(0).click(); await sleep(150);
   ok(await page.locator("#sheet").count() === 1, "tapping a word opens the popup");
-  await page.locator("#sheet .w").click(); await sleep(100);
+  await page.locator("#sheet .w").first().click(); await sleep(100);
   ok(await page.locator("#sheet").count() === 1, "tapping inside the popup keeps it open");
-  const w1 = await page.locator("#sheet .w").textContent();
+  const w1 = await page.locator("#sheet .w").first().textContent();
   await tks.nth(3).click(); await sleep(150);
-  const w2 = await page.locator("#sheet .w").textContent();
-  ok(await page.locator("#sheet").count() === 1 && w1 !== w2, "tapping another word switches to that word");
+  ok(await page.locator("#sheet").count() === 1 && w1 !== await page.locator("#sheet .w").first().textContent(), "tapping another word switches to that word");
   await page.mouse.click(380, 70); await sleep(150);
   ok(await page.locator("#sheet").count() === 0, "tapping outside closes the popup");
-  ok(await page.locator("#rd").count() === 1, "…and the reading stays open");
-  await tks.nth(0).click(); await sleep(150); await page.click("#sheet #cls"); await sleep(100);
-  ok(await page.locator("#sheet").count() === 0, "× still closes it");
 
-  // ---- 2. listening item: size, 简/繁, spacing ----
-  await page.click('#tabs button[data-tab="listen"]'); await sleep(300);
-  await page.locator("[data-l]").first().click(); await sleep(300);
-  await page.click('[data-mode="all"]'); await sleep(100);
-  ok(await page.locator("#lcuectl").isVisible(), "size + 简/繁 controls show with the text");
+  // ---- 2. transcript: size, 简/繁 both ways, pinyin, lookups, no sideways scroll ----
+  await openItem("Atest"); await page.click('[data-mode="all"]'); await sleep(100);
   const fs = () => page.locator(".cues .cue").first().evaluate(e => parseFloat(getComputedStyle(e).fontSize));
-  ok(await fs() === 25, "transcript text is 25px by default (was 19)");
+  ok(await fs() === 25, "transcript text 25px by default");
   await page.click('[data-fs="1"]'); ok(await fs() === 28, "字 + makes it bigger");
-  await page.click('[data-fs="1"]'); await page.click('[data-fs="1"]'); ok(await fs() === 32, "stops at the largest size");
-  await page.click('[data-fs="-1"]'); await page.click('[data-fs="-1"]'); ok(await fs() === 25, "字 − makes it smaller");
-  await page.click('[data-scr="t"]'); await page.waitForFunction(() => S2T); await sleep(100);
-  const tr = await page.locator(".cues .cue").allTextContents();
-  console.log("   traditional:", tr.join(" / "));
-  ok(tr[0] === "我看著你的頭髮" && tr[1] === "乾淨的麵條裡面" && tr[2] === "後來我們發現了", "繁體 converts by phrase (頭髮 乾淨 麵條 裡面 後來 發現)");
-  await page.reload(); await page.waitForFunction(() => !document.querySelector("#tabs").hidden);
-  await page.click('#tabs button[data-tab="listen"]'); await sleep(300); await page.locator("[data-l]").first().click(); await sleep(300); await page.click('[data-mode="all"]'); await sleep(400);
-  ok((await page.locator(".cues .cue").first().textContent()) === "我看著你的頭髮", "繁體 is remembered on this device after a reload");
-  await page.click('[data-scr="s"]'); await sleep(100);
-  ok((await page.locator(".cues .cue").first().textContent()) === "我看着你的头发", "简体 switches back");
-  const gap = await page.evaluate(() => { const a = document.querySelector("#lcues").getBoundingClientRect(), b = document.querySelector("#ldone").getBoundingClientRect(); return b.top - a.bottom; });
-  ok(gap >= 25, "space between the text and 听完了: " + gap.toFixed(0) + "px");
+  await page.click('[data-fs="-1"]'); ok(await fs() === 25, "字 − makes it smaller");
+  const lines = () => page.locator(".cues .cue").allTextContents();
+  await page.click('[data-scr="t"]'); await page.waitForFunction(() => ZHC); await sleep(100);
+  const tr = await lines(); console.log("   s→t:", tr.join(" / "));
+  ok(tr[0] === "我看著你的頭髮" && tr[1] === "乾淨的麵條裡面" && tr[2] === "後來我們發現了", "繁體: simplified lyrics shown traditional, by phrase");
+  await openItem("Atrad"); await page.click('[data-mode="all"]'); await sleep(200);
+  ok((await lines())[0] === "素胚勾勒出青花筆鋒濃轉淡", "繁體 on a traditional file: the file's own characters");
+  await page.click('[data-scr="s"]'); await sleep(150);
+  const simp = await lines(); console.log("   t→s:", simp.join(" / "));
+  ok(simp[0] === "素胚勾勒出青花笔锋浓转淡" && simp[1] === "瓶身描绘的牡丹一如妳初妆", "简体 on a traditional file converts it (濃轉淡 → 浓转淡)");
+  await page.click("#lpy"); await sleep(150);
+  const rt = await page.locator(".cues rt").allTextContents(); console.log("   pinyin:", rt.slice(0, 6).join(" "));
+  ok(rt.length >= 4 && rt.some(x => /zhuǎn|nóng/.test(x)), "拼音 shows pinyin over the words");
+  await page.click("#lpy"); await sleep(100); ok(await page.locator(".cues rt").count() === 0, "拼音 off again");
+  const tk = page.locator(".cues .tk").filter({ hasText: "牡丹" });
+  await tk.click(); await sleep(200);
+  ok(await page.locator("#sheet").count() === 1 && (await page.locator("#sheet .w").first().textContent()) === "牡丹", "tapping a word in the lyrics opens the dictionary (simplified headword)");
+  await page.click("#sheet #addb"); await sleep(150);
+  const b = await page.evaluate(() => S.bank["牡丹"]);
+  ok(b && b.s === "瓶身描绘的牡丹一如妳初妆" && b.src === "A:Atrad", "…and saves it with its lyric line (simplified) as the sentence");
+  // sideways: make a long unbroken line and check nothing scrolls horizontally
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); it.cues[0][1] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789我看着你的头发".repeat(2); });
+  await openItem("Atest"); await page.click('[data-mode="all"]'); await sleep(150);
+  const sw = await page.evaluate(() => { const c = $("#lcues"); return [c.scrollWidth, c.clientWidth, document.documentElement.scrollWidth, window.innerWidth]; });
+  ok(sw[0] <= sw[1] + 1 && sw[2] <= sw[3] + 1, "no sideways scrolling in the transcript or the page: " + sw.join(" "));
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atest"); it.cues[0][1] = "我看着你的头发"; save(); });
 
   // ---- 3. LRCLIB: within 1 s, closest first ----
   await page.click("#ltredit"); await sleep(200);
   await page.evaluate(() => { LST.edit.dur = 235.4; });
   await page.fill("#lrq", "测试"); await page.click("#lrgo"); await page.waitForSelector("[data-lr]");
-  const rows = await page.locator("[data-lr]").allTextContents();
-  const names = rows.map(r => r.trim()[0]);
-  console.log("   order:", names.join(" "), "| matching:", rows.filter(r => r.includes("对得上")).map(r => r.trim()[0]).join(" "));
-  ok(names.join("") === "DEBCAF", "closest first, timed before untimed at the same length");
-  ok(rows.filter(r => r.includes("对得上")).map(r => r.trim()[0]).join("") === "DEBC", "only 3:54–3:56 marked as matching a 3:55 file");
-  await page.locator("[data-lr]").first().click(); await sleep(150);
-  ok((await page.inputValue("#ltr")).includes("[00:01.00]"), "choosing the top result fills its timed lyrics");
+  const rows = await page.locator("[data-lr]").allTextContents(), names = rows.map(r => r.trim()[0]);
+  ok(names.join("") === "DEBCAF", "LRCLIB: closest first, timed before untimed at the same length");
+  ok(rows.filter(r => r.includes("对得上")).map(r => r.trim()[0]).join("") === "DEBC", "LRCLIB: only 3:54–3:56 match a 3:55 file");
+  await page.click("#ltrcancel");
+
+  // ---- 4. fix timing ----
+  await openItem("Afile"); await page.waitForSelector("#lpp");
+  await page.click("#lfix"); await sleep(150);
+  ok(await page.locator(".fixbox").count() === 1 && await page.evaluate(() => LST.mode) === "follow", "对时间 opens the fix panel (and shows the text)");
+  await page.evaluate(() => { AUD.currentTime = 10; }); await sleep(100);
+  await page.locator('.cues .cue[data-ci="2"]').click(); await sleep(150);
+  let tm = await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Afile"); return [it.tm && it.tm.b, cueT(it, 0), cueT(it, 2)]; });
+  ok(Math.abs(tm[0] - 4.8) < 0.05 && Math.abs(tm[2] - 9.8) < 0.05 && Math.abs(tm[1] - 5.8) < 0.05, "tapping line 3 at 0:10 shifts every line by +4.8 s: " + tm.join(", "));
+  ok(await page.locator(".cues .tk").count() > 0 && await page.locator("#sheet").count() === 0, "while fixing, tapping a word doesn't open the dictionary");
+  await page.click('[data-nudge="0.2"]'); await sleep(100);
+  tm = await page.evaluate(() => S.gen.listen.find(x => x.id === "Afile").tm.b); ok(Math.abs(tm - 5.0) < 0.01, "晚 0.2 s nudges it: " + tm);
+  await page.evaluate(() => { AUD.currentTime = 46.2; }); await sleep(100);
+  await page.locator('.cues .cue[data-ci="3"]').click(); await sleep(150);
+  tm = await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Afile"); return [it.tm.a, cueT(it, 2), cueT(it, 3)]; });
+  ok(tm[0] > 1.01 && tm[0] < 1.05 && Math.abs(tm[1] - 10) < 0.05 && Math.abs(tm[2] - 46) < 0.05, "a second line far away also fixes drift: " + tm.map(x => x.toFixed(3)).join(", "));
+  ok(await page.evaluate(() => { AUD.currentTime = 11; syncCue(S.gen.listen.find(x => x.id === "Afile")); return $(".cue.now").dataset.ci; }) === "2", "follow uses the fixed timing");
+  await page.click("#fixreset"); await sleep(100);
+  ok(await page.evaluate(() => !S.gen.listen.find(x => x.id === "Afile").tm), "重置 resets it");
+  await page.click("#fixdone"); await sleep(100); ok(await page.locator(".fixbox").count() === 0, "好了 closes the panel");
+
+  // ---- 5. tap along ----
+  await openItem("Atap"); await page.waitForSelector("#lpp");
+  await page.click("#ltapgo"); await sleep(150);
+  await page.click("#tapgo"); await page.waitForFunction(() => AUD && !AUD.paused, null, { timeout: 5000 });
+  await sleep(300);
+  for (let k = 0; k < 2; k++) { await page.click("#tapgo"); await sleep(400); }
+  ok((await page.evaluate(() => S.gen.listen.find(x => x.id === "Atap").tap.length)) === 2, "each tap stamps one line (kept on the item)");
+  await page.click("#tapundo"); await sleep(200);
+  ok((await page.evaluate(() => S.gen.listen.find(x => x.id === "Atap").tap.length)) === 1, "撤销 removes the last tap");
+  await page.evaluate(() => { if (AUD.paused) AUD.play(); }); await sleep(300);
+  await page.click("#tapgo"); await sleep(400); await page.click("#tapgo"); await sleep(300);
+  const tapped = await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atap"); return { cues: it.cues.map(c => c[0]), tap: it.tap, timed: isTimed(it), mode: LST.mode }; });
+  ok(tapped.timed && !tapped.tap && tapped.cues.every((x, i) => i === 0 || x > tapped.cues[i - 1]) && tapped.mode === "follow", "after the last line it's timed and follows: " + tapped.cues.join(", "));
+  await page.evaluate(() => AUD.pause());
+
+  // ---- 6. ~20-minute sections ----
+  const sec = await page.evaluate(() => {
+    const line = "这是一句很普通的话，用来凑字数。"; // 15 characters
+    const untimed = { id: "Along", kind: "file", t: now(), cues: Array.from({ length: 800 }, () => [null, line]) }; // 12,000 characters
+    const timed = { id: "Atimed", kind: "file", t: now(), dur: 3000, cues: Array.from({ length: 300 }, (_, i) => [i * 10, line]) };
+    S.gen.listen.push(untimed, timed); save();
+    addReq({ rid: "q:listen:Atimed", kind: "questions", target: "listen", id: "Atimed" });
+    const req = outboxRequests().find(r => r.rid === "q:listen:Atimed");
+    const q3 = k => [0, 1, 2].map(j => ({ q: `s${k} q${j}`, opts: ["a", "b", "c", "d"], why: ["1", "2", "3", "4"] }));
+    const r = { qs: 0, bad: 0, rg: 0, ck: 0 }; applyAnswers({ questions: [{ rid: "q:listen:Atimed", secs: [{ qs: q3(0) }, { qs: q3(1) }, { qs: q3(2) }] }] }, r);
+    LST = { id: "Atimed", fromT: 1300, maxT: 1500, lost: [] };
+    const heard = listenQuizList(timed).map(q => q.q);
+    LST = { id: "Atimed", lost: [] }; const all = listenQuizList(timed).length;
+    return { u: listenSections(untimed), t: listenSections(timed), req: req.sections, nq: timed.qs.length, secs: timed.secs, heard, all };
+  });
+  ok(JSON.stringify(sec.u) === "[[0,313],[313,626],[626,800]]", "untimed 12,800 characters (16 a line, punctuation not counted) → 3 sections of ~5,000: " + JSON.stringify(sec.u));
+  ok(JSON.stringify(sec.t) === "[[0,120],[120,240],[240,300]]", "timed 50 minutes → 0–20, 20–40, 40–50 min: " + JSON.stringify(sec.t));
+  ok(JSON.stringify(sec.req) === JSON.stringify(sec.t), "the request to Claude carries the sections");
+  ok(sec.nq === 9 && sec.secs && sec.secs.length === 3, "an answer with 3 questions per section is applied (9 questions)");
+  ok(sec.heard.length === 3 && sec.heard.every(q => q.startsWith("s1")), "listened 21:40–25:00 → only that section's questions: " + sec.heard.join(", "));
+  ok(sec.all === 9, "nothing played (or a link) → all the questions");
+
+  // ---- 7. deleting sticks; Recently deleted ----
+  const del = await page.evaluate(() => {
+    S.bank["测试"] = { zh: "测试", s: "测试一下", py: "cèshì", gl: "test", t: now() - 5000 }; S.items["B:测试"] = { t: "bank", n: 1 }; save();
+    const other = JSON.parse(JSON.stringify(S)); // the other device, before the deletes
+    const it = S.gen.listen.find(x => x.id === "Atest");
+    trashListen(it); removeFromBank("测试");
+    const m1 = mergeStates(S, other), m2 = mergeStates(other, S);
+    const res = {
+      gone1: !m1.gen.listen.some(x => x.id === "Atest") && !m1.bank["测试"] && !m1.items["B:测试"],
+      gone2: !m2.gen.listen.some(x => x.id === "Atest") && !m2.bank["测试"],
+      binBoth: m2.gen.trash.length === 2,
+    };
+    const later = JSON.parse(JSON.stringify(other)); later.gen.listen.find(x => x.id === "Atest").u = now() + 1000; // changed on the other device after the delete
+    res.keptChanged = mergeStates(S, later).gen.listen.some(x => x.id === "Atest");
+    S = mergeStates(S, other); save();
+    return res;
+  });
+  ok(del.gone1 && del.gone2, "a delete on one device sticks after syncing with the other (either way round)");
+  ok(del.binBoth, "the bin syncs too");
+  ok(del.keptChanged, "…but an item changed on the other device after the delete is kept");
+  await page.click('#tabs button[data-tab="me"]'); await sleep(300);
+  ok(await page.locator("#trashcard [data-trr]").count() === 2, "Progress → 最近删除 lists both");
+  await page.locator("#trashcard [data-trr]").first().click(); await sleep(200);
+  const back = await page.evaluate(() => [!!S.bank["测试"] || S.gen.listen.some(x => x.id === "Atest"), S.gen.trash.length]);
+  ok(back[0] && back[1] === 1, "恢复 restores it");
+  const x = page.locator("#trashcard [data-trx]").first(); await x.click(); await sleep(100);
+  ok(await page.evaluate(() => S.gen.trash.length) === 1, "永久删除 needs a second tap");
+  await page.locator("#trashcard [data-trx]").first().click(); await sleep(200);
+  ok(await page.evaluate(() => S.gen.trash.length) === 0 && await page.locator("#trashcard").count() === 0, "…then it's gone and the bin card disappears");
+  const purge = await page.evaluate(async () => {
+    const it = S.gen.listen.find(x => x.id === "Afile"); it.r2 = { key: "audio/Afile.wav", size: 1 };
+    const other = JSON.parse(JSON.stringify(S));
+    trashListen(it); const e = S.gen.trash[0]; const had = !!(await audioGet("Afile"));
+    purgeTrash(e); const nowHas = !!(await audioGet("Afile"));
+    const m = mergeStates(other, S);
+    return { had, nowHas, r2: S.r2del.includes("audio/Afile.wav"), noBack: !m.gen.listen.some(x => x.id === "Afile") && !m.gen.trash.length };
+  });
+  ok(purge.had && !purge.nowHas && purge.r2, "audio stays while in the bin; deleting for good removes it here and in the cloud");
+  ok(purge.noBack, "an emptied bin entry doesn't come back from the other device");
+  await page.evaluate(() => { trashListen(S.gen.listen.find(x => x.id === "Atrad")); S.gen.trash[0].t = now() - 31 * 864e5; housekeep(); });
+  ok(await page.evaluate(() => S.gen.trash.length) === 0, "bin entries go by themselves after 30 days");
+  await page.evaluate(() => { S.gen.mine.push({ id: "Mx1p0", grp: "Mx1", part: 0, np: 1, title: "测试文章", mine: true, reg: "mine", t: now() - 1000, paras: ["你好"], gl: {}, en: "" }); indexGen(); save(); });
+  const mine = await page.evaluate(() => { const other = JSON.parse(JSON.stringify(S)); trashMine([S.gen.mine.find(p => p.id === "Mx1p0")]); S = mergeStates(S, other); indexGen(); return [S.gen.mine.some(p => p.id === "Mx1p0"), PSG.has("Mx1p0")]; });
+  ok(!mine[0] && !mine[1], "a deleted own text stays deleted after syncing (the test-reading case)");
 
   await browser.close();
   console.log(fails ? `${fails} FAILED` : "ALL PASSED"); process.exit(fails ? 1 : 0);

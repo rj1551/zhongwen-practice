@@ -137,9 +137,15 @@ if (pk.questions !== undefined) {
     pk.questions.forEach((a, i) => {
       const at = `questions[${i}]` + (a && a.rid ? ` ${a.rid}` : "");
       if (!a || !reqs.has(a.rid) || reqs.get(a.rid).kind !== "questions") { problems.push(at + ": rid must be a questions request in outbox.json"); return; }
-      const qs = ctx.api.toQs ? ctx.api.toQs(a.qs) : a.qs;
-      if (!Array.isArray(a.qs) || a.qs.length !== 3) problems.push(at + ": needs exactly 3 questions");
-      (a.qs || []).forEach((q, j) => { if (!q || !Array.isArray(q.opts) || q.opts.length !== 4) problems.push(`${at}: question ${j + 1} needs 4 options`); if (!q || !Array.isArray(q.why) || q.why.length !== 4) problems.push(`${at}: question ${j + 1} needs "why" (4 reasons)`); });
+      const checkQs = (qs, at) => {
+        if (!Array.isArray(qs) || qs.length !== 3) problems.push(at + ": needs exactly 3 questions");
+        (qs || []).forEach((q, j) => { if (!q || !Array.isArray(q.opts) || q.opts.length !== 4) problems.push(`${at}: question ${j + 1} needs 4 options`); if (!q || !Array.isArray(q.why) || q.why.length !== 4) problems.push(`${at}: question ${j + 1} needs "why" (4 reasons)`); });
+      };
+      const want = reqs.get(a.rid).sections;
+      if (Array.isArray(want) && want.length > 1) { // long listening transcript: 3 questions per section, as "secs"
+        if (!Array.isArray(a.secs) || a.secs.length !== want.length) problems.push(`${at}: the request has ${want.length} sections; answer "secs" with one {qs} per section`);
+        else a.secs.forEach((x, k) => checkQs(x && x.qs, `${at} section ${k + 1}`));
+      } else checkQs(a.qs, at);
     });
   }
 }

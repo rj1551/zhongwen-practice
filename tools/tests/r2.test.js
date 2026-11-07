@@ -171,17 +171,17 @@ let browser;
   ok(!R2S.objs.has(it1.r2.key) && await A.page.evaluate(async id => !!(await audioGet(id)) && S.gen.listen.find(x => x.id === id).r2gone, id1), "end of review → Remove from cloud: deleted from R2, still on this device");
   await A.page.evaluate(() => ghSyncNow()); await sleep(400); await B.page.evaluate(() => ghSyncNow());
   ok(await B.page.evaluate(id => { const it = S.gen.listen.find(x => x.id === id); return it.r2gone && !it.r2; }, id1), "device B learns it was removed (the item's newer version wins in the merge)");
-  // delete an item → its audio leaves the cloud too (after the undo window)
+  // delete an item → it waits in Recently deleted with its audio; deleting it for good removes the cloud copy (2026-11-07)
   const key2 = await A.page.evaluate(id => S.gen.listen.find(x => x.id === id).r2.key, id2);
   await A.page.evaluate(id => { LST = { id, mode: "hide", lost: [] }; setView("listen"); }, id2); await sleep(300);
-  await A.page.click("#ldel"); await sleep(3000);
-  ok(R2S.objs.has(key2), "deleted item: still in the cloud during the undo window");
-  await sleep(4000);
-  ok(!R2S.objs.has(key2), "…then deleted from the cloud too");
+  await A.page.click("#ldel"); await sleep(7000);
+  ok(R2S.objs.has(key2), "deleted item: its audio stays in the cloud while it's in Recently deleted");
+  await A.page.evaluate(id => purgeTrash(S.gen.trash.find(e => e.data.it.id === id)), id2); await sleep(1500);
+  ok(!R2S.objs.has(key2), "…deleted for good → deleted from the cloud too");
   // delete while R2 is unreachable → retried later
   const id3 = await addAudio(A.page, "播客三"); await A.page.waitForFunction(id => S.gen.listen.find(x => x.id === id).r2, id3, { timeout: 10000 });
   const key3 = await A.page.evaluate(id => S.gen.listen.find(x => x.id === id).r2.key, id3);
-  R2S.deny = true; await A.page.click("#ldel"); await sleep(7000);
+  R2S.deny = true; await A.page.click("#ldel"); await A.page.evaluate(id => purgeTrash(S.gen.trash.find(e => e.data.it.id === id)), id3); await sleep(2000);
   ok(R2S.objs.has(key3) && await A.page.evaluate(k => (S.r2del || []).includes(k), key3), "R2 refusing: the delete waits in a list");
   R2S.deny = false; await A.page.evaluate(() => r2Kick()); await sleep(800);
   ok(!R2S.objs.has(key3) && await A.page.evaluate(() => !(S.r2del || []).length), "…and goes through on the next try");

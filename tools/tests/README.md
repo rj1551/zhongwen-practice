@@ -12,6 +12,6 @@ How they were run (paths are hard-coded for the cloud sandbox; adjust if yours d
 2. Run from the folder holding these files: `node gh.test.js` (sync, 37 checks), `pack.test.js` (packs/outbox),
    `grade.test.js` (grading chain), `req.test.js` (requests), `check.test.js` (sample re-check), `r2.test.js`
    (audio), `hosted.test.js` + `hostedgrade.js` (hosted version), `sigv4.test.js` (signing vs AWS examples).
-   `listen.test.js` (2026-11-07: word popup closes on an outside tap; transcript size + 简/繁; LRCLIB length match + order).
+   `listen.test.js` (2026-11-07, 46 checks: word popup outside tap; transcript size, 简/繁 both ways, pinyin, lookups from lyrics, no sideways scroll; LRCLIB match + order; fix timing; tap along; 20-minute sections; deleting that sticks + Recently deleted). `r2.test.js` now expects cloud audio to go only when a bin entry is deleted for good.
    Playwright is loaded from `/home/claude/.npm-global/lib/node_modules/playwright`.
 Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as in index.html.

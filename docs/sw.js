@@ -1,6 +1,6 @@
 // Offline cache for the standalone (GitHub Pages) version.
-const CACHE = "zwlgf-v39";
-const FILES = ["./", "index.html", "data/words.json", "data/content.json", "data/cedict.txt", "data/s2t.txt", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
+const CACHE = "zwlgf-v40";
+const FILES = ["./", "index.html", "data/words.json", "data/content.json", "data/cedict.txt", "data/zhconv.txt", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", e => {

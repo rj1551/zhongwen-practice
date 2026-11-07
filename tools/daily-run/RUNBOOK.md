@@ -128,8 +128,11 @@ Each has a `rid` (copy it exactly into the answer) and a `kind`:
 - **`questions`** `{rid: "q:mine:<partId>" | "q:listen:<id>", target, id}`: comprehension questions for one of the
   learner's own texts or a listening transcript. Read the text from the progress files (allowed; not settings/):
   `progress/gen-mine-*.json` → the item in `list` with that `id` (`paras`, tokens joined by `|`), or
-  `progress/gen-listen-*.json` → the item with that `id` (`cues`: `[[seconds or null, line], …]`; use the lines,
-  at most the first 6,000 characters, and ask only about that part if it was cut). Answer in
+  `progress/gen-listen-*.json` → the item with that `id` (`cues`: `[[seconds or null, line], …]`; use all the
+  lines). **Long listening transcripts come with `sections`** (`[[fromLine, toLine), …]`, about 20 minutes each, line
+  indexes into `cues`, end exclusive): then write 3 questions **per section**, each only about its own section, and
+  answer with `"secs": [{"qs": [3 questions]}, …]` (one entry per section, in order) instead of `"qs"`; one `gl` for
+  the whole transcript. The learner listens straight through and gets the questions for the sections heard. Answer in
   `"questions": [{"rid": …, "qs": [3 questions], "gl": {"token": ["pinyin", "gloss"]}, "en": "translation (own
   texts only)", "paras": ["the same paragraphs re-split with | between every token (own texts only; keep every
   character exactly; omit if unsure)"]}]`. Questions follow the passage question rules below (`QS_RULES`); for
