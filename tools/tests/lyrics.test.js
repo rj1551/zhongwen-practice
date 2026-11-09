@@ -14,6 +14,8 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await ctx.addInitScript(s => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", 1); localStorage.setItem("zwlgf:state:v1", s); localStorage.setItem("zwlgf:cuepref", JSON.stringify({ py: true })); } }, st);
   const page = await ctx.newPage(); page.on("pageerror", e => { console.log("PAGE ERROR", e.message); fails++; });
   await page.goto("http://localhost:8765/"); await page.waitForFunction(() => !document.querySelector("#tabs").hidden);
+  ok(await page.evaluate(() => outboxRequests().filter(r => r.kind === "lyrics").length) === 0, "lyric analysis requests are off by default (Claude declines to reproduce lyrics)");
+  await page.evaluate(() => { LYR_REQUESTS = true; });
   const req = await page.evaluate(() => outboxRequests().filter(r => r.kind === "lyrics"));
   ok(req.length === 2 && req[0].rid === "y:Ay" && req[1].rid === "y:Az" && /^[a-z0-9]+$/.test(req[0].h), "every song without an analysis is asked for (newest first, not talk): " + req.map(r => r.rid).join(" "));
   const pk = { zwpack: 1, id: "t-ly", made: new Date().toISOString(), by: "test", lyrics: [{ rid: "y:Ay", h: req[0].h, lines: [

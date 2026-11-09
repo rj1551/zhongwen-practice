@@ -793,7 +793,7 @@ function mergeStates(a, b) {
   for (const k of ["nudge", "ckSum"]) { const x = o[k], y = m[k]; if (x && (!y || (x.t || 0) > (y.t || 0))) m[k] = x; else if (x && y && x.t === y.t && x.seen) m[k] = x; }
   { const rd = new Set(m.reqDone); m.req = byId(m.req || [], o.req || [], "rid").filter(x => !rd.has(x.rid)); }
   m.packLog = byId(m.packLog || [], o.packLog || [], "id").sort((p, q) => q.t - p.t).slice(0, 20);
-  { const seen = new Set(); m.heldLog = [...(m.heldLog || []), ...(o.heldLog || [])].filter(h => { const k = h.rid + "|" + h.pack; return !seen.has(k) && seen.add(k); }).sort((p, q) => q.t - p.t).slice(0, 20); }
+  { const seen = new Set(); m.heldLog = [...(m.heldLog || []), ...(o.heldLog || [])].filter(h => { const k = h.rid + "|" + h.pack; return !seen.has(k) && seen.add(k); }).sort((p, q) => q.t - p.t).slice(0, 60); }
   m.heldSeen = Math.max(m.heldSeen || 0, o.heldSeen || 0) || undefined;
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
@@ -2921,7 +2921,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v50 · 11/9 00:22"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v51 · 11/9 01:08"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -3474,9 +3474,12 @@ function setCuePref(o) { try { localStorage.setItem("zwlgf:cuepref", JSON.string
    guesses), glosses first in the popup, tricky readings / literary words underlined, 解释 under each line. A line
    whose words don't spell it exactly falls back to the dictionary. */
 const LYR_PER_RUN = 5;
+// 2026-11-09: off. The run declined: re-spelling every line with pinyin and translating every line reproduces the
+// lyrics, which Claude doesn't do even for lyrics the learner supplied. Analyses already stored would still be used.
+let LYR_REQUESTS = false; // (let: the tests switch it on to check the old path)
 function lyrHash(it) { let h = 5381; const s = (it.cues || []).map(c => c[1]).join("\n"); for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36); }
 const lyrOk = it => !!(it.lyr && it.lyr.h === lyrHash(it) && Array.isArray(it.lyr.lines));
-const lyrWanted = it => itemType(it) === "song" && (it.cues || []).length > 0 && !lyrOk(it);
+const lyrWanted = it => LYR_REQUESTS && itemType(it) === "song" && (it.cues || []).length > 0 && !lyrOk(it);
 function lyrLine(it, i) { if (!lyrOk(it)) return null; const L = it.lyr.lines[i]; return L && Array.isArray(L.w) && L.w.map(x => x[0]).join("") === it.cues[i][1] ? L : null; }
 function lyrGl(it) { const g = {}; if (!lyrOk(it)) return g; for (const L of it.lyr.lines) for (const x of (L && L.w) || []) if (x[1] && (x[2] || x[3])) g[toSimp(x[0])] = [x[1], x[2] || ""]; return g; }
 function lineToks(it, i) {
@@ -3863,7 +3866,7 @@ function renderListenItem(main, it) {
         : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? (song ? "换歌词 Try other lyrics (LRCLIB or a file)" : "换文字 Replace transcript / lyrics") : "加文字 Add transcript / lyrics"}</button>
           ${(it.trPrev || []).length ? `<div class="stack" style="gap:4px">${it.trLabel ? `<span class="small muted">现在用的 Now using: ${esc(it.trLabel)}</span>` : ""}<span class="small">之前的${song ? "歌词" : "文字"} · Earlier versions (switching keeps the current one here too):</span>${it.trPrev.map((v, k) => `<button class="btn ghost" data-trv="${k}" style="text-align:left;justify-content:flex-start">↩ ${esc(v.label || "之前的 Earlier")} <span class="small muted">· ${v.cues.length} 行${v.fix ? " · 有你的时间调整 your timing fixes" : ""}</span></button>`).join("")}</div>` : ""}`}
       <button class="tagc" id="lren" style="align-self:flex-start">✎ 改名 Rename</button>
-      ${song && hasTr ? `<span class="small muted">${lyrOk(it) ? `🤖 Claude 分析过歌词 ✓ · Lyrics analysed: words, pinyin as sung, 解释 Notes${(it.lyr.lines || []).some(l => l === null) ? " (a few lines use the dictionary)" : ""}` : `🤖 等 Claude 分析歌词（下次运行，每晚 ${LYR_PER_RUN} 首）· Waiting for Claude to analyse the lyrics (next run, ${LYR_PER_RUN} songs a night)`}</span>` : ""}
+      ${song && hasTr && (LYR_REQUESTS || lyrOk(it)) ? `<span class="small muted">${lyrOk(it) ? `🤖 Claude 分析过歌词 ✓ · Lyrics analysed: words, pinyin as sung, 解释 Notes${(it.lyr.lines || []).some(l => l === null) ? " (a few lines use the dictionary)" : ""}` : `🤖 等 Claude 分析歌词（下次运行，每晚 ${LYR_PER_RUN} 首）· Waiting for Claude to analyse the lyrics (next run, ${LYR_PER_RUN} songs a night)`}</span>` : ""}
       ${tagInput("ltags", (it.tags || []).join(" "))}
       <div id="lqs" class="small muted"></div>
       <div id="r2item" class="stack" style="gap:6px"></div>
@@ -5278,15 +5281,16 @@ function applyPack(pk, src) {
   r.held = 0;
   for (const h of Array.isArray(pk.held) ? pk.held.slice(0, 50) : []) {
     if (!h || typeof h.rid !== "string") continue;
-    if ((S.req || []).some(x => x.rid === h.rid)) { doneReq(h.rid); r.held++; }
-    S.heldLog = [{ rid: h.rid.slice(0, 90), why: String(h.why || "").slice(0, 200), t: now(), pack: pk.id }].concat(S.heldLog || []).slice(0, 20);
+    if ((S.req || []).some(x => x.rid === h.rid)) doneReq(h.rid);
+    if (!/^hints\./.test(h.rid)) r.held++;
+    S.heldLog = [{ rid: h.rid.slice(0, 90), why: String(h.why || "").slice(0, 200), t: now(), pack: pk.id }].concat(S.heldLog || []).slice(0, 60);
   }
   S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
   S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.held ? `⚠ Claude 没处理 ${r.held} 个请求（内容像是给 AI 的指令）· skipped ${r.held} request${r.held > 1 ? "s" : ""} whose text looked like instructions to an AI` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
@@ -5368,12 +5372,24 @@ function packCard() {
       <div class="row small" style="gap:6px;margin-top:6px">${sel("pk-g1", [["", "任何体裁 Any genre"], ...PSG_GENRES], "")}</div>
       <input class="inp" id="pk-topic" placeholder="话题（可以不填）Topic (optional), e.g. 坐高铁" style="width:100%">
       <button class="btn soft" id="pk-more">请 Claude 写 · Ask Claude</button><span class="small muted"> 下次运行时送到 · arrives with the next daily run${(S.req || []).filter(x => x.kind === "passage").length ? ` (${(S.req || []).filter(x => x.kind === "passage").length} waiting)` : ""}</span></details>
-    ${(S.heldLog || []).some(h => h.t > (S.heldSeen || 0)) ? `<div class="small" style="padding:8px 10px;border-radius:10px;background:color-mix(in srgb, var(--bad) 10%, transparent)"><b>⚠ Claude 没处理的请求 · Requests the daily run held back</b> (their text looked like instructions to an AI — if you didn't write that, someone may have your GitHub token: make a new one with 换钥匙 and revoke the old one on GitHub):<br>${S.heldLog.filter(h => h.t > (S.heldSeen || 0)).slice(0, 5).map(h => `${new Date(h.t).getMonth() + 1}/${new Date(h.t).getDate()} · ${esc(h.rid)} — ${esc(h.why)}`).join("<br>")}<br><button class="tagc" id="heldok" style="margin-top:6px">知道了 OK</button></div>` : ""}
+    ${heldHtml()}
     ${log.length ? `<p class="small">上次到货 Last delivery: <b>${new Date(log[0].t).getMonth() + 1}月${new Date(log[0].t).getDate()}日</b> · ${esc(packSummary(log[0]))}${log[0].bad ? ` <span class="muted">(${log[0].bad} 个格式不对，没用 · ${log[0].bad} malformed, skipped)</span>` : ""}</p>` : ""}
     <details><summary class="small" style="cursor:pointer">粘贴内容包 · Paste a pack</summary>
       <p class="small muted">从任何一个 Claude 聊天里拿到的内容包，贴在这里。Paste a pack from any Claude chat.</p>
       <textarea class="inp" id="pk-text" rows="3" placeholder='{"zwpack": 1, "id": …}' autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-size:16px"></textarea>
       <button class="btn soft" id="pk-go">加进来 Add it</button><div id="pk-msg" class="small"></div></details></div>`;
+}
+// requests the run didn't do, grouped by reason (the run's own words). Only ones the input check held back as
+// instruction-like get the "someone may have your token" advice.
+function heldHtml() {
+  const list = (S.heldLog || []).filter(h => h.t > (S.heldSeen || 0)); if (!list.length) return "";
+  const by = new Map(); for (const h of list) { const k = h.why || ""; by.set(k, (by.get(k) || []).concat([h])); }
+  const sus = list.some(h => /instructions to an AI|tool use|looked like instructions/.test(h.why || ""));
+  const kind = rid => /^y:/.test(rid) ? "歌词 lyrics" : /^q:/.test(rid) ? "问题 questions" : /^[rc]:/.test(rid) ? "批改 grading" : /^w:/.test(rid) ? "例句 sentence" : /^p:/.test(rid) ? "短文 passage" : "";
+  return `<div class="small" style="padding:8px 10px;border-radius:10px;background:color-mix(in srgb, ${sus ? "var(--bad)" : "var(--line)"} ${sus ? 10 : 45}%, transparent)"><b>${sus ? "⚠ " : ""}Claude 没做的请求 · Requests the daily run didn't do</b><br>
+    ${[...by].map(([why, hs]) => `${hs.length > 1 ? `<b>×${hs.length}</b> ` : ""}${esc([...new Set(hs.map(h => kind(h.rid)).filter(Boolean))].join(", "))}${kind(hs[0].rid) ? " — " : ""}${esc(why)}`).join("<br>")}
+    ${sus ? `<br>有的内容像是给 AI 的指令：如果不是你写的，可能有人拿到了你的 GitHub 钥匙，用 换钥匙 换一把，再在 GitHub 上作废旧的。· Some text looked like instructions to an AI: if you didn't write it, someone may have your GitHub token — make a new one with 换钥匙 and revoke the old one on GitHub.` : ""}
+    <br><button class="tagc" id="heldok" style="margin-top:6px">知道了 OK</button></div>`;
 }
 function bindPackCard() {
   const ho = $("#heldok"); if (ho) ho.onclick = () => { S.heldSeen = now(); save(); refreshStock(); };

@@ -13,7 +13,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
     S.settings = setSettings({ goal: 15 }); save();
     const A = JSON.parse(JSON.stringify(S)), B = JSON.parse(JSON.stringify(S));
     // device A (phone, offline): rename + lots of practice later; device B (computer): timing fix + goal change earlier
-    const itB = B.gen.listen.find(x => x.id === "Am"); S = B; itB.fix = { 1: { t: 3.4, c: true } }; touch(itB, "timing"); S.settings = setSettings({ goal: 30 }); B.updatedAt = now();
+    await sleep(20); const itB = B.gen.listen.find(x => x.id === "Am"); S = B; itB.fix = { 1: { t: 3.4, c: true } }; touch(itB, "timing"); S.settings = setSettings({ goal: 30 }); B.updatedAt = now();
     await sleep(20);
     const itA = A.gen.listen.find(x => x.id === "Am"); S = A; itA.title = "新名"; touch(itA, "title"); A.updatedAt = now() + 5000; // A saved last
     const m = mergeStates(A, B), m2 = mergeStates(B, A), mi = m.gen.listen.find(x => x.id === "Am"), mi2 = m2.gen.listen.find(x => x.id === "Am");

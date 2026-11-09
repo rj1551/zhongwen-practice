@@ -183,7 +183,10 @@ Each has a `rid` (copy it exactly into the answer) and a `kind`:
   Write it like any passage (genre as asked, or your choice; on the topic if given) and add `"rid": "<rid>"` to
   that passage object.
 
-- **`lyrics`** `{rid: "y:<id>", id, h}`: analyse one song's lyrics for the karaoke screen (the learner wants to sing
+- **`lyrics` — switched off (2026-11-09).** Don't reproduce, re-spell, transliterate or translate song lyrics,
+  even ones the learner supplied. inputs.js now holds these requests back before they reach you; if one ever gets
+  through, put it in `held`. The rest of this item is kept only as a record of the old format.
+  Old format: `{rid: "y:<id>", id, h}`: analyse one song's lyrics for the karaoke screen (the learner wants to sing
   unfamiliar songs at KTV and read them without pinyin). The lines are in `/tmp/run-inputs.json` → `texts[rid].lines`
   (one string per line, in the file's own script, often traditional). Answer in `"lyrics": [{"rid": …, "h": "<copy
   h from the request>", "lines": [ …one entry per line, same order and count… ]}]`, each line
