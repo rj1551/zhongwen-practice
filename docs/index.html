@@ -1021,6 +1021,7 @@ function loadCedict() {
     }
     CED = m;
     if (VIEW === "read" && READ && READ.pid) refreshTitle();
+    if ($("#sheet") && SHEET_ARGS && SHEET_ARGS[4] && SHEET_ARGS[4].isConnected) openSheet(...SHEET_ARGS); // "still loading" → the real entry
     return m;
   }).catch(() => { CED_P = null; return null; });
   return CED_P;
@@ -2891,8 +2892,10 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
+const APP_VERSION = "zwlgf-v46 · 11/8 23:05"; // stamped by build.sh: sw.js CACHE · build time (New York)
+let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
-  closeSheet();
+  closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
   const tok = paras[pi][ti], word = tok.replace(/\//g, "");
   const A = lookupAll(tok, p.gl || {});
   const L = A ? { py: A.readings[0].py, gl: A.readings[0].gl, tier: A.tier, lv: A.lv } : null;
@@ -4587,6 +4590,7 @@ function renderMe(main) {
     <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="onetap" style="margin-top:3px;flex:none" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
   ${trashCardHtml()}
   <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately. Traditional characters (听 tab, 繁體) come from <a href="https://github.com/BYVoid/OpenCC" target="_blank" rel="noopener">OpenCC</a> (Apache-2.0).</p></div>
+  <p class="small muted" style="text-align:center">版本 Version ${APP_VERSION.startsWith("__") ? "hosted" : esc(APP_VERSION)}</p>
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
