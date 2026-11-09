@@ -116,7 +116,7 @@ const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
 const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics", "pyfix"];
 // "pyfix": corrections to the app's pinyin / word grouping for a song — only the spots, never the lines
 if (pk.pyfix !== undefined) {
-  const cap = ob.lyricsAll ? 100 : 5;
+  const cap = 30;
   if (!Array.isArray(pk.pyfix)) problems.push("pyfix: must be a list");
   else {
     if (pk.pyfix.length > cap) problems.push(`pyfix: at most ${cap} songs this run`);

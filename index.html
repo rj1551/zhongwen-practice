@@ -3489,10 +3489,13 @@ function lyrGl(it) { const g = {};
    split?: [lengths] (a different word grouping), gl?: a few words of meaning when the dictionary's sense misleads}.
    Never the lines themselves. Stored as it.pyf = {h (lyrHash), fixes, t}; a fix whose w doesn't match its spot is
    ignored. Requests are derived (rid f:<id>), 5 songs a night or all with "Do all in the next run". */
-const PYFIX_PER_RUN = 5, PYFIX_MAX = 25;
+const PYFIX_PER_RUN = 30, PYFIX_MAX = 25; // learner: 30 songs a run, no Do-all button
 const pyfOk = it => !!(it.pyf && it.pyf.h === lyrHash(it) && Array.isArray(it.pyf.fixes));
 const pyfWanted = it => itemType(it) === "song" && (it.cues || []).length > 0 && !pyfOk(it);
-function pyfFor(it, i) { return pyfOk(it) ? it.pyf.fixes.filter(f => f.l === i && Array.from(it.cues[i][1]).slice(f.at, f.at + Array.from(f.w).length).join("") === f.w) : []; }
+function pyfFor(it, i) { // a fix also applies to every line with the same text (choruses are fixed once)
+  if (!pyfOk(it)) return []; const txt = it.cues[i][1];
+  return it.pyf.fixes.filter(f => it.cues[f.l] && (f.l === i || it.cues[f.l][1] === txt) && Array.from(txt).slice(f.at, f.at + Array.from(f.w).length).join("") === f.w);
+}
 // re-split a line's words where Claude says the grouping is wrong, and give those spots Claude's reading / meaning
 function applyPyfix(it, i, toks) {
   const F = pyfFor(it, i); if (!F.length) return toks;
@@ -3520,12 +3523,13 @@ function sandhi(toks, pys) {
     if (!py || t.x) return py;
     const first = Array.from(t.s)[0], prev = chars[at - 1], next = chars[at + 1];
     const m = first === "不" && /^bù/.test(py) ? "bù" : first === "一" && /^yī/.test(py) ? "yī" : null; if (!m) return py;
-    let nt; if (n > 1) nt = pyTone(py.slice(m.length)); else { const nx = toks[ti + 1]; nt = nx && !Array.from(nx.s).every(isPunct) ? pyTone(pys[ti + 1] || "") : 0; }
+    let nt; if (n > 1) { nt = pyTone(py.slice(m.length)); if (nt === 5) { const c2 = lookup(Array.from(t.s)[1]); nt = c2 && c2.py ? pyTone(c2.py) : 5; } } else { const nx = toks[ti + 1]; nt = nx && !Array.from(nx.s).every(isPunct) ? pyTone(pys[ti + 1] || "") : 0; }
     if (m === "yī" && n === 1 && prev && prev === next) return "yi" + py.slice(2); // 看一看: light, between a doubled verb
     if (!nt || nt === 5) return py;
-    if (m === "bù") return nt === 4 ? "bú" + py.slice(2) : py;
+    const fix2 = s0 => s0 + py.slice(2); // the rest of the word as the dictionary has it
+    if (m === "bù") return nt === 4 ? fix2("bú") : py;
     if ((prev && NUMC.includes(prev)) || (next && NUMC.includes(next)) || /[0-9]/.test((prev || "") + (next || ""))) return py; // counting, dates, 第一
-    return (nt === 4 ? "yí" : "yì") + py.slice(2);
+    return fix2(nt === 4 ? "yí" : "yì");
   });
 }
 function lineToks(it, i, raw0) {
@@ -3649,7 +3653,7 @@ function renderListen(main) {
   const list = all.filter(it => LFILT === "all" || (LFILT === "song") === (itemType(it) === "song"));
   main.innerHTML = `<div class="top"><div><h1>听力</h1><p class="date">Native audio: a file on this phone, or a link to Bilibili, a podcast app, YouTube…</p></div></div>
     <button class="btn wide" id="ladd">+ 添加 Add audio</button>
-    ${pyfBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 还要检查 ${pyfBacklog().length} 首歌的拼音和分词（每晚 ${PYFIX_PER_RUN} 首）· ${pyfBacklog().length} song${pyfBacklog().length > 1 ? "s" : ""} waiting for Claude to check the pinyin and word grouping (${PYFIX_PER_RUN} a night)${lyrAllOn() ? `<br><b>✓ 下次运行一次做完 · The next run does them all.</b> 要马上开始，在 Claude 的定时任务 “Zhongwen daily stock run” 里点 Run now · To start now, open the scheduled task in Claude and tap Run now.<div class="row" style="margin-top:6px"><button class="btn ghost" id="lyrundo">撤销 · Undo (back to ${PYFIX_PER_RUN} a night)</button></div>` : `<div class="row" style="margin-top:6px"><button class="btn soft" id="lyrall">下次一次做完 · Do all in the next run</button></div>`}</div>` : ""}
+    ${pyfBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 下次运行检查 ${Math.min(PYFIX_PER_RUN, pyfBacklog().length)} 首歌的拼音和分词（约凌晨 3:40；等不及可以在定时任务里点 Run now）· Claude checks the pinyin and word grouping of ${Math.min(PYFIX_PER_RUN, pyfBacklog().length)} song${pyfBacklog().length > 1 ? "s" : ""} in its next run (about 3:40 am, or Run now in the scheduled task)</div>` : ""}
     ${plSongs().length && LFILT !== "talk" ? `<div class="row" style="gap:6px"><button class="btn soft" id="plall" style="flex:1">▶ 连播全部歌 · Play all songs (${plSongs().length})</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf0">🔀 随机 Shuffle</button></div>` : ""}
     ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
     <div id="r2list"></div>
@@ -3927,7 +3931,7 @@ function renderListenItem(main, it) {
         : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? (song ? "换歌词 Try other lyrics (LRCLIB or a file)" : "换文字 Replace transcript / lyrics") : "加文字 Add transcript / lyrics"}</button>
           ${(it.trPrev || []).length ? `<div class="stack" style="gap:4px">${it.trLabel ? `<span class="small muted">现在用的 Now using: ${esc(it.trLabel)}</span>` : ""}<span class="small">之前的${song ? "歌词" : "文字"} · Earlier versions (switching keeps the current one here too):</span>${it.trPrev.map((v, k) => `<button class="btn ghost" data-trv="${k}" style="text-align:left;justify-content:flex-start">↩ ${esc(v.label || "之前的 Earlier")} <span class="small muted">· ${v.cues.length} 行${v.fix ? " · 有你的时间调整 your timing fixes" : ""}</span></button>`).join("")}</div>` : ""}`}
       <button class="tagc" id="lren" style="align-self:flex-start">✎ 改名 Rename</button>
-      ${song && hasTr ? `<span class="small muted">${pyfOk(it) ? `🤖 Claude 检查过拼音和分词 ✓${it.pyf.fixes.length ? ` · 改了 ${it.pyf.fixes.length} 处（虚线下划线）· ${it.pyf.fixes.length} fix${it.pyf.fixes.length > 1 ? "es" : ""} (dotted underline)` : " · 没发现问题 nothing to fix"}` : `🤖 等 Claude 检查拼音和分词（每晚 ${PYFIX_PER_RUN} 首）· Waiting for Claude to check the pinyin and word grouping`}</span>` : ""}
+      ${song && hasTr ? `<span class="small muted">${pyfOk(it) ? `🤖 Claude 检查过拼音和分词 ✓${it.pyf.fixes.length ? ` · 改了 ${it.pyf.fixes.length} 处（虚线下划线）· ${it.pyf.fixes.length} fix${it.pyf.fixes.length > 1 ? "es" : ""} (dotted underline)` : " · 没发现问题 nothing to fix"}` : `🤖 等 Claude 检查拼音和分词（下次运行）· Waiting for Claude to check the pinyin and word grouping (next run)`}</span>` : ""}
       ${song && hasTr && (LYR_REQUESTS || lyrOk(it)) ? `<span class="small muted">${lyrOk(it) ? `🤖 Claude 分析过歌词 ✓ · Lyrics analysed: words, pinyin as sung, 解释 Notes${(it.lyr.lines || []).some(l => l === null) ? " (a few lines use the dictionary)" : ""}` : `🤖 等 Claude 分析歌词（下次运行，每晚 ${LYR_PER_RUN} 首）· Waiting for Claude to analyse the lyrics (next run, ${LYR_PER_RUN} songs a night)`}</span>` : ""}
       ${tagInput("ltags", (it.tags || []).join(" "))}
       <div id="lqs" class="small muted"></div>
@@ -5169,7 +5173,7 @@ function outboxRequests() {
   for (const it of lyrBacklog()) out.push({ rid: "y:" + it.id, kind: "lyrics", id: it.id, h: lyrHash(it) });
   const pb = pyfBacklog();
   if (pb.length && (!CED || !ZHC)) { if (!CED) loadCedict().then(m => { if (m) outboxSoon(true); }); if (!ZHC) loadZhc().then(() => outboxSoon(true)).catch(() => {}); } // ask once the full dictionary and 简/繁 table are here (many lyrics are traditional)
-  else for (const it of pb.slice(0, lyrAllOn() ? 100 : PYFIX_PER_RUN)) out.push({ rid: "f:" + it.id, kind: "pyfix", id: it.id, h: lyrHash(it), auto: autoLines(it) });
+  else for (const it of pb.slice(0, PYFIX_PER_RUN)) out.push({ rid: "f:" + it.id, kind: "pyfix", id: it.id, h: lyrHash(it), auto: autoLines(it) });
   return out;
 }
 // the app's pinyin per line for the check, cached per lyrics version (the note is recomputed after every save)

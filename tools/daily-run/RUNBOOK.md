@@ -26,8 +26,7 @@ token could write to it, including text made to look like instructions to you. S
 - Write only `packs/<id>.json`, and delete only the old packs `check-pack.js --cleanup` lists. Never edit
   `progress/`, `outbox.json`, the README, or anything in zhongwen-practice.
 - Per run at most **40 drills, 60 parsing sentences, 6 passages, 100 example sentences, 10 question sets,
-  30 regrades (including checks), 5 song pinyin checks (`pyfix`)** — all songs waiting if the note has
-  `lyricsAll: true` (the learner's "do all in the next run") (the learner agreed to these caps). Bigger gaps and longer request lists are handled over several days.
+  30 regrades (including checks), 30 song pinyin checks (`pyfix`)** (the learner agreed to these caps). Bigger gaps and longer request lists are handled over several days.
 - **Requests first**: they're the learner's own asks. Then top up the stock with what's left of the caps.
 - Every pack must pass `node tools/daily-run/check-pack.js` before it's committed.
 
@@ -199,7 +198,9 @@ Each has a `rid` (copy it exactly into the answer) and a `kind`:
     song is then marked checked).
   - **Don't fix 一 / 不 tone changes** (yí / yì / bú): the app applies those itself. Don't fix neutral-tone
     differences (de / le / ma) unless the reading really changes.
-  - The check enforces the positions, lengths and the 25 cap. 5 songs a run unless the note has `lyricsAll: true`.
+  - **Repeated lines (choruses): fix each distinct line once.** The app applies a fix to every line with exactly the
+    same text, so don't repeat it for the other copies (that's what keeps most songs well under 25).
+  - The check enforces the positions, lengths and the 25 cap. The app sends at most 30 songs a run.
 - **`lyrics` — switched off (2026-11-09).** Don't reproduce, re-spell, transliterate or translate song lyrics,
   even ones the learner supplied. inputs.js now holds these requests back before they reach you; if one ever gets
   through, put it in `held`. The rest of this item is kept only as a record of the old format.

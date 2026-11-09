@@ -42,16 +42,16 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.mouse.click(380, 100); await sleep(100);
   ok(/检查过拼音和分词 ✓ · 改了 3 处/.test(await page.locator("#main").innerText()), "the song says it was checked, with how many fixes");
   await page.click("#lback"); await sleep(200);
-  ok(/还要检查 1 首歌的拼音/.test(await page.locator("#main").innerText()), "the list shows how many songs are waiting for the check");
-  await page.click("#lyrall"); await sleep(200);
-  ok(await page.evaluate(() => (computeOutbox(), OUTBOX.lyricsAll === true && OUTBOX.requests.filter(r => r.kind === "pyfix").length === 1)), "Do all in the next run puts lyricsAll in the note");
-  await page.click("#lyrundo"); await sleep(200);
-  ok(await page.evaluate(() => (computeOutbox(), !OUTBOX.lyricsAll)), "撤销 Undo takes it back");
+  ok(/下次运行检查 1 首歌的拼音/.test(await page.locator("#main").innerText()) && !(await page.$("#lyrall")), "the list says how many songs the next run checks (no Do-all button)");
   // an answer with no fixes still marks the song checked
   await page.evaluate(h => applyPack({ zwpack: 1, id: "t-pf2", made: new Date().toISOString(), by: "t", pyfix: [{ rid: "f:Aq", h, fixes: [] }] }, "t"), req[1].h);
   ok(await page.evaluate(() => pyfBacklog().length) === 0, "no fixes needed → marked checked too");
-  await page.evaluate(() => { S.lyrAll = { on: true, t: now() }; computeOutbox(); });
-  ok(await page.evaluate(() => !OUTBOX.lyricsAll && !lyrAllOn()), "the Do-all flag clears itself once nothing is waiting");
+  const more = await page.evaluate(() => { for (let i = 0; i < 35; i++) S.gen.listen.push({ id: "Z" + i, title: "z", kind: "link", url: "x", t: now() + i, type: "song", cues: [[1, "雨"]] }); const n = outboxRequests().filter(r => r.kind === "pyfix").length; S.gen.listen = S.gen.listen.filter(x => !/^Z/.test(x.id)); return n; });
+  ok(more === 30, "at most 30 songs a run go to Claude: " + more);
+  const ch = await page.evaluate(() => { const it = { id: "Ac", t: 1, type: "song", kind: "link", cues: [[1, "我等你"], [2, "别的"], [3, "我等你"]] }; it.pyf = { h: lyrHash(it), fixes: [{ l: 0, at: 0, w: "我等", split: [1, 1], py: "wǒ děng" }] }; return [lineToks(it, 0).map(t => t.s).join("|"), lineToks(it, 2).map(t => t.s).join("|")]; });
+  ok(ch[0] === ch[1] && ch[1].startsWith("我|等"), "a fix carries over to the same line repeated (choruses fixed once): " + ch.join(" / "));
+  const yg = await page.evaluate(() => sandhi([{ s: "一个" }, { s: "人" }], ["yīge", "rén"])[0]);
+  ok(yg === "yíge", "一个 (dictionary yīge) → yíge: " + yg);
   // changing the lyrics asks again
   await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Aq"); it.cues[0][1] = "雨落下来"; it.u = now(); });
   ok(await page.evaluate(() => pyfBacklog().map(x => x.id).join()) === "Aq", "new lyrics → checked again");
