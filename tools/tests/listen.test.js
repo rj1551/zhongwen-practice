@@ -76,6 +76,10 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const rt = await page.locator(".cues rt").allTextContents(); console.log("   pinyin:", rt.slice(0, 6).join(" "));
   ok(rt.length >= 4 && rt.some(x => /zhuǎn|nóng/.test(x)), "拼音 shows pinyin over the words");
   ok(await page.locator(".cues .tk").filter({ hasText: "妳" }).locator("rt").textContent() === "nǐ", "妳 gets pinyin (looked up as 你)");
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atrad"); it.cues.push([5, "我等的模样好不具象"]); it.u = now(); renderListenItem($("#main"), it); });
+  await page.waitForFunction(() => CED, null, { timeout: 15000 }); await sleep(300);
+  ok(await page.locator(".cues .tk").filter({ hasText: "具象" }).locator("rt").textContent() === "jùxiàng", "具象 gets pinyin on the listening page without visiting 阅读 first (full dictionary loaded there too)");
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "Atrad"); it.cues.pop(); it.u = now(); renderListenItem($("#main"), it); });
   await aa(); await page.click("#lpy"); await sleep(100); ok(await page.locator(".cues rt").count() === 0, "拼音 off again");
   const tk = page.locator(".cues .tk").filter({ hasText: "牡丹" });
   await tk.click(); await sleep(200);

@@ -3447,7 +3447,9 @@ function lineHtml(it, i, toks, key, looked) {
   return toks.map((t, ti) => {
     if (Array.from(t.s).every(isPunct) || /^\p{Extended_Pictographic}+$/u.test(t.s) || !t.s.trim()) return esc(t.d);
     const k = key + ":" + ti, L = py ? lookup(t.s, it.gl || {}) : null;
-    const inner = L && L.py ? `<ruby>${esc(t.d)}<rt>${esc(L.py)}</rt></ruby>` : esc(t.d);
+    let pyx = L && L.py;
+    if (py && !pyx && Array.from(t.s).length > 1) { const ps = Array.from(t.s).map(c => { const x = lookup(c, it.gl || {}); return x && x.py; }); if (ps.every(Boolean)) pyx = ps.join(""); }
+    const inner = pyx ? `<ruby>${esc(t.d)}<rt>${esc(pyx)}</rt></ruby>` : esc(t.d);
     return `<span class="tk ${looked && looked.has(k) ? "looked" : ""}" data-k="${k}">${inner}</span>`;
   }).join("");
 }
@@ -3824,6 +3826,7 @@ function renderListenItem(main, it) {
     $("#lcues", main).classList.toggle("fixing", LST.fix); refreshMarks(it); drawTiming(it);
   };
   if (hasTr && !ZHC) loadZhc().then(() => { if ($("#lcues", main) && LST && LST.id === it.id) redrawCues(it); }).catch(() => {});
+  if (hasTr && !CED) loadCedict().then(m => { if (m && $("#lcues", main) && LST && LST.id === it.id) redrawCues(it); }); // the Anki list alone misses words like 具象
   bindCues(it);
   const lostTap = b => { LST.lost.push(file && AUD && AUD_ID === it.id ? +AUD.currentTime.toFixed(1) : null); b.innerHTML = `没跟上${LST.lost.length ? ` (${LST.lost.length})` : ""}`; b.classList.remove("pop"); void b.offsetWidth; b.classList.add("combo", "pop"); setTimeout(() => b.classList.remove("combo"), 400); };
   LST.lostTap = lostTap;
@@ -4063,6 +4066,7 @@ function lostLines(it, lost) {
 }
 function renderListenReview(main, it) {
   const QL = LST.qlist || it.qs || [];
+  if (!CED && (it.cues || []).length && !LST.cedTried) { LST.cedTried = true; loadCedict().then(m => { if (m && LST && LST.review && LST.id === it.id) render(); }); }
   if (!ZHC && (it.cues || []).length && !LST.zhcTried) { LST.zhcTried = true; loadZhc().then(() => { if (LST && LST.review && LST.id === it.id) render(); }).catch(() => {}); }
   if (LST.quiz && LST.qi < QL.length) {
     const q = QL[LST.qi], right = q.opts[0], opts = shuffle(q.opts);
