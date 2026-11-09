@@ -96,7 +96,7 @@ async function routeR2(ctx) {
     if (m === "DELETE") { R2S.objs.delete(key); return route.fulfill({ status: 204, headers: H }); }
     if (m === "GET" && u.searchParams.get("list-type") === "2") {
       const items = [...R2S.objs.entries()].filter(([k]) => k.startsWith("audio/"));
-      return route.fulfill({ status: 200, headers: Object.assign({ "content-type": "application/xml" }, H), body: `<?xml version="1.0"?><ListBucketResult>${items.map(([k, o]) => `<Contents><Key>${k}</Key><Size>${o.body.length}</Size></Contents>`).join("")}<IsTruncated>false</IsTruncated></ListBucketResult>` });
+      return route.fulfill({ status: 200, headers: Object.assign({ "content-type": "application/xml" }, H), body: `<?xml version="1.0"?><ListBucketResult>${items.map(([k, o]) => `<Contents><Key>${k}</Key><Size>${o.size != null ? o.size : o.body.length}</Size></Contents>`).join("")}<IsTruncated>false</IsTruncated></ListBucketResult>` });
     }
     if (m === "GET") { const o = R2S.objs.get(key); if (!o) return route.fulfill({ status: 404, headers: H, body: "<Error>NoSuchKey</Error>" }); return route.fulfill({ status: 200, headers: Object.assign({ "content-type": o.type, "content-length": String(o.body.length) }, H), body: o.body }); }
     route.fulfill({ status: 400, headers: H, body: "bad" });
@@ -185,6 +185,19 @@ let browser;
   ok(R2S.objs.has(key3) && await A.page.evaluate(k => (S.r2del || []).includes(k), key3), "R2 refusing: the delete waits in a list");
   R2S.deny = false; await A.page.evaluate(() => r2Kick()); await sleep(800);
   ok(!R2S.objs.has(key3) && await A.page.evaluate(() => !(S.r2del || []).length), "…and goes through on the next try");
+  // usage shown, and an upload that would go over the free 10 GB isn't sent (kept on this device), with Upload anyway
+  await A.page.evaluate(() => { R2.usageAt = 0; setView("listen"); }); await sleep(1500);
+  ok(/云端用了 Used:/.test(await A.page.evaluate(() => document.body.innerText)), "the 听 tab shows how much of the free 10 GB the bucket uses");
+  R2S.objs.set("audio/huge.mp3", { body: Buffer.from("x"), type: "audio/mpeg", size: 9999990000 });
+  await A.page.evaluate(() => { R2.usageAt = 0; });
+  const id4 = await addAudio(A.page, "太大了"); await sleep(2500);
+  const big = await A.page.evaluate(async id => { const it = S.gen.listen.find(x => x.id === id); return { big: !!it.r2big, up: !!it.r2, want: !!it.r2want, local: !!(await audioGet(id)) }; }, id4);
+  ok(big.big && !big.up && !big.want && big.local, "a file that would go over 10 GB isn't uploaded; it's kept on this device: " + JSON.stringify(big));
+  ok(/超过 10 GB 免费额度/.test(await A.page.evaluate(() => document.body.innerText)), "…and the app says so");
+  await A.page.evaluate(id => { LST = { id, mode: "hide", lost: [] }; setView("listen"); }, id4); await sleep(400);
+  await A.page.click("#r2force"); await sleep(2000);
+  ok(await A.page.evaluate(id => !!S.gen.listen.find(x => x.id === id).r2, id4), "Upload anyway uploads it");
+  R2S.objs.delete("audio/huge.mp3"); await A.page.evaluate(() => { R2.usageAt = 0; LST = null; });
   // wrong key → clear message
   await A.page.evaluate(() => setView("me")); await A.page.fill("#r2sk", "WRONG"); await A.page.click("#r2save"); await sleep(1500);
   ok(/refused the key/.test(await A.page.$eval("#r2st", e => e.textContent)), "wrong secret → 'R2 refused the key'");

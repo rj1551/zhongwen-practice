@@ -727,6 +727,31 @@ const ghFlush = () => {
 document.addEventListener("visibilitychange", () => { if (document.hidden) ghFlush(); });
 addEventListener("pagehide", ghFlush);
 
+/* ---- settings merge setting by setting (2026-11-09): each change stamps S.setAt[key], and merging takes each key
+   from the side that changed it last (unstamped keys: the copy saved last, as before). So a long offline session on
+   one device no longer undoes a goal / stock / reading change made on the other. */
+function setSettings(patch) { const t = now(); S.setAt = Object.assign({}, S.setAt); for (const k in patch) S.setAt[k] = t; return Object.assign({}, S.settings, patch); }
+function mergeSettings(m, o) {
+  const a = m.settings || {}, b = o.settings || {}, ta = m.setAt || {}, tb = o.setAt || {}, out = Object.assign({}, a), at = Object.assign({}, ta);
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if ((tb[k] || 0) > (ta[k] || 0)) { if (k in b) out[k] = b[k]; else delete out[k]; at[k] = tb[k]; }
+  m.settings = out; m.setAt = at;
+}
+/* ---- generated items (songs / listening, own texts, passages…) merge by group of fields (2026-11-09; learner asked):
+   an edit stamps its group in it.uf[group] (touch), so a rename on one device and a timing fix on the other both
+   survive. Groups not stamped on either side come from the copy changed last (it.u), as before. */
+const FIELD_GROUPS = { title: ["title"], tags: ["tags"], type: ["type", "typeMan"], timing: ["fix", "tm", "tap"],
+  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras"], lyr: ["lyr"], cloud: ["r2", "r2want", "r2gone", "r2big"] };
+function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1); const uf = x.uf = Object.assign({}, x.uf); for (const g of groups) uf[g] = x.u; return x; }
+function mergeGenItem(a, b) {
+  const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
+  if (!other.uf) return base;
+  const out = Object.assign({}, base), uf = Object.assign({}, base.uf);
+  for (const g in FIELD_GROUPS) {
+    const tb = (base.uf || {})[g] || 0, to = other.uf[g] || 0;
+    if (to > tb) { for (const f of FIELD_GROUPS[g]) { if (f in other) out[f] = other[f]; else delete out[f]; } uf[g] = to; }
+  }
+  out.uf = uf; return out;
+}
 /* ============ merge two saved states (sync + import never lose work) ============ */
 function mergeStates(a, b) {
   const newerFirst = (a.updatedAt || 0) >= (b.updatedAt || 0);
@@ -755,7 +780,7 @@ function mergeStates(a, b) {
   }
   const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
   // per item, the version changed last (it.u) wins, so a field set on one device (questions, cloud audio…) isn't lost
-  const genMerge = (p, q) => { const at = new Map(p.map((z, i) => [z.id, i])), out = p.slice(); for (const z of q) { const i = at.get(z.id); if (i == null) out.push(z); else if ((z.u || 0) > (out[i].u || 0)) out[i] = z; } return out; };
+  const genMerge = (p, q) => { const at = new Map(p.map((z, i) => [z.id, i])), out = p.slice(); for (const z of q) { const i = at.get(z.id); if (i == null) out.push(z); else out[i] = mergeGenItem(out[i], z); } return out; };
   const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = genMerge(gm[k] || [], o.gen[k] || []); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [] }, gm);
   // listening history: union of sessions from both sides
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
@@ -781,6 +806,8 @@ function mergeStates(a, b) {
   m.offfb = byId(m.offfb || [], o.offfb || [], "k").map(x => fbSeen.has(x.k) ? Object.assign(x, { seen: true }) : x).sort((p, q) => q.t - p.t).slice(0, 60);
   m.best = { combo: Math.max((m.best || {}).combo || 0, (o.best || {}).combo || 0) };
   for (const g of ["lad", "word"]) { const x = (o.fsrs || {})[g], y = (m.fsrs || {})[g]; if (x && (!y || (x.at || 0) > (y.at || 0))) m.fsrs = Object.assign({}, m.fsrs, { [g]: x }); }
+  mergeSettings(m, o);
+  { const x = m.lyrAll, y = o.lyrAll; if (y && (!x || (y.t || 0) > (x.t || 0))) m.lyrAll = y; } // {on, t}: the latest choice wins
   m.placed = !!(m.placed || o.placed);
   if (!m.skills && o.skills) { m.skills = o.skills; m.recent = o.recent || {}; }
   for (const k of ["segSeen", "lastExport", "lastImport", "mig"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
@@ -1603,8 +1630,8 @@ function renderHome(main) {
   <div class="card"><span class="label">为什么这样排 · Why this mix</span>
     <p class="small">${S.placed ? mixReason() : "Until you take the test, the mix assumes your Anki pattern: strong recognition, weak production. Production gets the biggest share."}</p></div>`;
   $("#start", main).onclick = () => startSession();
-  $$(".goal", main).forEach(b => b.onclick = () => { S.settings = Object.assign({}, S.settings, { goal: +b.dataset.goal }); save(); $$(".goal", main).forEach(x => x.classList.toggle("on", x === b)); });
-  $("#light", main).onchange = e => { S.settings = Object.assign({}, S.settings, { lightTyping: e.target.checked }); save(); };
+  $$(".goal", main).forEach(b => b.onclick = () => { S.settings = setSettings({ goal: +b.dataset.goal }); save(); $$(".goal", main).forEach(x => x.classList.toggle("on", x === b)); });
+  $("#light", main).onchange = e => { S.settings = setSettings({ lightTyping: e.target.checked }); save(); };
   $$("[data-offw]", main).forEach(b => b.onclick = () => checkOffline(+b.dataset.offw));
   const sn = $("#sentnow", main); if (sn) sn.onclick = () => processSentences(true);
   const os = $("#offw-skip", main); if (os) os.onclick = skipOffline;
@@ -2857,7 +2884,7 @@ function renderPassage(main) {
     if (READ.timer && READ.timer.hold) READ.timer.hold();
     const h = $("#ptitle"), slot = document.createElement("div"); h.before(slot); const b = document.createElement("span"); slot.append(b); h.hidden = true;
     const grp = p.mine ? S.gen.mine.filter(x => x.grp === p.grp) : [p];
-    renameFlow(b, p.title, v => { grp.forEach(x => { x.title = v; x.u = now(); }); save(); }, () => { if (READ && READ.timer && READ.timer.resume) READ.timer.resume(); renderPassage(main); });
+    renameFlow(b, p.title, v => { grp.forEach(x => { x.title = v; touch(x, "title"); }); save(); }, () => { if (READ && READ.timer && READ.timer.resume) READ.timer.resume(); renderPassage(main); });
   };
   READ.paras = paras;
   bindTokens(main, p);
@@ -2894,7 +2921,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v49 · 11/8 23:42"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v50 · 11/9 00:22"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -3176,8 +3203,8 @@ function renderMineText(main) {
       <button class="btn ghost" id="del">删除这篇 Delete this text</button></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
-  $("#mren").onclick = e => renameFlow(e.currentTarget, p0.title, v => { g.forEach(p => { p.title = v; p.u = now(); }); save(); }, () => render());
-  $("#ttags").onchange = () => { const tags = parseTags($("#ttags").value); g.forEach(p => { p.tags = tags; p.u = now(); }); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); };
+  $("#mren").onclick = e => renameFlow(e.currentTarget, p0.title, v => { g.forEach(p => { p.title = v; touch(p, "title"); }); save(); }, () => render());
+  $("#ttags").onchange = () => { const tags = parseTags($("#ttags").value); g.forEach(p => { p.tags = tags; touch(p, "tags"); }); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); };
   const open = (p, re) => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!re }; render(); window.scrollTo(0, 0); };
   $("#go").onclick = () => next ? open(next) : open(g[0], true);
   $$("[data-part]", main).forEach(b => b.onclick = () => { const p = PSG.get(b.dataset.part); open(p, !!S.reads[p.id]); });
@@ -3230,7 +3257,7 @@ Questions: ${QS_RULES}`;
       if (same) p.paras = j.paras.map(String); // Claude's word splitting, only if the text is unchanged
       p.gl = j.gl && typeof j.gl === "object" ? j.gl : {};
       p.en = String(j.en || "");
-      p.qs = toQs(j.qs); p.u = now();
+      p.qs = toQs(j.qs); touch(p, "text");
       save();
     } catch (e) { failed = e; break; }
     MINE_Q.done++; if (VIEW === "read" && READ && READ.grp === g[0].grp) { const q = $("#qst"); if (q) q.innerHTML = `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…`; }
@@ -3497,11 +3524,11 @@ const tapLag = () => { const x = +cuePref().lag; return isFinite(x) ? x : 0.3; }
 // how many lines after line i move with it (up to the next line set with "later lines follow")
 function carriedCount(it, i) { const fix = it.fix || {}; let n = 0; for (let k = i + 1; k < it.cues.length; k++) { if (fix[k] && fix[k].c) break; if (!fix[k]) n++; } return n; }
 function timingSnap(it) { (LST.tundo = LST.tundo || []).push(JSON.stringify({ fix: it.fix || null, tm: it.tm || null })); if (LST.tundo.length > 60) LST.tundo.shift(); }
-function timingUndo(it) { const s = (LST.tundo || []).pop(); if (!s) return false; const o = JSON.parse(s); if (o.fix) it.fix = o.fix; else delete it.fix; if (o.tm) it.tm = o.tm; else delete it.tm; it.u = now(); save(); return true; }
-function setLine(it, i, t, carry) { timingSnap(it); (it.fix = it.fix || {})[i] = { t: +Math.max(0, t).toFixed(2), c: !!carry }; it.u = now(); save(); }
+function timingUndo(it) { const s = (LST.tundo || []).pop(); if (!s) return false; const o = JSON.parse(s); if (o.fix) it.fix = o.fix; else delete it.fix; if (o.tm) it.tm = o.tm; else delete it.tm; touch(it, "timing"); save(); return true; }
+function setLine(it, i, t, carry) { timingSnap(it); (it.fix = it.fix || {})[i] = { t: +Math.max(0, t).toFixed(2), c: !!carry }; touch(it, "timing"); save(); }
 function nudgeLine(it, i, d, carry) { const cur = cueT(it, i); if (cur == null) return; setLine(it, i, cur + d, (it.fix && it.fix[i]) ? it.fix[i].c : carry); }
-function nudgeSong(it, d) { timingSnap(it); const tm = it.tm || { a: 1, b: 0 }; it.tm = { a: tm.a || 1, b: +((tm.b || 0) + d).toFixed(2) }; it.u = now(); save(); }
-function resetTiming(it) { timingSnap(it); delete it.fix; delete it.tm; it.u = now(); save(); }
+function nudgeSong(it, d) { timingSnap(it); const tm = it.tm || { a: 1, b: 0 }; it.tm = { a: tm.a || 1, b: +((tm.b || 0) + d).toFixed(2) }; touch(it, "timing"); save(); }
+function resetTiming(it) { timingSnap(it); delete it.fix; delete it.tm; touch(it, "timing"); save(); }
 const fmtSec = x => fmtT(x) + "." + Math.floor((x % 1) * 10);
 const fmtD = d => (d >= 0 ? "晚 +" : "早 −") + Math.abs(d).toFixed(1) + " s";
 /* ---- songs and talk: what comes first on an item's page. Guessed when it's added, one tap to change (it.type).
@@ -3558,7 +3585,7 @@ function renderListen(main) {
   const list = all.filter(it => LFILT === "all" || (LFILT === "song") === (itemType(it) === "song"));
   main.innerHTML = `<div class="top"><div><h1>听力</h1><p class="date">Native audio: a file on this phone, or a link to Bilibili, a podcast app, YouTube…</p></div></div>
     <button class="btn wide" id="ladd">+ 添加 Add audio</button>
-    ${lyrBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 还要分析 ${lyrBacklog().length} 首歌的歌词（每晚 ${LYR_PER_RUN} 首）· ${lyrBacklog().length} song${lyrBacklog().length > 1 ? "s" : ""} waiting for Claude's lyric analysis (${LYR_PER_RUN} a night)${S.lyrAll ? `<br><b>下次运行一次做完 · The next run does them all.</b> 要马上开始，在 Claude 的定时任务 “Zhongwen daily stock run” 里点 Run now · To start now, open the scheduled task in Claude and tap Run now.` : ` <button class="tagc" id="lyrall">下次一次做完 · Do all in the next run</button>`}</div>` : ""}
+    ${lyrBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 还要分析 ${lyrBacklog().length} 首歌的歌词（每晚 ${LYR_PER_RUN} 首）· ${lyrBacklog().length} song${lyrBacklog().length > 1 ? "s" : ""} waiting for Claude's lyric analysis (${LYR_PER_RUN} a night)${lyrAllOn() ? `<br><b>✓ 下次运行一次做完 · The next run does them all.</b> 要马上开始，在 Claude 的定时任务 “Zhongwen daily stock run” 里点 Run now · To start now, open the scheduled task in Claude and tap Run now.<div class="row" style="margin-top:6px"><button class="btn ghost" id="lyrundo">撤销 · Undo (back to ${LYR_PER_RUN} a night)</button></div>` : `<div class="row" style="margin-top:6px"><button class="btn soft" id="lyrall">下次一次做完 · Do all in the next run</button></div>`}</div>` : ""}
     ${plSongs().length && LFILT !== "talk" ? `<div class="row" style="gap:6px"><button class="btn soft" id="plall" style="flex:1">▶ 连播全部歌 · Play all songs (${plSongs().length})</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf0">🔀 随机 Shuffle</button></div>` : ""}
     ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
     <div id="r2list"></div>
@@ -3569,11 +3596,12 @@ function renderListen(main) {
     const box = $("#r2list"); if (!box || VIEW !== "listen" || LST) return;
     box.innerHTML = r2ListHtml(list, have); r2Draw();
     const dl = $("#r2dl"); if (dl) dl.onclick = r2DownloadAll;
-    const ua = $("#r2upall"); if (ua) ua.onclick = () => { list.filter(it => it.kind === "file" && !it.r2 && !it.r2gone && have.has(it.id)).forEach(it => { it.r2want = true; it.u = now(); }); save(); render(); r2Kick(); };
+    const ua = $("#r2upall"); if (ua) ua.onclick = () => { list.filter(it => it.kind === "file" && !it.r2 && !it.r2gone && have.has(it.id)).forEach(it => { it.r2want = true; touch(it, "cloud"); }); save(); render(); r2Kick(); };
   });
   $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
   const pa = $("#plall", main); if (pa) pa.onclick = () => plStart();
-  const la = $("#lyrall", main); if (la) la.onclick = () => { S.lyrAll = now(); save(); outboxSoon(true); toast("好的：下次运行把歌词全部分析完 · The next run will do all of them", 3500); render(); };
+  const la = $("#lyrall", main); if (la) la.onclick = () => { S.lyrAll = { on: true, t: now() }; save(); outboxSoon(true); toast("好的：下次运行把歌词全部分析完 · The next run will do all of them", 3500); render(); };
+  const lu = $("#lyrundo", main); if (lu) lu.onclick = () => { S.lyrAll = { on: false, t: now() }; save(); outboxSoon(true); toast(`撤销了：还是每晚 ${LYR_PER_RUN} 首 · Undone: ${LYR_PER_RUN} a night`, 3000); render(); };
   const ps = $("#plshuf0", main); if (ps) ps.onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} render(); };
   // songs with timings open in Follow; everything else starts with the text hidden (as before)
   $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); if (PL) { const j = PL.ids.indexOf(b.dataset.l); if (j >= 0) PL.i = j; else PL = null; } LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
@@ -3841,7 +3869,7 @@ function renderListenItem(main, it) {
       <div id="r2item" class="stack" style="gap:6px"></div>
       <button class="btn ghost" id="ldel">删除 Delete</button></div>`;
   $("#lback", main).onclick = () => { stopAudio(); closeSheet(); LST = null; PL = null; render(); };
-  $("#ltype", main).onclick = () => { it.type = song ? "talk" : "song"; it.typeMan = true; it.u = now(); save(); outboxSoon(true); toast(song ? "改成谈话（播客、视频、对话）· Now talk" : "改成歌 · Now a song"); renderListenItem(main, it); };
+  $("#ltype", main).onclick = () => { it.type = song ? "talk" : "song"; it.typeMan = true; touch(it, "type"); save(); outboxSoon(true); toast(song ? "改成谈话（播客、视频、对话）· Now talk" : "改成歌 · Now a song"); renderListenItem(main, it); };
   $$("[data-mode]", main).forEach(b => b.onclick = () => { LST.mode = b.dataset.mode; $$("[data-mode]", main).forEach(x => x.classList.toggle("on", x === b)); $("#lcues", main).hidden = LST.mode === "hide"; if (LST.mode === "hide" && LST.fix) exitFix(it); fitCues(); syncCue(it); });
   const aa = $("#laa", main); if (aa) aa.onclick = () => toggleAa(it, aa);
   const lx = $("#lex", main); if (lx) lx.onclick = () => { setCuePref({ ex: !cuePref().ex }); lx.classList.toggle("on", cuePref().ex); redrawCues(it); };
@@ -3864,14 +3892,14 @@ function renderListenItem(main, it) {
       if (!AUD || AUD_ID !== it.id) return toast("音频还没准备好 · The audio isn't ready yet", 2500);
       if (AUD.paused) { AUD.play().then(drawTap).catch(() => toast("播放不了这个文件 · Can't play this file")); return; }
       const st = it.tap = it.tap || [], t = Math.max(0, AUD.currentTime - tapLag());
-      st.push(+(st.length ? Math.max(st[st.length - 1] + 0.05, t) : t).toFixed(2)); it.u = now();
+      st.push(+(st.length ? Math.max(st[st.length - 1] + 0.05, t) : t).toFixed(2)); touch(it, "timing");
       if (st.length >= it.cues.length) {
         it.cues = it.cues.map((c, i) => [st[i], c[1]]); for (const k of ["tap", "tm", "fix", "secs"]) delete it[k]; save();
         LST.tap = false; LST.mode = "follow"; toast("时间对好了 · Timed! The text can follow along now; ⏱ 对时间 fine-tunes it.", 4000); renderListenItem(main, it); return;
       }
       save(); drawTap();
     };
-    $("#tapundo", box).onclick = () => { const st = it.tap || []; const x = st.pop(); it.u = now(); save(); if (AUD && AUD_ID === it.id && x != null) AUD.currentTime = Math.max(0, x - 2); drawTap(); };
+    $("#tapundo", box).onclick = () => { const st = it.tap || []; const x = st.pop(); touch(it, "timing"); save(); if (AUD && AUD_ID === it.id && x != null) AUD.currentTime = Math.max(0, x - 2); drawTap(); };
     $("#tapstop", box).onclick = () => { LST.tap = false; if (AUD) AUD.pause(); renderListenItem(main, it); };
   };
   const tg = $("#ltapgo", main); if (tg) tg.onclick = () => { LST.tap = true; if (it.tap && it.tap.length && AUD && AUD_ID === it.id) AUD.currentTime = Math.max(0, it.tap[it.tap.length - 1] - 2); renderListenItem(main, it); };
@@ -3892,8 +3920,8 @@ function renderListenItem(main, it) {
     if (song && hasTr && navigator.onLine) { const g = $("#lrgo", main); if (g) g.click(); } // songs: show LRCLIB's other versions straight away
   };
   $$("[data-trv]", main).forEach(b => b.onclick = () => { trSwitch(it, +b.dataset.trv); LST.tundo = []; LST.sel = null; LAST_CUE = -1; toast("换回来了 · Switched; the other version is kept too"); renderListenItem(main, it); });
-  $("#lren", main).onclick = e => renameFlow(e.currentTarget, it.title, v => { it.title = v; it.u = now(); save(); if (plOn(it)) mediaMeta(it); }, () => renderListenItem(main, it));
-  const lt = $("#ltags", main); if (lt) { bindTagInput(main); lt.onchange = () => { const tags = parseTags(lt.value); if (tags.length) it.tags = tags; else delete it.tags; it.u = now(); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); }; }
+  $("#lren", main).onclick = e => renameFlow(e.currentTarget, it.title, v => { it.title = v; touch(it, "title"); save(); if (plOn(it)) mediaMeta(it); }, () => renderListenItem(main, it));
+  const lt = $("#ltags", main); if (lt) { bindTagInput(main); lt.onchange = () => { const tags = parseTags(lt.value); if (tags.length) it.tags = tags; else delete it.tags; touch(it, "tags"); save(); toast(tags.length ? "标签已保存 · Tags saved: " + tags.join(" ") : "标签已清空 · Tags cleared"); }; }
   if (LST.edit) {
     const f = LST.edit, keep = () => { f.tr = $("#ltr", main).value; };
     bindTrEditor(main, f, keep, () => renderListenItem(main, it));
@@ -3909,7 +3937,7 @@ function renderListenItem(main, it) {
       it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs", "fix", "lyr"]) delete it[k];
       it.trLabel = f.srcLabel || "粘贴的 Pasted";
       if (!it.typeMan) it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: it.dur });
-      it.u = now(); save(); outboxSoon(true); LST.tundo = []; LST.sel = null;
+      touch(it, "text", "timing", "lyr"); save(); outboxSoon(true); LST.tundo = []; LST.sel = null;
       LST.edit = null; LAST_CUE = -1; toast(`文字已保存 · Transcript saved (${cues.length} lines${isTimed(it) ? ", timed" : ""})`); renderListenItem(main, it);
     };
   }
@@ -3981,7 +4009,7 @@ function trSwitch(it, k) {
   for (const f of ["fix", "tm", "qs", "gl", "secs", "tap", "qcut", "lyr"]) delete it[f];
   it.cues = v.cues; it.trLabel = v.label; for (const f of ["fix", "tm", "qs", "gl", "secs", "lyr"]) if (v[f]) it[f] = v[f];
   it.trPrev = (cur ? [cur, ...rest] : rest).slice(0, TR_VERSIONS); if (!it.trPrev.length) delete it.trPrev;
-  it.u = now(); save(); outboxSoon(true);
+  touch(it, "text", "timing", "lyr"); save(); outboxSoon(true);
 }
 // questions after listening: with sections, the ones for the sections you heard this time (all of them for links,
 // or if nothing was played)
@@ -3999,7 +4027,8 @@ async function drawR2Item(it) {
   if (!$("#r2item")) return;
   box.innerHTML = r2ItemHtml(it, here); r2Draw();
   const rm = $("#r2rm"); if (rm) rm.onclick = async () => { rm.disabled = true; if (await r2RemoveCloud(it)) drawR2Item(it); else rm.disabled = false; };
-  const up = $("#r2up1"); if (up) up.onclick = () => { delete it.r2gone; it.r2want = true; it.u = now(); save(); drawR2Item(it); r2Kick().then(() => drawR2Item(it)); };
+  const fo = $("#r2force"); if (fo) fo.onclick = () => { delete it.r2big; it.r2force = true; it.r2want = true; touch(it, "cloud"); save(); drawR2Item(it); r2Kick().then(() => drawR2Item(it)); };
+  const up = $("#r2up1"); if (up) up.onclick = () => { delete it.r2gone; it.r2want = true; touch(it, "cloud"); save(); drawR2Item(it); r2Kick().then(() => drawR2Item(it)); };
 }
 async function drawPlayer(it) {
   const box = $("#lplay"); if (!box) return;
@@ -4144,7 +4173,7 @@ async function listenQuestions(it) {
   try {
     const j = await AI.json(`This is the transcript of a Chinese audio clip (podcast, video or conversation) that an advanced learner (knows HSK 1–6 well) will LISTEN to without reading.${cut ? " Only the first part is given; ask only about it." : ""}\n${text}\nReply with only JSON: {"qs":[{"q":"English question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}],"gl":{"word":["pinyin","short English gloss"]}}\nQuestions: ${QS_RULES} Ask about what a listener should take away (main points, who did what, reasons, contrasts), not tiny details you'd only catch by reading. In "why", quote the transcript words that decide it.\ngl: slang, names and HSK7+ words in the transcript, and words whose reading or meaning here differs from the most common one.`, { modelTier: "default", cache: false });
     const qs = toQs(j && j.qs); if (qs.length < 2) throw { code: "invalid_json" };
-    it.qs = qs; if (j.gl && typeof j.gl === "object") it.gl = j.gl; if (cut) it.qcut = true; it.u = now(); save();
+    it.qs = qs; if (j.gl && typeof j.gl === "object") it.gl = j.gl; if (cut) it.qcut = true; touch(it, "text"); save();
     toast("问题加好了 · Questions added"); if (VIEW === "listen" && LST && LST.id === it.id && !LST.review) render();
   } catch (e) { if (st) st.textContent = aiErr(e); if (btn) btn.disabled = false; }
 }
@@ -4182,7 +4211,7 @@ async function sigv4({ method, url, headers = {}, payloadHash = "UNSIGNED-PAYLOA
    (an item deleted while offline). Keys: provGet().r2 = {account, bucket, akid, secret}, synced in settings/keys.json. */
 const r2Cfg = () => { if (HOSTED) return null; const r = provGet().r2; return r && r.account && r.bucket && r.akid && r.secret ? r : null; };
 const r2Url = (c, key, qs) => `https://${c.account}.r2.cloudflarestorage.com/${encodeURIComponent(c.bucket)}${key ? "/" + key.split("/").map(encodeURIComponent).join("/") : ""}${qs || ""}`;
-const R2_FREE = 10 * 1024 ** 3;
+const R2_FREE = 10e9; // Cloudflare's free tier: 10 GB (decimal, to be safe) of storage
 const r2Err = (status, text) => status === 403 || status === 401 ? { code: "auth", message: "R2 不接受这把钥匙（或它不能用这个桶）· R2 refused the key (or it isn't allowed for this bucket)." } : status === 404 ? { code: "missing", message: "云端没有这个文件 · Not in the cloud (removed?)" } : { code: "http", message: "R2 出错 · R2 error " + status + (text ? ": " + String(text).replace(/<[^>]+>/g, " ").trim().slice(0, 120) : "") };
 const R2_NET = { code: "network", message: "连不上 R2 · Can't reach R2 (offline, or the bucket's CORS policy doesn't allow this site yet)" };
 async function r2Fetch(method, key, qs, extra) {
@@ -4226,8 +4255,20 @@ async function r2Usage() {
   }
   return { bytes, n };
 }
-const fmtMB = b => !b ? "0 MB" : b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(1) + " GB" : Math.max(0.1, b / 1024 ** 2).toFixed(1) + " MB";
+const fmtMB = b => !b ? "0 MB" : b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.max(0.1, b / 1e6).toFixed(1) + " MB";
 const R2 = { up: {}, down: {}, busy: false, err: null, usage: null, usageAt: 0, local: null };
+/* ---- how much of the free 10 GB the bucket uses (2026-11-09, learner asked): one list request (cheap), remembered on
+   this device so it shows straight away; adjusted after each upload/delete; checked again before an upload. An upload
+   that would go over the free tier isn't sent: the file stays on this device (it.r2big), with "Upload anyway". */
+try { const u = JSON.parse(localStorage.getItem("zwlgf:r2use") || "null"); if (u && u.bytes >= 0) { R2.usage = { bytes: u.bytes, n: u.n }; R2.usageAt = 0; R2.usageSeen = u.t; } } catch (e) {}
+function r2UseSet(u) { R2.usage = u; R2.usageAt = now(); R2.usageSeen = now(); try { localStorage.setItem("zwlgf:r2use", JSON.stringify({ bytes: u.bytes, n: u.n, t: now() })); } catch (e) {} }
+async function r2UsageFresh(maxAge = 10 * MIN) { if (R2.usage && now() - R2.usageAt < maxAge) return R2.usage; const u = await r2Usage(); r2UseSet(u); return u; }
+function r2UseHtml() {
+  if (!R2.usage) return "";
+  const b = R2.usage.bytes, f = Math.min(1, b / R2_FREE);
+  return `<div class="stack" style="gap:4px"><span class="small">云端用了 Used: <b>${fmtMB(b)}</b> / 10 GB 免费 free · ${R2.usage.n} 个文件 files${R2.usageSeen ? ` <span class="muted">(${agoShort(R2.usageSeen)})</span>` : ""}</span><div class="mix" style="background:var(--line);height:6px"><i style="width:${(f * 100).toFixed(1)}%;background:${f > 0.9 ? "var(--bad)" : "var(--accent)"}"></i></div></div>`;
+}
+const agoShort = t => { const m = Math.round((now() - t) / 60000); return m < 1 ? "刚刚 just now" : m < 60 ? m + " 分钟前 min ago" : m < 1440 ? Math.round(m / 60) + " 小时前 h ago" : Math.round(m / 1440) + " 天前 days ago"; };
 // which items' audio is on this device (IndexedDB keys + this session's memory copies)
 async function audioKeys() {
   const ks = new Set(MEM_AUDIO.keys());
@@ -4254,10 +4295,20 @@ async function r2Kick() {
       if (it.kind !== "file" || !it.r2want || it.r2 || it.r2gone) continue;
       const blob = await audioGet(it.id); if (!blob) continue; // only the device that has the file can upload it
       const key = `audio/${it.id}.${r2Ext(it)}`;
+      if (!it.r2force) {
+        let use = null; try { use = await r2UsageFresh(); } catch (e) {}
+        if (use && use.bytes + blob.size > R2_FREE) {
+          delete it.r2want; it.r2big = { size: blob.size, used: use.bytes, t: now() }; touch(it, "cloud"); save();
+          toast(`没上传到云端：会超过 10 GB 免费额度（现在 ${fmtMB(use.bytes)} + 这个 ${fmtMB(blob.size)}）。文件还在这台设备上。· Not uploaded: it would go over the free 10 GB. It's still on this device.`, 7000);
+          if (VIEW === "listen" && !busyView()) render();
+          continue;
+        }
+      }
       R2.up[it.id] = 0; r2Draw();
       try {
         await r2Put(key, blob, p => { R2.up[it.id] = p; r2Draw(); });
-        it.r2 = { key, size: blob.size, type: blob.type || "", t: now() }; delete it.r2want; it.u = now(); R2.err = null; R2.usageAt = 0; save();
+        it.r2 = { key, size: blob.size, type: blob.type || "", t: now() }; delete it.r2want; delete it.r2force; delete it.r2big; touch(it, "cloud"); R2.err = null; save();
+        if (R2.usage) r2UseSet({ bytes: R2.usage.bytes + blob.size, n: R2.usage.n + 1 });
         toast(`已上传到云端 · Uploaded: ${it.title}`, 2500);
       } catch (e) { R2.err = e; delete R2.up[it.id]; r2Draw(); if (VIEW === "listen" || VIEW === "me") render(); break; }
       delete R2.up[it.id]; r2Draw();
@@ -4274,7 +4325,8 @@ async function r2Fetch1(it) {
 async function r2RemoveCloud(it) {
   if (!it.r2) return;
   try { await r2Del(it.r2.key); } catch (e) { if (e.code !== "missing") { toast(e.message, 5000); return false; } }
-  it.r2 = null; it.r2gone = true; delete it.r2want; it.u = now(); R2.usageAt = 0; save(); toast("已从云端删除，这台设备上还在 · Removed from the cloud; still on this device", 3500); return true;
+  const sz = it.r2.size || 0; it.r2 = null; it.r2gone = true; delete it.r2want; touch(it, "cloud"); save();
+  if (R2.usage) r2UseSet({ bytes: Math.max(0, R2.usage.bytes - sz), n: Math.max(0, R2.usage.n - 1) }); toast("已从云端删除，这台设备上还在 · Removed from the cloud; still on this device", 3500); return true;
 }
 let R2_DL = null; // Download all: {n, done, bytes}
 async function r2DownloadAll() {
@@ -4292,9 +4344,11 @@ function r2ListHtml(list, have) {
   const files = list.filter(it => it.kind === "file");
   if (!files.length) return "";
   if (!r2Cfg()) return `<p class="small muted">☁ 云端音频还没设置：其他设备听不到这里的文件 · Cloud audio isn't set up, so your other devices can't play these files. Progress → 云端音频.</p>`;
-  const toDown = files.filter(it => it.r2 && have && !have.has(it.id)), toUp = files.filter(it => !it.r2 && !it.r2gone && !it.r2want && have && have.has(it.id));
+  const toDown = files.filter(it => it.r2 && have && !have.has(it.id)), toUp = files.filter(it => !it.r2 && !it.r2gone && !it.r2want && !it.r2big && have && have.has(it.id));
   const dlBytes = toDown.reduce((a, it) => a + (it.r2.size || 0), 0);
+  if (ONLINE && !R2.usageBusy && now() - R2.usageAt > 30 * MIN) { R2.usageBusy = true; r2UsageFresh(30 * MIN).then(() => { if (VIEW === "listen" && !LST && !busyView()) render(); }).catch(() => {}).finally(() => { R2.usageBusy = false; }); }
   return `<div class="card stack" style="gap:6px"><span class="label">☁ 云端音频 · Cloud audio</span>
+    ${r2UseHtml()}
     ${R2_DL ? `<p class="small"><span class="spin"></span> 下载中 Downloading ${R2_DL.done}/${R2_DL.n}</p>` : toDown.length ? `<button class="btn soft" id="r2dl">下载全部音频 · Download all audio (${toDown.length}, ${fmtMB(dlBytes)})</button><span class="small muted">出门前（特别是去中国前）先下载，离线也能听 · Do this before a trip so everything plays offline.</span>` : `<span class="small">✓ 云端的音频都在这台设备上 · Everything in the cloud is on this device.</span>`}
     ${toUp.length ? `<button class="btn ghost" id="r2upall">上传到云端 · Upload ${toUp.length} file${toUp.length > 1 ? "s" : ""} from this device</button>` : ""}
     ${R2.err ? `<span class="small" style="color:var(--bad)">${esc(R2.err.message)}</span>` : ""}</div>`;
@@ -4305,6 +4359,7 @@ function r2ItemHtml(it, here) {
   const bar = `<div data-r2p="${esc(it.id)}" hidden></div>`;
   if (!r2Cfg()) return bar;
   if (it.r2) return `${bar}<span class="small">☁ 在云端 · In the cloud (${fmtMB(it.r2.size || 0)})${here ? "" : " · 这台设备上还没有 not on this device yet"}</span>${here ? `<button class="btn ghost" id="r2rm">从云端删除 · Remove from cloud (keeps it on this device)</button>` : ""}`;
+  if (it.r2big && !it.r2want) return `${bar}<span class="small" style="color:var(--bad)">☁ 没上传：会超过 10 GB 免费额度（这个 ${fmtMB(it.r2big.size)}，当时用了 ${fmtMB(it.r2big.used)}）。只在这台设备上。<br>Not uploaded: it would go over the free 10 GB. It's only on this device.</span>${here ? `<button class="btn ghost" id="r2force">仍然上传 · Upload anyway (over the free tier costs ~$0.015 per GB a month)</button>` : ""}`;
   if (it.r2gone) return `${bar}<span class="small muted">已从云端删除 · Removed from the cloud.</span>${here ? `<button class="btn ghost" id="r2up1">再上传 · Upload again</button>` : ""}`;
   if (it.r2want || R2.up[it.id] != null) return `${bar}<span class="small muted">☁ 等着上传 · Waiting to upload${R2.err ? `: ${esc(R2.err.message)}` : ""}</span>`;
   return here ? `${bar}<button class="btn ghost" id="r2up1">上传到云端 · Upload to the cloud</button>` : bar;
@@ -4319,7 +4374,7 @@ function r2Card() {
     <input class="inp" id="r2ak" placeholder="Access Key ID" value="${esc(c.akid || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2sk" type="password" placeholder="Secret Access Key" value="${esc(c.secret || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button class="btn soft" id="r2save">保存并测试 Save & test</button>
-    <div id="r2st" class="small">${ok ? (R2.usage ? `用了 Used: <b>${fmtMB(R2.usage.bytes)}</b> / 10 GB 免费 free · ${R2.usage.n} 个文件 files` : "") : ""}${R2.cardErr ? `<span style="color:var(--bad)">${esc(R2.cardErr)}</span>` : ""}</div>`;
+    <div id="r2st" class="small">${ok ? r2UseHtml() : ""}${R2.cardErr ? `<span style="color:var(--bad)">${esc(R2.cardErr)}</span>` : ""}</div>`;
 }
 function bindR2Card() {
   const card = $("#r2card"); if (!card) return;
@@ -4328,11 +4383,11 @@ function bindR2Card() {
     const p = provGet(); p.r2 = { account: $("#r2acct").value.trim(), bucket: $("#r2bkt").value.trim(), akid: $("#r2ak").value.trim(), secret: $("#r2sk").value.trim() };
     if (!p.r2.account || !p.r2.bucket || !p.r2.akid || !p.r2.secret) { R2.cardErr = "四个都要填 · Fill in all four."; return redraw(); }
     provSet(p); R2.cardErr = ""; $("#r2st").innerHTML = `<span class="spin"></span> 测试中 Testing…`;
-    try { R2.usage = await r2Usage(); R2.usageAt = now(); R2.err = null; toast("云端音频可以用了 · Cloud audio works", 2500); r2Kick(); }
+    try { r2UseSet(await r2Usage()); R2.err = null; toast("云端音频可以用了 · Cloud audio works", 2500); r2Kick(); }
     catch (e) { R2.cardErr = e.message || String(e); }
     redraw();
   };
-  if (r2Cfg() && ONLINE && now() - R2.usageAt > 30 * MIN) { R2.usageAt = now(); r2Usage().then(u => { R2.usage = u; R2.cardErr = ""; redraw(); }).catch(e => { R2.cardErr = e.message; redraw(); }); }
+  if (r2Cfg() && ONLINE && now() - R2.usageAt > 30 * MIN) { R2.usageAt = now(); r2Usage().then(u => { r2UseSet(u); R2.cardErr = ""; redraw(); }).catch(e => { R2.cardErr = e.message; redraw(); }); }
 }
 addEventListener("online", () => setTimeout(r2Kick, 2500));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(r2Kick, 1500); });
@@ -4634,7 +4689,7 @@ function renderMe(main) {
     ${!HOSTED ? `<p class="small muted">iPhone：请总是从主屏幕图标打开，Safari 标签页的数据是分开的。· On iPhone, always open it from the home-screen icon: a Safari tab keeps separate data.${PERSISTED !== true && !(COL && COL.gh) ? "<br>还没连 GitHub，浏览器也没答应保留数据：偶尔导出一份代码当备份。· Not synced to GitHub and this browser hasn't promised to keep the data: copy a code now and then as a backup." : ""}</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
   bindBank(); if ($("#provcard")) bindProv(); if ($("#ghcard")) bindGh(); bindR2Card();
-  $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
+  $("#onetap").onchange = e => { S.settings = setSettings({ oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
   const gl = $("#genlad"); if (gl) gl.onclick = () => genLadder();
@@ -4977,7 +5032,7 @@ function bindStock() {
   const m = $("#st-mins"), d = $("#st-days"), f = $("#st-from"), t = $("#st-to"); if (!m) return;
   const set = (redraw) => {
     const prev = (S.settings || {}).stock || {};
-    S.settings = Object.assign({}, S.settings, { stock: { mins: +m.value, days: d ? +d.value : prev.days || 21, from: f.value || undefined, to: t.value || undefined } });
+    S.settings = setSettings({ stock: { mins: +m.value, days: d ? +d.value : prev.days || 21, from: f.value || undefined, to: t.value || undefined } });
     save();
     if (redraw) render(); else updateForecast();
   };
@@ -5049,6 +5104,7 @@ function outboxRequests() {
   for (const it of lyrBacklog()) out.push({ rid: "y:" + it.id, kind: "lyrics", id: it.id, h: lyrHash(it) });
   return out;
 }
+const lyrAllOn = () => !!(S.lyrAll && (S.lyrAll === true || typeof S.lyrAll === "number" || S.lyrAll.on));
 const lyrBacklog = () => (S.gen.listen || []).filter(lyrWanted).sort((a, b) => (b.t || 0) - (a.t || 0));
 // answers in a pack: sentences {word: "…" | {s, py, gl}}, questions [{rid, qs, gl, en, paras}], regrades [{rid, score, chunk, fixed, notes}]
 function applyAnswers(pk, r) {
@@ -5069,7 +5125,7 @@ function applyAnswers(pk, r) {
     const lines = it.cues.map((c, i) => { const L = a.lines[i]; if (!L || !Array.isArray(L.w) || !L.w.every(ok) || L.w.map(x => x[0]).join("") !== c[1]) return null;
       return { w: L.w.map(x => { const y = [x[0], String(x[1] || "").slice(0, 60)]; if (x[2] || x[3]) y.push(String(x[2] || "").slice(0, 120)); if (x[3]) y.push(1); return y; }), p: L.p ? String(L.p).slice(0, 200) : undefined, en: L.en ? String(L.en).slice(0, 300) : undefined }; });
     if (lines.filter(Boolean).length < Math.ceil(it.cues.length / 2)) { r.bad++; continue; } // mostly wrong: ask again next run
-    it.lyr = { h: a.h, lines, t: now() }; it.u = now(); r.ly++;
+    it.lyr = { h: a.h, lines, t: now() }; touch(it, "lyr"); r.ly++;
   }
   for (const a of Array.isArray(pk.questions) ? pk.questions : []) {
     const rid = String(a && a.rid || ""), m = rid.match(/^q:(mine|listen):(.+)$/); if (!m) { r.bad++; continue; }
@@ -5080,10 +5136,10 @@ function applyAnswers(pk, r) {
       const part = (S.gen.mine || []).find(x => x.id === m[2]); if (!part) { doneReq(rid); continue; }
       const plain = part.paras.map(x => x.replace(/[|\/]/g, ""));
       if (Array.isArray(a.paras) && a.paras.length === plain.length && a.paras.every((x, i) => String(x).replace(/[|\/\s]/g, "") === plain[i].replace(/\s/g, ""))) part.paras = a.paras.map(String);
-      part.qs = qs; if (a.gl && typeof a.gl === "object") part.gl = a.gl; if (a.en) part.en = String(a.en); part.u = now();
+      part.qs = qs; if (a.gl && typeof a.gl === "object") part.gl = a.gl; if (a.en) part.en = String(a.en); touch(part, "text");
     } else {
       const it = (S.gen.listen || []).find(x => x.id === m[2]); if (!it) { doneReq(rid); continue; }
-      it.qs = qs; if (a.gl && typeof a.gl === "object") it.gl = a.gl; it.u = now(); delete it.qcut;
+      it.qs = qs; if (a.gl && typeof a.gl === "object") it.gl = a.gl; touch(it, "text"); delete it.qcut;
       if (secQs) it.secs = listenSections(it); else delete it.secs;
     }
     doneReq(rid); r.qs++;
@@ -5276,8 +5332,8 @@ function computeOutbox() {
     room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
     reading: { perDay: readPerDay(), genres: readGenres() || "auto" },
     hints: genHints(), requests: outboxRequests().concat(checkRequests()), packsDone: (S.packsDone || []).slice(-60) };
-  if (S.lyrAll && lyrBacklog().length) OUTBOX.lyricsAll = true; // "do all songs in the next run"
-  else if (S.lyrAll) delete S.lyrAll;
+  if (lyrAllOn() && lyrBacklog().length) OUTBOX.lyricsAll = true; // "do all songs in the next run"
+  else if (lyrAllOn()) S.lyrAll = { on: false, t: now() };
   OUTBOX_AT = now(); OUTBOX_DIRTY = true;
   return OUTBOX;
 }
@@ -5323,12 +5379,12 @@ function bindPackCard() {
   const ho = $("#heldok"); if (ho) ho.onclick = () => { S.heldSeen = now(); save(); refreshStock(); };
   const c = $("#packcard"); if (!c) return;
   const setStock = (patch, redraw) => {
-    S.settings = Object.assign({}, S.settings, { stock: Object.assign({}, (S.settings || {}).stock, patch) }); save();
+    S.settings = setSettings({ stock: Object.assign({}, (S.settings || {}).stock, patch) }); save();
     FORECAST = null; if (redraw) render(); else refreshStock();
     setTimeout(() => { if (COL && COL.gh) outboxSoon(true); else { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); } }, 30);
   };
   const a = $("#pk-ahead"); if (a) a.onchange = () => setStock({ ahead: +a.value }, false);
-  const setReading = patch => { S.settings = Object.assign({}, S.settings, { reading: Object.assign({}, (S.settings || {}).reading, patch) }); save(); FORECAST = null; refreshStock(); setTimeout(() => outboxSoon(true), 30); };
+  const setReading = patch => { S.settings = setSettings({ reading: Object.assign({}, (S.settings || {}).reading, patch) }); save(); FORECAST = null; refreshStock(); setTimeout(() => outboxSoon(true), 30); };
   $("#pk-read").onchange = e => setReading({ perDay: +e.target.value });
   $$("[data-genre]", c).forEach(b => b.onchange = () => { const on = $$("[data-genre]", c).filter(x => x.checked).map(x => x.dataset.genre); setReading({ genres: on.length && on.length < PSG_GENRES.length ? on : null }); });
   $("#pk-more").onclick = () => { const t = now(); addReq({ rid: "p:" + t.toString(36), kind: "passage", genre: $("#pk-g1").value || null, topic: $("#pk-topic").value.trim().slice(0, 80) }); toast("请 Claude 写了 · Asked; it arrives with the next daily run", 3500); refreshStock(); };

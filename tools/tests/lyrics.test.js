@@ -45,6 +45,6 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.evaluate(() => (computeOutbox(), OUTBOX.lyricsAll === true)), "Do all in the next run puts lyricsAll in the note");
   ok(/Run now/.test(await page.locator("#main").innerText()), "…and says how to start the run right away");
   await page.evaluate(() => { S.gen.listen.find(x => x.id === "Az").type = "talk"; computeOutbox(); });
-  ok(await page.evaluate(() => !OUTBOX.lyricsAll && !S.lyrAll), "the flag clears itself once nothing is waiting");
+  ok(await page.evaluate(() => !OUTBOX.lyricsAll && !lyrAllOn()), "the flag clears itself once nothing is waiting");
   await b.close(); console.log(fails ? fails + " FAILED" : "ALL PASSED"); process.exit(fails ? 1 : 0);
 })();
