@@ -4630,8 +4630,7 @@ function renderMe(main) {
 <br><br>合并只会添加，不会删除任何东西；代码不包括音频和钥匙。<br>Merging only adds, never deletes; a code carries no audio or keys.</p>
     <p class="small">上次导出 Last copied: <b>${ago(S.lastExport)}</b> · 上次合并 Last merged in: <b>${ago(S.lastImport)}</b></p>
     <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste & merge</button></div><div id="xio"></div>
-    ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
-    <p class="small muted"><b>iPhone / iPad:</b> add this page to your home screen and always open it from there. Paste codes inside the home-screen app, not a Safari tab: the two keep separate data, and Safari tabs lose their data after 7 days unused.</p>` : ""}</div>`;
+    ${!HOSTED ? `<p class="small muted">iPhone：请总是从主屏幕图标打开，Safari 标签页的数据是分开的。· On iPhone, always open it from the home-screen icon: a Safari tab keeps separate data.${PERSISTED !== true && !(COL && COL.gh) ? "<br>还没连 GitHub，浏览器也没答应保留数据：偶尔导出一份代码当备份。· Not synced to GitHub and this browser hasn't promised to keep the data: copy a code now and then as a backup." : ""}</p>` : ""}</div>`;
   $("#replace").onclick = startPlacement;
   bindBank(); if ($("#provcard")) bindProv(); if ($("#ghcard")) bindGh(); bindR2Card();
   $("#onetap").onchange = e => { S.settings = Object.assign({}, S.settings, { oneTap: e.target.checked }); save(); };
