@@ -2894,7 +2894,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v47 · 11/8 23:25"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v48 · 11/8 23:37"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4625,7 +4625,10 @@ function renderMe(main) {
   ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
   ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad" data-genkey="lad" ${GEN.ladBusy ? "disabled" : ""}>生成 8 道新题 Generate</button><div id="st-lad" class="small muted">${GEN.lad || ""}</div></div>` : ""}
   <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
-    <p class="small muted">Carry progress between the online and offline versions: <b>Copy</b> on the one you used last, <b>Merge</b> on the other. Merging never deletes anything.</p>
+    <p class="small muted">${HOSTED
+      ? `这是 Claude 上的备用版本。要和主版本（GitHub 网页版）互通进度：在用过的那边点<b>导出</b>，在另一边点<b>导入合并</b>。<br>This is the backup version on Claude. To move progress between it and the main app (the GitHub Pages version), tap <b>Copy code</b> on the one you used last and <b>Paste & merge</b> on the other.`
+      : `你的设备已经通过 GitHub 自动同步，平时用不到这里。代码只在两种情况下有用：和 Claude 上的备用版本互通进度，或者手动留一份备份。在一边点<b>导出</b>，在另一边点<b>导入合并</b>。<br>Your devices already sync through GitHub, so you won't normally need this. A code is for moving progress to or from the backup version on Claude, or for keeping a backup by hand: <b>Copy code</b> on one side, <b>Paste & merge</b> on the other.`}
+<br><br>合并只会添加，不会删除任何东西；代码不包括音频和钥匙。<br>Merging only adds, never deletes; a code carries no audio or keys.</p>
     <p class="small">上次导出 Last copied: <b>${ago(S.lastExport)}</b> · 上次合并 Last merged in: <b>${ago(S.lastImport)}</b></p>
     <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste & merge</button></div><div id="xio"></div>
     ${!HOSTED ? `<p class="small muted">${PERSISTED === true ? "✓ 已请求浏览器保留数据 This browser has agreed not to auto-clear this app's data." : "This browser hasn't promised to keep this app's data. Copy a code now and then as a backup."}</p>
