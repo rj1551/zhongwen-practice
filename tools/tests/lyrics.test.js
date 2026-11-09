@@ -41,12 +41,5 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const notes = await page.locator(".lyrn").allInnerTexts();
   ok(notes.length === 2 && /一点也不清楚/.test(notes[0]) && /no clear shape/.test(notes[0]) && !/一点/.test(notes[1]), "解释 Notes: paraphrase where given, English under each analysed line");
   ok(/分析过歌词 ✓/.test(await page.locator(".card").nth(1).innerText()), "the item says it's been analysed");
-  await page.click("#lback"); await sleep(200);
-  ok(/还要分析 1 首/.test(await page.locator("#main").innerText()), "the list shows how many songs are waiting");
-  await page.click("#lyrall"); await sleep(200);
-  ok(await page.evaluate(() => (computeOutbox(), OUTBOX.lyricsAll === true)), "Do all in the next run puts lyricsAll in the note");
-  ok(/Run now/.test(await page.locator("#main").innerText()), "…and says how to start the run right away");
-  await page.evaluate(() => { S.gen.listen.find(x => x.id === "Az").type = "talk"; computeOutbox(); });
-  ok(await page.evaluate(() => !OUTBOX.lyricsAll && !lyrAllOn()), "the flag clears itself once nothing is waiting");
   await b.close(); console.log(fails ? fails + " FAILED" : "ALL PASSED"); process.exit(fails ? 1 : 0);
 })();

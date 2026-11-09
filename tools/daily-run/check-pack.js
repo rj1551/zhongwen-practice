@@ -113,7 +113,35 @@ const has = (s, frag) => norm(s).includes(norm(frag));
 let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
 const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
 // "held": requests (and hints) that tools/daily-run/inputs.js held back as suspicious, reported to the learner
-const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics"];
+const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics", "pyfix"];
+// "pyfix": corrections to the app's pinyin / word grouping for a song — only the spots, never the lines
+if (pk.pyfix !== undefined) {
+  const cap = ob.lyricsAll ? 100 : 5;
+  if (!Array.isArray(pk.pyfix)) problems.push("pyfix: must be a list");
+  else {
+    if (pk.pyfix.length > cap) problems.push(`pyfix: at most ${cap} songs this run`);
+    const songs = new Map();
+    try { for (const f of fs.readdirSync(path.join(DATA, "progress")).filter(f => f.startsWith("gen-listen-"))) for (const it of (readJson(path.join(DATA, "progress", f)).list || [])) songs.set(it.id, it); } catch (e) {}
+    pk.pyfix.forEach((a, n) => {
+      const at = `pyfix ${n + 1} ${a && a.rid}`, rq = a && reqs.get(a.rid);
+      if (!rq || rq.kind !== "pyfix") return problems.push(at + ": rid must be a pyfix request in outbox.json");
+      if (a.h !== rq.h) problems.push(at + `: "h" must be copied from the request (${rq.h})`);
+      const it = songs.get(rq.id); if (!it) return problems.push(at + ": song not found in progress/");
+      if (!Array.isArray(a.fixes)) return problems.push(at + ': needs "fixes" (a list; empty if nothing is wrong)');
+      if (a.fixes.length > 25) problems.push(at + ": at most 25 fixes per song (the most important ones)");
+      a.fixes.forEach((f, j) => {
+        const fa = `${at} fix ${j + 1}`;
+        if (!f || !Number.isInteger(f.l) || !it.cues[f.l]) return problems.push(fa + ': "l" must be a line index');
+        const w = Array.from(String(f.w || "")); if (w.length < 1 || w.length > 4) return problems.push(fa + ': "w" must be the 1–4 characters at that spot');
+        if (!Number.isInteger(f.at) || Array.from(String(it.cues[f.l][1])).slice(f.at, f.at + w.length).join("") !== f.w) problems.push(fa + `: "w" (${f.w}) isn't at position ${f.at} of line ${f.l} (positions count characters from 0, in the line's own script)`);
+        if (f.py != null && (typeof f.py !== "string" || f.py.length > 40)) problems.push(fa + ': "py" must be short pinyin');
+        if (f.split != null && (!Array.isArray(f.split) || !f.split.every(x => Number.isInteger(x) && x > 0) || f.split.reduce((p, q) => p + q, 0) !== w.length)) problems.push(fa + ': "split" must be lengths adding up to w');
+        if (f.gl != null && (typeof f.gl !== "string" || f.gl.length > 80)) problems.push(fa + ': "gl" must be a few words');
+        if (f.py == null && f.split == null && f.gl == null) problems.push(fa + ": nothing to fix (needs py, split or gl)");
+      });
+    });
+  }
+}
 // "lyrics": Claude's analysis of a song's lyrics (requests kind "lyrics", rid y:<id>, h = hash of the lines)
 if (pk.lyrics !== undefined) {
   const cap = ob.lyricsAll ? 100 : 5;

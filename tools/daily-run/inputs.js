@@ -36,7 +36,7 @@ const SUSPECT = [
 const suspect = s => SUSPECT.find(r => r.test(s));
 const held = [];
 const hold = (rid, why) => held.push({ rid: str(rid, 90), why });
-const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, lyrics: /^y:[\w.-]{1,60}$/ };
+const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, lyrics: /^y:[\w.-]{1,60}$/, pyfix: /^f:[\w.-]{1,60}$/ };
 const GENRES = ["xhs", "news", "book", "travel"];
 
 const o = readJson("outbox.json");
@@ -76,6 +76,16 @@ for (const r of Array.isArray(o.requests) ? o.requests.slice(0, 400) : []) {
   let q;
   if (kind === "sentence") q = { rid, kind, w: str(r.w, 20), py: str(r.py, 60), gl: str(r.gl, 160) };
   else if (kind === "passage") q = { rid, kind, genre: oneOf(r.genre, GENRES), topic: str(r.topic, 80) };
+  else if (kind === "pyfix") {
+    const id = str(r.id, 60), h = str(r.h, 12), auto = strs(r.auto, 300, 1500);
+    if (rid !== "f:" + id || !/^[a-z0-9]{1,12}$/.test(h)) { hold(rid, "request doesn't match its id"); continue; }
+    const it = findItem("gen-listen-", id);
+    if (!it || !Array.isArray(it.cues)) { hold(rid, "the song wasn't found"); continue; }
+    const lines = it.cues.slice(0, 300).map(c => Array.isArray(c) ? str(c[1], 200) : "");
+    if (auto.length !== lines.length) { hold(rid, "the app's pinyin doesn't match the song's lines"); continue; }
+    texts[rid] = { kind: "pyfix", title: str(it.title, 60), lines, auto };
+    q = { rid, kind, id, h };
+  }
   else if (kind === "lyrics") { hold(rid, "lyric analysis is switched off (it would reproduce the lyrics); nothing was sent to the run"); continue; }
   else if (false) {
     const id = str(r.id, 60), h = str(r.h, 12);

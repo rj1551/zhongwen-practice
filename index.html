@@ -739,7 +739,7 @@ function mergeSettings(m, o) {
    an edit stamps its group in it.uf[group] (touch), so a rename on one device and a timing fix on the other both
    survive. Groups not stamped on either side come from the copy changed last (it.u), as before. */
 const FIELD_GROUPS = { title: ["title"], tags: ["tags"], type: ["type", "typeMan"], timing: ["fix", "tm", "tap"],
-  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras"], lyr: ["lyr"], cloud: ["r2", "r2want", "r2gone", "r2big"] };
+  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"] };
 function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1); const uf = x.uf = Object.assign({}, x.uf); for (const g of groups) uf[g] = x.u; return x; }
 function mergeGenItem(a, b) {
   const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
@@ -3480,24 +3480,86 @@ function lyrHash(it) { let h = 5381; const s = (it.cues || []).map(c => c[1]).jo
 const lyrOk = it => !!(it.lyr && it.lyr.h === lyrHash(it) && Array.isArray(it.lyr.lines));
 const lyrWanted = it => LYR_REQUESTS && itemType(it) === "song" && (it.cues || []).length > 0 && !lyrOk(it);
 function lyrLine(it, i) { if (!lyrOk(it)) return null; const L = it.lyr.lines[i]; return L && Array.isArray(L.w) && L.w.map(x => x[0]).join("") === it.cues[i][1] ? L : null; }
-function lyrGl(it) { const g = {}; if (!lyrOk(it)) return g; for (const L of it.lyr.lines) for (const x of (L && L.w) || []) if (x[1] && (x[2] || x[3])) g[toSimp(x[0])] = [x[1], x[2] || ""]; return g; }
-function lineToks(it, i) {
+function lyrGl(it) { const g = {};
+  if (pyfOk(it)) for (const f of it.pyf.fixes) { const parts = Array.isArray(f.split) ? f.split : [Array.from(f.w).length]; if (parts.length === 1 && f.py) g[toSimp(f.w)] = [f.py, f.gl || ""]; }
+  if (!lyrOk(it)) return g; for (const L of it.lyr.lines) for (const x of (L && L.w) || []) if (x[1] && (x[2] || x[3])) g[toSimp(x[0])] = [x[1], x[2] || ""]; return g; }
+/* ---- Claude's pinyin check (2026-11-09; learner's idea after the full analysis was declined): Claude reads a song's
+   lines and the pinyin / word grouping the app shows, and sends back ONLY the spots that are wrong, at most 25 per
+   song: {l: line, at: character position, w: the 1–4 characters there, py?: reading as sung ("wǒ děng" when split),
+   split?: [lengths] (a different word grouping), gl?: a few words of meaning when the dictionary's sense misleads}.
+   Never the lines themselves. Stored as it.pyf = {h (lyrHash), fixes, t}; a fix whose w doesn't match its spot is
+   ignored. Requests are derived (rid f:<id>), 5 songs a night or all with "Do all in the next run". */
+const PYFIX_PER_RUN = 5, PYFIX_MAX = 25;
+const pyfOk = it => !!(it.pyf && it.pyf.h === lyrHash(it) && Array.isArray(it.pyf.fixes));
+const pyfWanted = it => itemType(it) === "song" && (it.cues || []).length > 0 && !pyfOk(it);
+function pyfFor(it, i) { return pyfOk(it) ? it.pyf.fixes.filter(f => f.l === i && Array.from(it.cues[i][1]).slice(f.at, f.at + Array.from(f.w).length).join("") === f.w) : []; }
+// re-split a line's words where Claude says the grouping is wrong, and give those spots Claude's reading / meaning
+function applyPyfix(it, i, toks) {
+  const F = pyfFor(it, i); if (!F.length) return toks;
+  const sA = Array.from(toks.map(t => t.s).join("")), dA = Array.from(toks.map(t => t.d).join(""));
+  const bounds = new Set([0, sA.length]); let pos = 0; for (const t of toks) { pos += Array.from(t.s).length; bounds.add(pos); }
+  const start = new Map();
+  for (const f of F) {
+    const len = Array.from(f.w).length, parts = Array.isArray(f.split) && f.split.reduce((a, b) => a + b, 0) === len ? f.split : [len];
+    for (let k = f.at + 1; k < f.at + len; k++) bounds.delete(k);
+    let p = f.at; bounds.add(p); const pys = String(f.py || "").trim().split(/\s+/).filter(Boolean);
+    parts.forEach((n, j) => { start.set(p, { py: pys.length === parts.length ? pys[j] : parts.length === 1 ? (f.py || "") : "", gl: parts.length === 1 ? (f.gl || "") : "", x: true }); p += n; bounds.add(p); });
+  }
+  const b = [...bounds].sort((x, y) => x - y), out = [];
+  for (let j = 0; j + 1 < b.length; j++) { const a0 = b[j], a1 = b[j + 1]; if (a1 <= a0) continue; const t = { s: sA.slice(a0, a1).join(""), d: dA.slice(a0, a1).join("") }; const fx = start.get(a0); if (fx) Object.assign(t, fx.py ? { py: fx.py } : {}, fx.gl ? { gl: fx.gl } : {}, { x: true }); out.push(t); }
+  return out;
+}
+// 一 and 不 change tone in speech and singing; the dictionary always says yī / bù. Applied to the pinyin shown.
+const TONE_MARKS = ["āēīōūǖ", "áéíóúǘ", "ǎěǐǒǔǚ", "àèìòùǜ"];
+const pyTone = py => { for (const ch of String(py || "")) for (let k = 0; k < 4; k++) if (TONE_MARKS[k].includes(ch)) return k + 1; return 5; };
+const NUMC = "〇零一二三四五六七八九十百千万亿两第";
+function sandhi(toks, pys) {
+  const chars = Array.from(toks.map(t => t.s).join("")); let pos = 0;
+  return pys.map((py, ti) => {
+    const t = toks[ti], n = Array.from(t.s).length, at = pos; pos += n;
+    if (!py || t.x) return py;
+    const first = Array.from(t.s)[0], prev = chars[at - 1], next = chars[at + 1];
+    const m = first === "不" && /^bù/.test(py) ? "bù" : first === "一" && /^yī/.test(py) ? "yī" : null; if (!m) return py;
+    let nt; if (n > 1) nt = pyTone(py.slice(m.length)); else { const nx = toks[ti + 1]; nt = nx && !Array.from(nx.s).every(isPunct) ? pyTone(pys[ti + 1] || "") : 0; }
+    if (m === "yī" && n === 1 && prev && prev === next) return "yi" + py.slice(2); // 看一看: light, between a doubled verb
+    if (!nt || nt === 5) return py;
+    if (m === "bù") return nt === 4 ? "bú" + py.slice(2) : py;
+    if ((prev && NUMC.includes(prev)) || (next && NUMC.includes(next)) || /[0-9]/.test((prev || "") + (next || ""))) return py; // counting, dates, 第一
+    return (nt === 4 ? "yí" : "yì") + py.slice(2);
+  });
+}
+function lineToks(it, i, raw0) {
   const LL = lyrLine(it, i), tr0 = cuePref().tr;
   if (LL) return LL.w.map(x => { const s = toSimp(x[0]); return { s, d: tr0 ? (x[0] !== s ? x[0] : toTrad(s)) : s, py: x[1] || "", gl: x[2] || "", x: !!x[3] }; });
   const raw = it.cues[i][1], simp = toSimp(raw), toks = segmentText(simp, it.gl || {}), tr = cuePref().tr;
   const ra = Array.from(raw), same = Array.from(simp).length === ra.length; let at = 0;
-  return toks.map(s => {
+  const out = toks.map(s => {
     const n = Array.from(s).length, orig = same ? ra.slice(at, at + n).join("") : s; at += n;
     return { s, d: tr ? (orig !== s ? orig : toTrad(s)) : s };
   });
+  return raw0 ? out : applyPyfix(it, i, out);
+}
+// pinyin for a line's words: Claude's fix, else the dictionary (whole word, else character by character), then 一/不
+function linePys(it, toks) {
+  const pys = toks.map(t => {
+    if (Array.from(t.s).every(isPunct) || !t.s.trim()) return "";
+    if (t.py) return t.py;
+    const L = lookup(t.s, it.gl || {}); if (L && L.py) return L.py;
+    if (Array.from(t.s).length > 1) { const ps = Array.from(t.s).map(c => { const x = lookup(c, it.gl || {}); return x && x.py; }); if (ps.every(Boolean)) return ps.join(""); }
+    return "";
+  });
+  return sandhi(toks, pys);
+}
+// what the app shows for a line, for Claude to check: "我[wǒ] 等的[děngde] …" (punctuation as is)
+function autoLine(it, i) { // in the line's own characters, so Claude's positions match the lines it reads
+  const toks = lineToks(it, i, true), pys = linePys(it, toks), raw = Array.from(it.cues[i][1]); let at = 0;
+  return toks.map((t, k) => { const n = Array.from(t.s).length, w = raw.slice(at, at + n).join("") || t.d; at += n; return pys[k] ? `${w}[${pys[k]}]` : w; }).join(" ");
 }
 function lineHtml(it, i, toks, key, looked) {
-  const py = cuePref().py;
+  const py = cuePref().py, pys = py ? linePys(it, toks) : [];
   return toks.map((t, ti) => {
     if (Array.from(t.s).every(isPunct) || /^\p{Extended_Pictographic}+$/u.test(t.s) || !t.s.trim()) return esc(t.d);
-    const k = key + ":" + ti, L = py && !t.py ? lookup(t.s, it.gl || {}) : null;
-    let pyx = py && (t.py || (L && L.py));
-    if (py && !pyx && Array.from(t.s).length > 1) { const ps = Array.from(t.s).map(c => { const x = lookup(c, it.gl || {}); return x && x.py; }); if (ps.every(Boolean)) pyx = ps.join(""); }
+    const k = key + ":" + ti, pyx = py && pys[ti];
     const inner = pyx ? `<ruby>${esc(t.d)}<rt>${esc(pyx)}</rt></ruby>` : esc(t.d);
     return `<span class="tk ${looked && looked.has(k) ? "looked" : ""} ${t.x ? "tricky" : ""}" data-k="${k}">${inner}</span>`;
   }).join("");
@@ -3587,7 +3649,7 @@ function renderListen(main) {
   const list = all.filter(it => LFILT === "all" || (LFILT === "song") === (itemType(it) === "song"));
   main.innerHTML = `<div class="top"><div><h1>听力</h1><p class="date">Native audio: a file on this phone, or a link to Bilibili, a podcast app, YouTube…</p></div></div>
     <button class="btn wide" id="ladd">+ 添加 Add audio</button>
-    ${lyrBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 还要分析 ${lyrBacklog().length} 首歌的歌词（每晚 ${LYR_PER_RUN} 首）· ${lyrBacklog().length} song${lyrBacklog().length > 1 ? "s" : ""} waiting for Claude's lyric analysis (${LYR_PER_RUN} a night)${lyrAllOn() ? `<br><b>✓ 下次运行一次做完 · The next run does them all.</b> 要马上开始，在 Claude 的定时任务 “Zhongwen daily stock run” 里点 Run now · To start now, open the scheduled task in Claude and tap Run now.<div class="row" style="margin-top:6px"><button class="btn ghost" id="lyrundo">撤销 · Undo (back to ${LYR_PER_RUN} a night)</button></div>` : `<div class="row" style="margin-top:6px"><button class="btn soft" id="lyrall">下次一次做完 · Do all in the next run</button></div>`}</div>` : ""}
+    ${pyfBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 还要检查 ${pyfBacklog().length} 首歌的拼音和分词（每晚 ${PYFIX_PER_RUN} 首）· ${pyfBacklog().length} song${pyfBacklog().length > 1 ? "s" : ""} waiting for Claude to check the pinyin and word grouping (${PYFIX_PER_RUN} a night)${lyrAllOn() ? `<br><b>✓ 下次运行一次做完 · The next run does them all.</b> 要马上开始，在 Claude 的定时任务 “Zhongwen daily stock run” 里点 Run now · To start now, open the scheduled task in Claude and tap Run now.<div class="row" style="margin-top:6px"><button class="btn ghost" id="lyrundo">撤销 · Undo (back to ${PYFIX_PER_RUN} a night)</button></div>` : `<div class="row" style="margin-top:6px"><button class="btn soft" id="lyrall">下次一次做完 · Do all in the next run</button></div>`}</div>` : ""}
     ${plSongs().length && LFILT !== "talk" ? `<div class="row" style="gap:6px"><button class="btn soft" id="plall" style="flex:1">▶ 连播全部歌 · Play all songs (${plSongs().length})</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf0">🔀 随机 Shuffle</button></div>` : ""}
     ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
     <div id="r2list"></div>
@@ -3602,8 +3664,8 @@ function renderListen(main) {
   });
   $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
   const pa = $("#plall", main); if (pa) pa.onclick = () => plStart();
-  const la = $("#lyrall", main); if (la) la.onclick = () => { S.lyrAll = { on: true, t: now() }; save(); outboxSoon(true); toast("好的：下次运行把歌词全部分析完 · The next run will do all of them", 3500); render(); };
-  const lu = $("#lyrundo", main); if (lu) lu.onclick = () => { S.lyrAll = { on: false, t: now() }; save(); outboxSoon(true); toast(`撤销了：还是每晚 ${LYR_PER_RUN} 首 · Undone: ${LYR_PER_RUN} a night`, 3000); render(); };
+  const la = $("#lyrall", main); if (la) la.onclick = () => { S.lyrAll = { on: true, t: now() }; save(); outboxSoon(true); toast("好的：下次运行把所有歌的拼音都检查完 · The next run will check all of them", 3500); render(); };
+  const lu = $("#lyrundo", main); if (lu) lu.onclick = () => { S.lyrAll = { on: false, t: now() }; save(); outboxSoon(true); toast(`撤销了：还是每晚 ${PYFIX_PER_RUN} 首 · Undone: ${PYFIX_PER_RUN} a night`, 3000); render(); };
   const ps = $("#plshuf0", main); if (ps) ps.onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} render(); };
   // songs with timings open in Follow; everything else starts with the text hidden (as before)
   $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); if (PL) { const j = PL.ids.indexOf(b.dataset.l); if (j >= 0) PL.i = j; else PL = null; } LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
@@ -3865,6 +3927,7 @@ function renderListenItem(main, it) {
         : `${!hasTr ? `<span class="small muted">没有文字：只有播放${song ? "" : "和“没跟上”记录"}。 No transcript yet: player${song ? "" : " and \"lost it\" marks"} only.</span>` : ""}<button class="btn soft" id="ltredit">${hasTr ? (song ? "换歌词 Try other lyrics (LRCLIB or a file)" : "换文字 Replace transcript / lyrics") : "加文字 Add transcript / lyrics"}</button>
           ${(it.trPrev || []).length ? `<div class="stack" style="gap:4px">${it.trLabel ? `<span class="small muted">现在用的 Now using: ${esc(it.trLabel)}</span>` : ""}<span class="small">之前的${song ? "歌词" : "文字"} · Earlier versions (switching keeps the current one here too):</span>${it.trPrev.map((v, k) => `<button class="btn ghost" data-trv="${k}" style="text-align:left;justify-content:flex-start">↩ ${esc(v.label || "之前的 Earlier")} <span class="small muted">· ${v.cues.length} 行${v.fix ? " · 有你的时间调整 your timing fixes" : ""}</span></button>`).join("")}</div>` : ""}`}
       <button class="tagc" id="lren" style="align-self:flex-start">✎ 改名 Rename</button>
+      ${song && hasTr ? `<span class="small muted">${pyfOk(it) ? `🤖 Claude 检查过拼音和分词 ✓${it.pyf.fixes.length ? ` · 改了 ${it.pyf.fixes.length} 处（虚线下划线）· ${it.pyf.fixes.length} fix${it.pyf.fixes.length > 1 ? "es" : ""} (dotted underline)` : " · 没发现问题 nothing to fix"}` : `🤖 等 Claude 检查拼音和分词（每晚 ${PYFIX_PER_RUN} 首）· Waiting for Claude to check the pinyin and word grouping`}</span>` : ""}
       ${song && hasTr && (LYR_REQUESTS || lyrOk(it)) ? `<span class="small muted">${lyrOk(it) ? `🤖 Claude 分析过歌词 ✓ · Lyrics analysed: words, pinyin as sung, 解释 Notes${(it.lyr.lines || []).some(l => l === null) ? " (a few lines use the dictionary)" : ""}` : `🤖 等 Claude 分析歌词（下次运行，每晚 ${LYR_PER_RUN} 首）· Waiting for Claude to analyse the lyrics (next run, ${LYR_PER_RUN} songs a night)`}</span>` : ""}
       ${tagInput("ltags", (it.tags || []).join(" "))}
       <div id="lqs" class="small muted"></div>
@@ -3936,7 +3999,7 @@ function renderListenItem(main, it) {
       const total = S.gen.listen.reduce((a, x) => a + (x === it ? 0 : cueChars(x.cues)), 0);
       if (total + n > LISTEN_TR_TOTAL) return err(`听力文字总量到上限了 · Transcripts are at their limit (${LISTEN_TR_TOTAL} characters in all). Delete an old item first.`);
       if (trKeepable(it)) it.trPrev = [trVersion(it), ...(it.trPrev || [])].slice(0, TR_VERSIONS);
-      it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs", "fix", "lyr"]) delete it[k];
+      it.cues = cues; for (const k of ["qs", "gl", "qcut", "tm", "tap", "secs", "fix", "lyr", "pyf"]) delete it[k];
       it.trLabel = f.srcLabel || "粘贴的 Pasted";
       if (!it.typeMan) it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: it.dur });
       touch(it, "text", "timing", "lyr"); save(); outboxSoon(true); LST.tundo = []; LST.sel = null;
@@ -4004,12 +4067,12 @@ function mediaMeta(it) {
    3; only texts up to 8,000 characters, i.e. songs and short clips). Switching swaps them, so nothing is lost. */
 const TR_VERSIONS = 3, TR_KEEP_MAX = 8000;
 const trKeepable = it => (it.cues || []).length > 0 && cueChars(it.cues) <= TR_KEEP_MAX;
-function trVersion(it) { const v = { cues: it.cues, label: it.trLabel || "之前的 Earlier", t: now() }; for (const k of ["fix", "tm", "qs", "gl", "secs", "lyr"]) if (it[k]) v[k] = it[k]; return v; }
+function trVersion(it) { const v = { cues: it.cues, label: it.trLabel || "之前的 Earlier", t: now() }; for (const k of ["fix", "tm", "qs", "gl", "secs", "lyr", "pyf"]) if (it[k]) v[k] = it[k]; return v; }
 function trSwitch(it, k) {
   const v = (it.trPrev || [])[k]; if (!v) return;
   const cur = trKeepable(it) ? trVersion(it) : null, rest = it.trPrev.filter((x, j) => j !== k);
-  for (const f of ["fix", "tm", "qs", "gl", "secs", "tap", "qcut", "lyr"]) delete it[f];
-  it.cues = v.cues; it.trLabel = v.label; for (const f of ["fix", "tm", "qs", "gl", "secs", "lyr"]) if (v[f]) it[f] = v[f];
+  for (const f of ["fix", "tm", "qs", "gl", "secs", "tap", "qcut", "lyr", "pyf"]) delete it[f];
+  it.cues = v.cues; it.trLabel = v.label; for (const f of ["fix", "tm", "qs", "gl", "secs", "lyr", "pyf"]) if (v[f]) it[f] = v[f];
   it.trPrev = (cur ? [cur, ...rest] : rest).slice(0, TR_VERSIONS); if (!it.trPrev.length) delete it.trPrev;
   touch(it, "text", "timing", "lyr"); save(); outboxSoon(true);
 }
@@ -5104,8 +5167,15 @@ function outboxRequests() {
   // songs whose current lyrics have no analysis yet, newest first (the run does LYR_PER_RUN a night, or all of
   // them when the note's lyricsAll is set); the run reads the lines from the progress files by id
   for (const it of lyrBacklog()) out.push({ rid: "y:" + it.id, kind: "lyrics", id: it.id, h: lyrHash(it) });
+  const pb = pyfBacklog();
+  if (pb.length && (!CED || !ZHC)) { if (!CED) loadCedict().then(m => { if (m) outboxSoon(true); }); if (!ZHC) loadZhc().then(() => outboxSoon(true)).catch(() => {}); } // ask once the full dictionary and 简/繁 table are here (many lyrics are traditional)
+  else for (const it of pb.slice(0, lyrAllOn() ? 100 : PYFIX_PER_RUN)) out.push({ rid: "f:" + it.id, kind: "pyfix", id: it.id, h: lyrHash(it), auto: autoLines(it) });
   return out;
 }
+// the app's pinyin per line for the check, cached per lyrics version (the note is recomputed after every save)
+const AUTO_PY = new Map();
+function autoLines(it) { const k = it.id + ":" + lyrHash(it) + ":" + (CED ? 1 : 0) + (ZHC ? 1 : 0) + ":" + Object.keys(it.gl || {}).length; const hit = AUTO_PY.get(it.id); if (hit && hit.k === k) return hit.v; const v = it.cues.map((c, i) => autoLine(it, i)); AUTO_PY.set(it.id, { k, v }); return v; }
+const pyfBacklog = () => (S.gen.listen || []).filter(pyfWanted).sort((a, b) => (b.t || 0) - (a.t || 0));
 const lyrAllOn = () => !!(S.lyrAll && (S.lyrAll === true || typeof S.lyrAll === "number" || S.lyrAll.on));
 const lyrBacklog = () => (S.gen.listen || []).filter(lyrWanted).sort((a, b) => (b.t || 0) - (a.t || 0));
 // answers in a pack: sentences {word: "…" | {s, py, gl}}, questions [{rid, qs, gl, en, paras}], regrades [{rid, score, chunk, fixed, notes}]
@@ -5117,6 +5187,23 @@ function applyAnswers(pk, r) {
     if (!x || typeof x.s !== "string" || !x.s.includes(w)) { r.bad++; continue; }
     cur.s = x.s; cur.needS = false; cur.sAI = true; r.ws++;
     if (!cur.py && x.py) cur.py = String(x.py); if (!cur.gl && x.gl) cur.gl = String(x.gl);
+  }
+  r.pf = 0;
+  for (const a of Array.isArray(pk.pyfix) ? pk.pyfix.slice(0, 100) : []) {
+    const m = String(a && a.rid || "").match(/^f:(.+)$/), it = m && (S.gen.listen || []).find(x => x.id === m[1]);
+    if (!it || !Array.isArray(a.fixes)) { r.bad++; continue; }
+    if (a.h !== lyrHash(it)) continue; // the lyrics changed since: the next run asks again
+    const fixes = [];
+    for (const f of a.fixes.slice(0, PYFIX_MAX)) {
+      if (!f || !Number.isInteger(f.l) || !Number.isInteger(f.at) || typeof f.w !== "string" || !it.cues[f.l]) continue;
+      const w = Array.from(f.w); if (w.length < 1 || w.length > 4 || Array.from(it.cues[f.l][1]).slice(f.at, f.at + w.length).join("") !== f.w) continue;
+      const x = { l: f.l, at: f.at, w: f.w };
+      if (typeof f.py === "string" && f.py.trim()) x.py = f.py.trim().slice(0, 40);
+      if (Array.isArray(f.split) && f.split.every(n => Number.isInteger(n) && n > 0) && f.split.reduce((p, q) => p + q, 0) === w.length) x.split = f.split;
+      if (typeof f.gl === "string" && f.gl.trim()) x.gl = f.gl.trim().slice(0, 80);
+      if (x.py || x.split || x.gl) fixes.push(x);
+    }
+    it.pyf = { h: a.h, fixes, t: now() }; touch(it, "lyr"); r.pf++;
   }
   r.ly = 0;
   for (const a of Array.isArray(pk.lyrics) ? pk.lyrics.slice(0, 100) : []) {
@@ -5285,11 +5372,11 @@ function applyPack(pk, src) {
     S.heldLog = [{ rid: h.rid.slice(0, 90), why: String(h.why || "").slice(0, 200), t: now(), pack: pk.id }].concat(S.heldLog || []).slice(0, 60);
   }
   S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
-  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
+  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, pf: r.pf, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.pf ? `🎵 ${r.pf} 首歌的拼音检查好了 · pinyin checked for ${r.pf} song${r.pf > 1 ? "s" : ""}` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
@@ -5335,7 +5422,7 @@ function computeOutbox() {
     room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
     reading: { perDay: readPerDay(), genres: readGenres() || "auto" },
     hints: genHints(), requests: outboxRequests().concat(checkRequests()), packsDone: (S.packsDone || []).slice(-60) };
-  if (lyrAllOn() && lyrBacklog().length) OUTBOX.lyricsAll = true; // "do all songs in the next run"
+  if (lyrAllOn() && (lyrBacklog().length || pyfBacklog().length)) OUTBOX.lyricsAll = true; // "do all songs in the next run"
   else if (lyrAllOn()) S.lyrAll = { on: false, t: now() };
   OUTBOX_AT = now(); OUTBOX_DIRTY = true;
   return OUTBOX;
