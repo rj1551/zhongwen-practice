@@ -113,7 +113,33 @@ const has = (s, frag) => norm(s).includes(norm(frag));
 let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
 const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
 // "held": requests (and hints) that tools/daily-run/inputs.js held back as suspicious, reported to the learner
-const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held"];
+const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics"];
+// "lyrics": Claude's analysis of a song's lyrics (requests kind "lyrics", rid y:<id>, h = hash of the lines)
+if (pk.lyrics !== undefined) {
+  const cap = ob.lyricsAll ? 100 : 5;
+  if (!Array.isArray(pk.lyrics)) problems.push("lyrics: must be a list");
+  else {
+    if (pk.lyrics.length > cap) problems.push(`lyrics: at most ${cap} songs this run${ob.lyricsAll ? "" : " (5 a night unless the note says lyricsAll)"}`);
+    const songs = new Map();
+    try { for (const f of fs.readdirSync(path.join(DATA, "progress")).filter(f => f.startsWith("gen-listen-"))) for (const it of (readJson(path.join(DATA, "progress", f)).list || [])) songs.set(it.id, it); } catch (e) {}
+    pk.lyrics.forEach((a, n) => {
+      const at = `lyrics ${n + 1} ${a && a.rid}`, rq = a && reqs.get(a.rid);
+      if (!rq || rq.kind !== "lyrics") return problems.push(at + ": rid must be a lyrics request in outbox.json");
+      if (a.h !== rq.h) problems.push(at + `: "h" must be copied from the request (${rq.h})`);
+      const it = songs.get(rq.id); if (!it) return problems.push(at + ": song not found in progress/");
+      if (!Array.isArray(a.lines) || a.lines.length !== it.cues.length) return problems.push(at + `: needs exactly one entry per line (${it.cues.length})`);
+      a.lines.forEach((L, i) => {
+        const want = String(it.cues[i][1]);
+        if (!L || !Array.isArray(L.w)) return problems.push(`${at} line ${i + 1}: needs "w"`);
+        const got = L.w.map(x => Array.isArray(x) ? String(x[0]) : "").join("");
+        if (got !== want) problems.push(`${at} line ${i + 1}: the words must spell the line exactly (spaces and punctuation as their own tokens): want ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+        L.w.forEach((x, j) => { if (!Array.isArray(x) || x.length < 2 || x.length > 4 || typeof x[1] !== "string" || (x[2] != null && typeof x[2] !== "string") || (x[3] != null && x[3] !== 1)) problems.push(`${at} line ${i + 1} word ${j + 1}: [text, pinyin, gloss?, 1 if tricky?]`); });
+        if (L.p != null && typeof L.p !== "string") problems.push(`${at} line ${i + 1}: "p" must be text`);
+        if (L.en != null && typeof L.en !== "string") problems.push(`${at} line ${i + 1}: "en" must be text`);
+      });
+    });
+  }
+}
 for (const k of Object.keys(pk)) if (!KNOWN_TOP.includes(k)) problems.push(`top level: unknown section "${k}"`);
 if (pk.held !== undefined) {
   if (!Array.isArray(pk.held) || pk.held.length > 50) problems.push('held: must be a list of at most 50 {"rid", "why"}');

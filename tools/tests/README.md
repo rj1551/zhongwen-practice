@@ -18,3 +18,4 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
 - `time.test.js` (2026-11-08): time log split into scheduled / extra / reading, per device, older days, the Progress 时间 card.
 - `held.test.js` (2026-11-08): requests the daily run held back as suspicious are closed and shown on the stock card.
 - Daily-run guards (no browser): `tools/daily-run/inputs.js` (checked, trimmed inputs; suspicious requests held) and `push-pack.sh` (pushes only packs/, after the check) — tried by hand on fake repos with injected text.
+- `lyrics.test.js` (2026-11-08): Claude's lyric analysis — requests, answers per lyrics version, word split / sung pinyin / tricky underline / 解释 Notes, do-all flag.

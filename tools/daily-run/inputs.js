@@ -36,7 +36,7 @@ const SUSPECT = [
 const suspect = s => SUSPECT.find(r => r.test(s));
 const held = [];
 const hold = (rid, why) => held.push({ rid: str(rid, 90), why });
-const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/ };
+const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, lyrics: /^y:[\w.-]{1,60}$/ };
 const GENRES = ["xhs", "news", "book", "travel"];
 
 const o = readJson("outbox.json");
@@ -48,6 +48,7 @@ const note = {
   covered: num(o.covered, 0, 1000), unreadPassages: num(o.unreadPassages, 0, 1000),
   short: { ladder: num((o.short || {}).ladder, 0, 1000), sen: num((o.short || {}).sen, 0, 1000), passages: num((o.short || {}).passages, 0, 100) },
   room: { ladder: num((o.room || {}).ladder, 0, 1000), sen: num((o.room || {}).sen, 0, 1000), passages: num((o.room || {}).passages, 0, 100) },
+  lyricsAll: o.lyricsAll === true,
   reading: { perDay: num((o.reading || {}).perDay, 0, 10), genres: Array.isArray((o.reading || {}).genres) ? o.reading.genres.filter(g => GENRES.includes(g)) : "auto" },
   hints: {}, packsDone: strs(o.packsDone, 80, 70).filter(x => /^[\w.-]{1,60}$/.test(x)),
 };
@@ -75,6 +76,14 @@ for (const r of Array.isArray(o.requests) ? o.requests.slice(0, 400) : []) {
   let q;
   if (kind === "sentence") q = { rid, kind, w: str(r.w, 20), py: str(r.py, 60), gl: str(r.gl, 160) };
   else if (kind === "passage") q = { rid, kind, genre: oneOf(r.genre, GENRES), topic: str(r.topic, 80) };
+  else if (kind === "lyrics") {
+    const id = str(r.id, 60), h = str(r.h, 12);
+    if (rid !== "y:" + id || !/^[a-z0-9]{1,12}$/.test(h)) { hold(rid, "request doesn't match its id"); continue; }
+    const it = findItem("gen-listen-", id);
+    if (!it || !Array.isArray(it.cues)) { hold(rid, "the song wasn't found"); continue; }
+    texts[rid] = { kind: "lyrics", title: str(it.title, 60), lines: it.cues.slice(0, 300).map(c => Array.isArray(c) ? str(c[1], 200) : "") };
+    q = { rid, kind, id, h };
+  }
   else if (kind === "regrade" || kind === "check") q = { rid, kind, drill: str(r.drill, 40), en: str(r.en, 300), ref: strs(r.ref, 8, 200), key: str(r.key, 30), answer: str(r.answer, 300), model: str(r.model, 60), modelScore: num(r.modelScore, 0, 3, null), modelChunk: oneOf(r.modelChunk, ["ok", "wrong", "missing"]) };
   else {
     const target = oneOf(r.target, ["mine", "listen"]), id = str(r.id, 60);
