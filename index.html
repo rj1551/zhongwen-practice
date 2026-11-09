@@ -200,6 +200,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .bar .t{height:10px;border-radius:99px;background:var(--line);overflow:hidden}
 .bar .t i{display:block;height:100%;background:var(--accent);border-radius:99px}
 .bar .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.tbars{display:flex;align-items:flex-end;gap:4px;height:150px;padding-top:6px} .tbars.dense{gap:2px}
+.tb{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
+.tcol{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:6px;overflow:hidden;background:color-mix(in srgb, var(--line) 35%, transparent)}
+.tcol i{display:block;width:100%}
+.tb .tv{font-size:11px;color:var(--muted);height:28px;line-height:1.2;text-align:center} .tbars.dense .tv{height:0} .tb .tl{font-size:11px;color:var(--muted);white-space:nowrap;height:14px}
+.tkey{display:flex;flex-wrap:wrap;gap:4px 12px} .tkey i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
 .week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;text-align:center;font-size:12px;color:var(--muted)}
 .week i{display:block;aspect-ratio:1;max-width:100%;border-radius:8px;background:var(--line);margin-bottom:4px}
 .stats3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -272,7 +278,7 @@ function save() {
   S.updatedAt = now();
   // trim
   for (const k in S.recent) if (S.recent[k].length > 40) S.recent[k] = S.recent[k].slice(-40);
-  const days = Object.keys(S.log).sort(); while (days.length > 120) delete S.log[days.shift()];
+  const days = Object.keys(S.log).sort(); while (days.length > LOG_DAYS) delete S.log[days.shift()];
   for (const k in GEN_CAP) if ((S.gen[k] || []).length > GEN_CAP[k]) S.gen[k] = S.gen[k].slice(-GEN_CAP[k]);
   const json = JSON.stringify(S);
   try { localStorage.setItem(LS_KEY, json); } catch (e) { LOCAL_FULL = true; }
@@ -740,7 +746,7 @@ function mergeStates(a, b) {
   }
   for (const d in o.log || {}) {
     const x = o.log[d], y = m.log[d];
-    m.log[d] = !y ? x : { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
+    m.log[d] = mergeLogDay(x, y);
   }
   const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
   // per item, the version changed last (it.u) wins, so a field set on one device (questions, cloud audio…) isn't lost
@@ -1091,7 +1097,69 @@ function skillVal(k) {
   return 0.4 * base + 0.6 * avg;
 }
 function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
-function logDay(sec, ok) { const k = dayKey(); const d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; d.n++; d.ok += ok ? 1 : 0; d.sec += Math.min(sec, 240); }
+/* ---- time log (2026-11-08). S.log[day] keeps totals {n, ok, sec} (read elsewhere) plus, since 2026-11-08:
+   by[device] = {n, ok, due, extra, rd, done}: seconds on scheduled exercises (reviews due, until 复习完了),
+   extra exercises (after it: new material), and reading (passages, own texts, re-reads); done = all reviews
+   finished that day. Per device so two devices on one day add up (the old merge kept the larger day). Older days
+   have only totals: shown as "earlier, not split". Listening isn't counted (yet). Kept ~2 years. */
+const LOG_DAYS = 800;
+function devId() { try { let d = localStorage.getItem("zwlgf:dev"); if (!d) { d = "d" + Math.random().toString(36).slice(2, 8); localStorage.setItem("zwlgf:dev", d); } return d; } catch (e) { return "d0"; } }
+const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0); } return { n, ok, sec }; };
+function logTotals(d) { const b = byTotal(d), o = d.old || { n: 0, ok: 0, sec: 0 }; d.n = o.n + b.n; d.ok = o.ok + b.ok; d.sec = o.sec + b.sec; return d; }
+function logDay(sec, ok, kind = "due") {
+  const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 };
+  if (!d.by) { d.old = { n: d.n || 0, ok: d.ok || 0, sec: d.sec || 0 }; d.by = {}; } // a day begun by older code
+  const v = d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 };
+  const f = kind === "read" ? "rd" : kind === "extra" ? "extra" : "due";
+  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" ? 900 : 240));
+  if (kind !== "read") { v.n++; v.ok += ok ? 1 : 0; }
+  logTotals(d);
+}
+function logDone() { const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; if (!d.by) { d.old = { n: d.n || 0, ok: d.ok || 0, sec: d.sec || 0 }; d.by = {}; } (d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 }).done = 1; logTotals(d); }
+function mergeLogDay(x, y) {
+  if (!x) return y; if (!y) return x;
+  if (!x.by && !y.by) return { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
+  const m = { by: {} };
+  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), done: (w.done || v.done) ? 1 : undefined }; }
+  // the part from before the split: a day from older code (no by) is its totals minus what's already split
+  const b = byTotal(m), legacy = z => z.by ? (z.old || { n: 0, ok: 0, sec: 0 }) : { n: Math.max(0, z.n - b.n), ok: Math.max(0, z.ok - b.ok), sec: Math.max(0, z.sec - b.sec) };
+  const lx = legacy(x), ly = legacy(y); m.old = { n: Math.max(lx.n, ly.n), ok: Math.max(lx.ok, ly.ok), sec: Math.max(lx.sec, ly.sec) };
+  return logTotals(m);
+}
+function daySplit(d) {
+  const r = { due: 0, extra: 0, rd: 0, old: 0, done: false };
+  if (!d) return r;
+  if (!d.by) { r.old = d.sec || 0; return r; }
+  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; if (v.done) r.done = true; }
+  r.old = (d.old || {}).sec || 0; return r;
+}
+const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时 ${m % 60 ? (m % 60) + " 分" : ""}`.trim(); };
+const fmtMinEn = s => { const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? " " + (m % 60) + " min" : ""}`; };
+let TRANGE = "7";
+const TRANGES = [["7", "7 天 days"], ["30", "30 天 days"], ["12w", "12 周 weeks"], ["all", "全部 All"]];
+function timeCardHtml() {
+  // buckets: days (7, 30), weeks (12w, Monday start) or months (all)
+  const B = [], add = (lab, keys, day) => B.push({ lab, keys, day });
+  if (TRANGE === "7" || TRANGE === "30") { const n = +TRANGE; for (let i = n - 1; i >= 0; i--) { const t = now() - i * DAY, dt = new Date(t); add(n === 7 ? "日一二三四五六"[dt.getDay()] : (i % 5 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : ""), [dayKey(t)], true); } }
+  else if (TRANGE === "12w") { const m0 = new Date(midnight(now())); const back = (m0.getDay() + 6) % 7; const mon = midnight(now()) - back * DAY; for (let w = 11; w >= 0; w--) { const s0 = mon - w * 7 * DAY, keys = []; for (let i = 0; i < 7; i++) keys.push(dayKey(s0 + i * DAY + 3 * 3600e3)); const dt = new Date(s0); add(w % 2 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : "", keys); } }
+  else { const ks = Object.keys(S.log || {}).sort(), first = ks.length ? new Date(ks[0] + "T12:00") : new Date(); const cur = new Date(); let y = first.getFullYear(), mo = first.getMonth(); const months = []; while (y < cur.getFullYear() || (y === cur.getFullYear() && mo <= cur.getMonth())) { months.push([y, mo]); mo++; if (mo > 11) { mo = 0; y++; } } months.slice(-24).forEach(([y, mo]) => { const pre = `${y}-${String(mo + 1).padStart(2, "0")}`; add(`${mo + 1}月`, ks.filter(k => k.startsWith(pre))); }); }
+  let T = { due: 0, extra: 0, rd: 0, old: 0 }, days = 0, doneDays = 0;
+  B.forEach(b => { b.s = { due: 0, extra: 0, rd: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of ["due", "extra", "rd", "old"]) b.s[f] += sp[f]; if (sp.due + sp.extra + sp.rd + sp.old > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = b.s.due + b.s.extra + b.s.rd + b.s.old; for (const f in T) T[f] += b.s[f]; });
+  const max = Math.max(60, ...B.map(b => b.tot)), all = T.due + T.extra + T.rd + T.old;
+  const seg = (v, c) => v ? `<i style="height:${v / max * 100}%;background:${c}"></i>` : "";
+  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", old: "var(--line)" };
+  const today = daySplit(S.log[dayKey()]);
+  return `<span class="label">时间 · Time spent</span>
+    <div class="row" style="gap:6px">${TRANGES.map(([k, l]) => `<button class="tagc ${TRANGE === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div>
+    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map(b => `<div class="tb" title="${esc(fmtMinEn(b.tot))}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.rd, C.rd)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 60 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
+    <div class="tkey small"><span><i style="background:${C.due}"></i>该复习的 Scheduled</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.rd}"></i>阅读 Reading</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
+    <div class="stack small" style="gap:4px">
+      <span><b>这段时间 In this period: ${fmtMin(all)}</b> · ${fmtMinEn(all)}${days ? ` · 练了 ${days} 天 on ${days} day${days > 1 ? "s" : ""} (avg ${fmtMinEn(all / days)})` : ""}</span>
+      <span>练习 Exercises <b>${fmtMinEn(T.due + T.extra)}</b> = 该复习的 scheduled ${fmtMinEn(T.due)} + 额外 extra ${fmtMinEn(T.extra)}${doneDays && TRANGE !== "all" ? ` · 复习做完 all reviews done on ${doneDays} day${doneDays > 1 ? "s" : ""}` : ""}</span>
+      <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
+      <span class="muted">今天 Today: 该复习的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 听力不算在内 Listening isn't counted.</span></div>`;
+}
+function bindTimeCard(scope) { $$("[data-tr]", scope).forEach(b => b.onclick = () => { TRANGE = b.dataset.tr; $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); }); }
 function startRung() { return skillVal("pick") >= 0.6 ? 2 : 1; }
 /* ============ FSRS (v23) ============
    Drills (lad) and word cards (ctx, bank) are scheduled by FSRS-6 with its default parameters (w below, as in the
@@ -1749,6 +1817,7 @@ function renderSession(main) {
     s.i++; render(); window.scrollTo(0, 0);
   });
   if (card.t === "div") {
+    s.pastDiv = true; logDone(); save(); // every review due today is done: from here on time counts as extra
     $("#slot").innerHTML = `<div class="card" id="cc"><span class="label">${card.none ? "今天没有要复习的 · Nothing due today" : "复习完了 · Reviews done"}</span>
       <h2>${card.none ? "今天没有要复习的" : "今天该复习的都完成了 ✓"}</h2>
       <p class="muted">${card.none ? "Nothing is due for review today." : "That's everything due for review today."} From here on it's new material (new sentences and drills) and the odd re-read. Keep going as long as you like; tap ■ whenever.</p></div>`;
@@ -1757,8 +1826,8 @@ function renderSession(main) {
   }
   const t0 = now();
   renderCard(card, $("#slot"), (r) => {
-    if (r.rr) { logDay(Math.min((now() - t0) / 1000, 900), true); return; } // re-read: time only
-    logDay((now() - t0) / 1000, r.ok);
+    if (r.rr) { logDay(Math.min((now() - t0) / 1000, 900), true, "read"); return; } // re-read: time only
+    logDay((now() - t0) / 1000, r.ok, s.pastDiv ? "extra" : "due");
     s.res[s.i] = r.ok;
     if (r.ok) { s.combo++; s.best = Math.max(s.best, s.combo); const c = $("#combo"); if (c && s.combo >= 2) { c.textContent = "连对 ×" + s.combo; c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); } }
     else s.combo = 0;
@@ -2889,7 +2958,7 @@ function passageQuiz(main, p) {
         S.reads[p.id] = { cpm, score, t: now(), looked: READ.looked.size };
         if (sec < 20 * 60 && !p.mine) pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
       } else { const r = S.reads[p.id]; r.re = (r.re || 0) + 1; r.lastCpm = cpm; }
-      logDay(Math.min(sec, 900), score >= 2); save();
+      logDay(Math.min(sec, 900), score >= 2, "read"); save();
       main.innerHTML = `<div class="card"><span class="label">${p.mine ? "读完 · Finished (your own texts don't count toward reading speed)" : first ? "读完 · Finished" : "重读 · Re-read (doesn't count toward reading speed)"}</span>
         <div class="stats3"><div class="stat"><b>${cpm}</b><span>字/分钟</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
         <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>
@@ -2926,7 +2995,7 @@ function finishReread(main, p) {
   const before = (r.rr || []).map(e => e[1]);
   if (!paused) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; }
   r.re = (r.re || 0) + 1; r.lastT = now();
-  logDay(Math.min(sec, 900), true); save();
+  logDay(Math.min(sec, 900), true, "read"); save();
   const gain = r.cpm ? Math.round((cpm / r.cpm - 1) * 100) : 0;
   const hist = [r.cpm, ...before, ...(paused ? [] : [cpm])];
   main.innerHTML = `<div class="card"><span class="label">重读 · Re-read</span>
@@ -3108,7 +3177,7 @@ function finishMine(main, p) {
   const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
   const sec = READ.timer.stop() / 1000, cpm = Math.round(n / (sec / 60));
   if (!S.reads[p.id]) S.reads[p.id] = { cpm, score: null, t: now(), looked: READ.looked.size, mine: true };
-  logDay(Math.min(sec, 900), true); save();
+  logDay(Math.min(sec, 900), true, "read"); save();
   main.innerHTML = `<div class="card"><span class="label">读完 · Finished</span>
     <div class="stats3"><div class="stat"><b>${sec > 20 * 60 ? "—" : cpm}</b><span>字/分钟</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div><div class="stat"><b>${p.np > 1 ? `${p.part + 1}／${p.np}` : "✓"}</b><span>${p.np > 1 ? "部分" : "读完"}</span></div></div>
     <p class="small muted">Your own texts don't count toward your reading-speed stat.</p>
@@ -4485,16 +4554,13 @@ function renderMe(main) {
   const started = ladIds.filter(id => S.items[id]).length;
   const fixed = [...CTX.keys()].filter(id => S.items[id] && S.items[id].s >= 7).length;
   const segRecent = S.recent.seg || [];
-  const week = [];
-  for (let i = 6; i >= 0; i--) { const t = now() - i * DAY; const d = S.log[dayKey(t)]; week.push({ lab: "日一二三四五六"[new Date(t).getDay()], m: d ? d.sec / 60 : 0 }); }
   const names = { ctx: "语境识词", news: "书面语", pick: "选自然", write: "自己写", speed: "阅读速度" };
   main.innerHTML = `<div class="top"><div><h1>进度</h1><p class="date">${esc(syncNote)}</p></div></div>
   <div class="card"><span class="label">能写出来的句型 · Production-ready</span>
     <div class="row" style="align-items:flex-end"><span class="big">${ready}</span><span class="muted">/ ${LADDER.size} · 在练 ${started}</span></div>
     <div class="mix" style="background:var(--line)"><i style="width:${LADDER.size ? ready / LADDER.size * 100 : 0}%;background:var(--accent)"></i></div>
     <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词记住一周以上 · leeches held 7+ days</span></div><div class="stat"><b>${Object.keys(S.bank).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
-  <div class="card"><span class="label">这周 · This week (minutes)</span>
-    <div class="week">${week.map(d => `<div><i style="background:${d.m ? `color-mix(in srgb, var(--accent) ${Math.min(100, 25 + d.m * 5)}%, var(--line))` : "var(--line)"}"></i>${d.lab}<br>${d.m ? Math.round(d.m) : ""}</div>`).join("")}</div></div>
+  <div class="card stack" id="timecard">${timeCardHtml()}</div>
   <div class="card"><span class="label">技能 · Skills</span>
     ${S.skills ? `<div class="bars">${Object.keys(names).map(k => `<div class="bar"><span>${names[k]}</span><span class="t"><i style="width:${pct(skillVal(k))}"></i></span><span class="v">${pct(skillVal(k))}</span></div>`).join("")}</div>` : `<p class="muted">还没测试 — take the placement test to fill these in.</p>`}
     <button class="btn ghost" id="replace">重新做水平测试 Retake placement test</button></div>
@@ -4530,6 +4596,7 @@ function renderMe(main) {
   if (HOSTED) bindStock(); else bindPackCard();
   bindRefit();
   bindTrashCard(main);
+  bindTimeCard(main);
 }
 /* ---------- saved words: newest 20, the rest behind "show all" (with search); add words; tags; export ---------- */
 const BANK_SHOW = 20;

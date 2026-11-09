@@ -15,3 +15,4 @@ How they were run (paths are hard-coded for the cloud sandbox; adjust if yours d
    `listen.test.js` (2026-11-07, 72 checks incl. the pinned player bar, Aa menu, line-by-line timing, songs vs talk; word popup outside tap; transcript size, 简/繁 both ways, pinyin, lookups from lyrics, no sideways scroll; LRCLIB match + order; fix timing; tap along; 20-minute sections; deleting that sticks + Recently deleted). `r2.test.js` now expects cloud audio to go only when a bin entry is deleted for good.
    Playwright is loaded from `/home/claude/.npm-global/lib/node_modules/playwright`.
 Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as in index.html.
+- `time.test.js` (2026-11-08): time log split into scheduled / extra / reading, per device, older days, the Progress 时间 card.
