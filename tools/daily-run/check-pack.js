@@ -112,6 +112,13 @@ const has = (s, frag) => norm(s).includes(norm(frag));
 // ---- answers to requests (4c) ----
 let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
 const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
+// "held": requests (and hints) that tools/daily-run/inputs.js held back as suspicious, reported to the learner
+const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held"];
+for (const k of Object.keys(pk)) if (!KNOWN_TOP.includes(k)) problems.push(`top level: unknown section "${k}"`);
+if (pk.held !== undefined) {
+  if (!Array.isArray(pk.held) || pk.held.length > 50) problems.push('held: must be a list of at most 50 {"rid", "why"}');
+  else pk.held.forEach((h, i) => { if (!h || typeof h.rid !== "string" || h.rid.length > 90 || typeof h.why !== "string" || h.why.length > 200) problems.push(`held ${i + 1}: needs "rid" (≤ 90 characters) and "why" (≤ 200)`); });
+}
 // misread structures: at most 2 parsing sentences each per pack (otherwise they bunch up)
 const pieces = z => String(z).split(/…|\.\.\./).map(norm).filter(Boolean);
 const senHas = (x, z) => { const t = norm(String(x.s || "").replace(/[|\/]/g, "")); let pos = 0; for (const pc of pieces(z)) { const i = t.indexOf(pc, pos); if (i < 0) return false; pos = i + pc.length; } return pieces(z).length > 0; };

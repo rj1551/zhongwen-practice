@@ -204,6 +204,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .tb{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
 .tcol{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:6px;overflow:hidden;background:color-mix(in srgb, var(--line) 35%, transparent)}
 .tcol i{display:block;width:100%}
+.tb{cursor:pointer} .tb.sel .tcol{box-shadow:0 0 0 2px var(--ink, #222)} .tb.sel .tl{color:var(--ink, inherit);font-weight:700}
+.tdet{padding:6px 10px;border-radius:10px;background:color-mix(in srgb, var(--line) 40%, transparent)}
 .tb .tv{font-size:11px;color:var(--muted);height:28px;line-height:1.2;text-align:center} .tbars.dense .tv{height:0} .tb .tl{font-size:11px;color:var(--muted);white-space:nowrap;height:14px}
 .tkey{display:flex;flex-wrap:wrap;gap:4px 12px} .tkey i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
 .week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;text-align:center;font-size:12px;color:var(--muted)}
@@ -763,6 +765,8 @@ function mergeStates(a, b) {
   for (const k of ["nudge", "ckSum"]) { const x = o[k], y = m[k]; if (x && (!y || (x.t || 0) > (y.t || 0))) m[k] = x; else if (x && y && x.t === y.t && x.seen) m[k] = x; }
   { const rd = new Set(m.reqDone); m.req = byId(m.req || [], o.req || [], "rid").filter(x => !rd.has(x.rid)); }
   m.packLog = byId(m.packLog || [], o.packLog || [], "id").sort((p, q) => q.t - p.t).slice(0, 20);
+  { const seen = new Set(); m.heldLog = [...(m.heldLog || []), ...(o.heldLog || [])].filter(h => { const k = h.rid + "|" + h.pack; return !seen.has(k) && seen.add(k); }).sort((p, q) => q.t - p.t).slice(0, 20); }
+  m.heldSeen = Math.max(m.heldSeen || 0, o.heldSeen || 0) || undefined;
   m.placementLog = byId(m.placementLog || [], o.placementLog || [], "t").sort((p, q) => p.t - q.t).slice(-3);
   m.pending = byId(m.pending || [], o.pending || [], "k");
   m.graded = byId(m.graded || [], o.graded || [], "k").sort((p, q) => q.t - p.t).slice(0, 20);
@@ -1135,7 +1139,7 @@ function daySplit(d) {
 }
 const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时 ${m % 60 ? (m % 60) + " 分" : ""}`.trim(); };
 const fmtMinEn = s => { const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? " " + (m % 60) + " min" : ""}`; };
-let TRANGE = "7";
+let TRANGE = "7", TSEL = null;
 const TRANGES = [["7", "7 天 days"], ["30", "30 天 days"], ["12w", "12 周 weeks"], ["all", "全部 All"]];
 function timeCardHtml() {
   // buckets: days (7, 30), weeks (12w, Monday start) or months (all)
@@ -1149,9 +1153,13 @@ function timeCardHtml() {
   const seg = (v, c) => v ? `<i style="height:${v / max * 100}%;background:${c}"></i>` : "";
   const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", old: "var(--line)" };
   const today = daySplit(S.log[dayKey()]);
+  if (TSEL == null || TSEL >= B.length) TSEL = B.length - 1;
+  const sb = B[TSEL], dl = sb.day ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 周${"日一二三四五六"[t.getDay()]}`; })() : TRANGE === "12w" ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 那周 week of`; })() : sb.lab;
+  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该复习的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
   return `<span class="label">时间 · Time spent</span>
     <div class="row" style="gap:6px">${TRANGES.map(([k, l]) => `<button class="tagc ${TRANGE === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div>
-    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map(b => `<div class="tb" title="${esc(fmtMinEn(b.tot))}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.rd, C.rd)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 60 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
+    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.rd, C.rd)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
+    ${detail}
     <div class="tkey small"><span><i style="background:${C.due}"></i>该复习的 Scheduled</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.rd}"></i>阅读 Reading</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
     <div class="stack small" style="gap:4px">
       <span><b>这段时间 In this period: ${fmtMin(all)}</b> · ${fmtMinEn(all)}${days ? ` · 练了 ${days} 天 on ${days} day${days > 1 ? "s" : ""} (avg ${fmtMinEn(all / days)})` : ""}</span>
@@ -1159,7 +1167,11 @@ function timeCardHtml() {
       <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
       <span class="muted">今天 Today: 该复习的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 听力不算在内 Listening isn't counted.</span></div>`;
 }
-function bindTimeCard(scope) { $$("[data-tr]", scope).forEach(b => b.onclick = () => { TRANGE = b.dataset.tr; $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); }); }
+function bindTimeCard(scope) {
+  const redraw = () => { $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); };
+  $$("[data-tr]", scope).forEach(b => b.onclick = () => { TRANGE = b.dataset.tr; TSEL = null; redraw(); });
+  $$("[data-tb]", scope).forEach(b => b.onclick = () => { TSEL = +b.dataset.tb; redraw(); });
+}
 function startRung() { return skillVal("pick") >= 0.6 ? 2 : 1; }
 /* ============ FSRS (v23) ============
    Drills (lad) and word cards (ctx, bank) are scheduled by FSRS-6 with its default parameters (w below, as in the
@@ -5156,12 +5168,20 @@ function applyPack(pk, src) {
     if (x.rid) doneReq(String(x.rid));
   });
   applyAnswers(pk, r);
+  // requests the daily run held back because their text read like instructions to an AI (tools/daily-run/inputs.js):
+  // closed, so they don't wait forever, and kept in S.heldLog for the learner to see (Progress → 其他 AI)
+  r.held = 0;
+  for (const h of Array.isArray(pk.held) ? pk.held.slice(0, 50) : []) {
+    if (!h || typeof h.rid !== "string") continue;
+    if ((S.req || []).some(x => x.rid === h.rid)) { doneReq(h.rid); r.held++; }
+    S.heldLog = [{ rid: h.rid.slice(0, 90), why: String(h.why || "").slice(0, 200), t: now(), pack: pk.id }].concat(S.heldLog || []).slice(0, 20);
+  }
   S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
   S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.held ? `⚠ Claude 没处理 ${r.held} 个请求（内容像是给 AI 的指令）· skipped ${r.held} request${r.held > 1 ? "s" : ""} whose text looked like instructions to an AI` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
@@ -5241,6 +5261,7 @@ function packCard() {
       <div class="row small" style="gap:6px;margin-top:6px">${sel("pk-g1", [["", "任何体裁 Any genre"], ...PSG_GENRES], "")}</div>
       <input class="inp" id="pk-topic" placeholder="话题（可以不填）Topic (optional), e.g. 坐高铁" style="width:100%">
       <button class="btn soft" id="pk-more">请 Claude 写 · Ask Claude</button><span class="small muted"> 下次运行时送到 · arrives with the next daily run${(S.req || []).filter(x => x.kind === "passage").length ? ` (${(S.req || []).filter(x => x.kind === "passage").length} waiting)` : ""}</span></details>
+    ${(S.heldLog || []).some(h => h.t > (S.heldSeen || 0)) ? `<div class="small" style="padding:8px 10px;border-radius:10px;background:color-mix(in srgb, var(--bad) 10%, transparent)"><b>⚠ Claude 没处理的请求 · Requests the daily run held back</b> (their text looked like instructions to an AI — if you didn't write that, someone may have your GitHub token: make a new one with 换钥匙 and revoke the old one on GitHub):<br>${S.heldLog.filter(h => h.t > (S.heldSeen || 0)).slice(0, 5).map(h => `${new Date(h.t).getMonth() + 1}/${new Date(h.t).getDate()} · ${esc(h.rid)} — ${esc(h.why)}`).join("<br>")}<br><button class="tagc" id="heldok" style="margin-top:6px">知道了 OK</button></div>` : ""}
     ${log.length ? `<p class="small">上次到货 Last delivery: <b>${new Date(log[0].t).getMonth() + 1}月${new Date(log[0].t).getDate()}日</b> · ${esc(packSummary(log[0]))}${log[0].bad ? ` <span class="muted">(${log[0].bad} 个格式不对，没用 · ${log[0].bad} malformed, skipped)</span>` : ""}</p>` : ""}
     <details><summary class="small" style="cursor:pointer">粘贴内容包 · Paste a pack</summary>
       <p class="small muted">从任何一个 Claude 聊天里拿到的内容包，贴在这里。Paste a pack from any Claude chat.</p>
@@ -5248,6 +5269,7 @@ function packCard() {
       <button class="btn soft" id="pk-go">加进来 Add it</button><div id="pk-msg" class="small"></div></details></div>`;
 }
 function bindPackCard() {
+  const ho = $("#heldok"); if (ho) ho.onclick = () => { S.heldSeen = now(); save(); refreshStock(); };
   const c = $("#packcard"); if (!c) return;
   const setStock = (patch, redraw) => {
     S.settings = Object.assign({}, S.settings, { stock: Object.assign({}, (S.settings || {}).stock, patch) }); save();

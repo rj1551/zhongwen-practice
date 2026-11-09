@@ -16,3 +16,5 @@ How they were run (paths are hard-coded for the cloud sandbox; adjust if yours d
    Playwright is loaded from `/home/claude/.npm-global/lib/node_modules/playwright`.
 Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as in index.html.
 - `time.test.js` (2026-11-08): time log split into scheduled / extra / reading, per device, older days, the Progress 时间 card.
+- `held.test.js` (2026-11-08): requests the daily run held back as suspicious are closed and shown on the stock card.
+- Daily-run guards (no browser): `tools/daily-run/inputs.js` (checked, trimmed inputs; suspicious requests held) and `push-pack.sh` (pushes only packs/, after the check) — tried by hand on fake repos with injected text.
