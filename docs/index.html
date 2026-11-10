@@ -2493,6 +2493,7 @@ function renderSen(item, el, onResult, onNext, frag) {
   // swaps the sentence for the question, so the options can't be checked against it. 再看一眼 brings the
   // sentence back but counts as a slow read (it returns in ~2 weeks instead of being retired).
   const timer = makeTimer();
+  loadCedict(); // for the tap-to-look-up breakdown after answering
   let readMs = null, peek = false;
   el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">短句精读 · Sentence parsing</span>${item.gen ? `<span class="chip">AI</span>` : ""}</div>
     <p class="sent" id="sent" style="font-size:21px">${esc(plain)}</p>
@@ -2520,17 +2521,22 @@ function renderSen(item, el, onResult, onNext, frag) {
       recordSen(item.id, ok, credit, peek);
       const fid = ok ? null : addFragment(item, item.opts.indexOf(opts[+b.dataset.i]));
       sent.hidden = false; $("#peek", el).hidden = true;
-      const chunks = item.s.split("|").filter(t => !Array.from(t).every(isPunct));
+      // 2026-11-09 (learner): the words in the breakdown open the dictionary popup, like in reading. Tokens cover the
+      // whole sentence (punctuation too) so a saved word keeps the sentence; only the non-punctuation chunks are shown.
+      const stoks = [], tkk = w => tokHtml(w, "0:" + (stoks.push(w) - 1), false);
+      const chunkHtml = item.s.split("|").map(c => { const html = c.split("/").map(piece => segmentText(piece).map(tkk).join("")).join('<i class="may"></i>'); return Array.from(c.replace(/\//g, "")).every(isPunct) ? "" : `<span>${html}</span>`; }).join("");
       const solid = ok && credit >= 0.75;
       $("#fb", el).innerHTML = `<div class="fb ${ok ? "ok" : "no"}"><span class="small muted">怎么读 · How it parses</span>
-        <div class="chunks">${chunks.map(c => `<span>${c.split("/").map(esc).join('<i class="may"></i>')}</span>`).join("")}</div>
+        <div class="chunks" id="senchunks">${chunkHtml}</div><span class="small muted">点词看词典 · Tap a word for the dictionary</span>
         <div class="frames">${(item.frames || []).map(([z, g]) => `<div><b>${esc(z)}</b>${esc(g)}</div>`).join("")}</div>
         ${solid ? "" : `<span class="small muted">${ok ? (peek ? "对了，看了一眼 · Right, with a look back." : "对了，就是慢了点 · Right, just not quick yet.") : ""} 这句两周左右再来 · This sentence comes back in about two weeks.</span>`}
         ${fid ? `<div class="row" id="fragnote" style="gap:8px"><span class="small">📌 「<b class="zh">${esc(S.items[fid].p)}</b>」加入复习，以后在别的句子里再见 · added for review in other sentences</span><button class="btn ghost" id="fragx" style="min-height:32px;padding:4px 10px">✕ 不用 Skip</button></div>` : ""}
         ${frag ? `<span class="small muted">这句是为了复习「${esc(frag)}」· This sentence was reviewing 「${esc(frag)}」.</span>` : ""}</div>`;
       const fx = $("#fragx", el); if (fx) fx.onclick = () => { dropFragment(fid); $("#fragnote", el).remove(); toast("不复习这个了 · Won't review it"); };
+      const sp = { id: "S:" + item.id, gl: {} };
+      $$("#senchunks .tk", el).forEach(t => t.onclick = () => { t.classList.add("looked"); openSheet(sp, [stoks], 0, +t.dataset.k.split(":")[1], t); });
       onResult({ ok, score: ok ? 1 : 0, given: opts[+b.dataset.i], credit, ms: readMs, interrupted: tr.interrupted });
-      nextButton(cc, onNext);
+      nextButton(cc, () => { closeSheet(); onNext(); });
     });
   }
   $("#gotit", el).onclick = reveal;
@@ -2922,7 +2928,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v55 · 11/9 22:38"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v56 · 11/9 23:40"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];

@@ -21,3 +21,4 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
 - `lyrics.test.js` (2026-11-08): Claude's lyric analysis — requests, answers per lyrics version, word split / sung pinyin / tricky underline / 解释 Notes, do-all flag.
 - `merge.test.js` (2026-11-09): songs/texts merge by group of fields, settings key by key, the do-all-lyrics choice by time; answers stay a union. `r2.test.js` also covers the usage line and the free-10-GB upload guard.
 - `pyfix.test.js` (2026-11-09): Claude's pinyin check — requests carry the app's pinyin per line; corrections only (position + 1–4 characters + reading / grouping / meaning); 一/不 tone changes on the device; up to 30 songs a run (the Do-all button was removed).
+- `sen.test.js` (2026-11-09): sentence parsing — after answering, the words in the "how it parses" breakdown open the dictionary popup (readings, save with the whole sentence, src `S:<id>`); 继续 closes it.
