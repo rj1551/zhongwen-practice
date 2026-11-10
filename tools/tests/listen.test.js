@@ -271,7 +271,25 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.evaluate(() => PL.ids.length === 4 && PL.ids[0] === "P4" && PL.i === 0 && localStorage.getItem("zwlgf:plshuf") === "1"), "🔀 shuffles the rest, keeps the current song");
   ok(await page.evaluate(() => navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) === "歌P4", "lock-screen info is set (Media Session)");
   await page.click("#plstop"); await sleep(150);
-  ok(await page.evaluate(() => PL) === null && await page.locator(".plrow").count() === 0, "✕ stops playing all; the song itself stays");
+  ok(await page.evaluate(() => PL) === null && await page.locator("#plnext").count() === 0 && await page.locator("#plhere").count() === 1, "✕ stops playing all; the song itself stays, with ▶ 从这首开始连播");
+  // ▶ Play all from here (2026-11-09): list order goes on down the list from this song and wraps; the song isn't restarted
+  await page.evaluate(() => { try { localStorage.setItem("zwlgf:plshuf", "0"); } catch (e) {} PL = null; });
+  await page.evaluate(() => { const it = S.gen.listen.find(x => x.id === "P2"); return plOpen(it); }); // P2 on its own
+  await page.waitForFunction(() => AUD_ID === "P2" && !AUD.paused, null, { timeout: 5000 }); await sleep(200);
+  ok(await page.evaluate(() => PL) === null && await page.locator("#plhere").count() === 1, "a song played on its own shows ▶ 从这首开始连播");
+  const t0 = await page.evaluate(() => AUD.currentTime);
+  await page.click("#plhere"); await sleep(150);
+  const ph = await page.evaluate(() => ({ ids: PL.ids.join(","), i: PL.i, id: AUD_ID, paused: AUD.paused, t: AUD.currentTime }));
+  ok(ph.ids === "P2,P3,P4,P1" && ph.i === 0, "list order starts at this song and goes on down the list, wrapping round: " + ph.ids);
+  ok(ph.id === "P2" && !ph.paused && ph.t >= t0, "the song keeps playing where it was (not restarted)");
+  ok(await page.locator("#lbar .plrow").textContent().then(t => t.includes("1/4")) && await page.locator("#plhere").count() === 0, "the bar switches to 连播 1/4 with ⏮ ⏭ 🔀 ✕");
+  await page.waitForFunction(() => AUD_ID === "P4" && !AUD.paused, null, { timeout: 6000 });
+  ok(true, "when it ends the list goes on with the next song below (P3 has no audio here → P4)");
+  await page.click("#plshuf"); await sleep(150);
+  ok(await page.evaluate(() => PL.ids[0] === "P4" && PL.ids.length === 4 && PL.i === 0), "🔀 during play-all still keeps the current song first");
+  await page.click("#plshuf"); await sleep(150);
+  ok(await page.evaluate(() => PL.ids.join(",")) === "P4,P1,P2,P3", "🔀 off again → list order from the current song: " + await page.evaluate(() => PL.ids.join(",")));
+  await page.click("#plstop"); await sleep(150);
   await page.evaluate(() => { AUD.pause(); try { localStorage.setItem("zwlgf:plshuf", "0"); } catch (e) {} S.gen.listen = S.gen.listen.filter(x => !/^P\d$/.test(x.id)); save(); });
   await page.click("#lback"); await sleep(150);
 

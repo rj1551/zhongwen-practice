@@ -4024,7 +4024,16 @@ function renderListenItem(main, it) {
 let PL = null; // {ids, i}
 const plShuffle = () => { try { return localStorage.getItem("zwlgf:plshuf") === "1"; } catch (e) { return false; } };
 const plSongs = () => (S.gen.listen || []).slice().sort((a, b) => b.t - a.t).filter(it => it.kind === "file" && itemType(it) === "song");
-function plOrder(firstId) { let ids = plSongs().map(x => x.id); if (plShuffle()) ids = shuffle(ids); if (firstId) ids = [firstId, ...ids.filter(x => x !== firstId)]; return ids; }
+// firstId: start there. In list order the rest follow it down the list and wrap round to the top (2026-11-09, learner);
+// shuffled, the rest come in random order after it.
+function plOrder(firstId) {
+  let ids = plSongs().map(x => x.id);
+  if (plShuffle()) { ids = shuffle(ids); if (firstId) ids = [firstId, ...ids.filter(x => x !== firstId)]; }
+  else if (firstId) { const k = ids.indexOf(firstId); ids = k >= 0 ? [...ids.slice(k), ...ids.slice(0, k)] : [firstId, ...ids]; }
+  return ids;
+}
+// ▶ 从这首开始连播 on a song's player: the song keeps playing where it is (nothing reloads); when it ends the list goes on
+function plHere(it) { PL = { ids: plOrder(it.id), i: 0 }; mediaMeta(it); drawPlayer(it); toast("连播：从这首开始 · Playing all from this song", 2500); }
 async function plCanPlay(it) { if (AUD_ID === it.id || await audioGet(it.id)) return true; return !!(it.r2 && r2Cfg() && navigator.onLine); }
 function plStart(firstId) { PL = { ids: plOrder(firstId), i: -1 }; if (!PL.ids.length) { PL = null; return; } return plGo(1); }
 async function plGo(step) {
@@ -4055,6 +4064,7 @@ async function plLoad(it) {
 }
 function plEnded(it) { if (PL && PL.ids[PL.i] === it.id) plGo(1); }
 const plOn = it => !!(PL && PL.ids[PL.i] === it.id);
+const plHereOk = it => it.kind === "file" && itemType(it) === "song" && plSongs().length > 1;
 function mediaMeta(it) {
   try {
     if (!("mediaSession" in navigator)) return;
@@ -4132,7 +4142,7 @@ async function drawPlayer(it) {
   const bar = document.createElement("div"); bar.className = "lbar"; bar.id = "lbar";
   const pl = plOn(it);
   bar.innerHTML = `<div class="in"><div id="ltime"></div>
-    ${pl ? `<div class="plrow"><span class="small">🎵 连播 ${PL.i + 1}/${PL.ids.length}</span><span class="row" style="gap:6px"><button class="tagc" id="plprev" aria-label="Previous song">⏮</button><button class="tagc" id="plnext" aria-label="Next song">⏭</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf">🔀 随机</button><button class="tagc" id="plstop" aria-label="Stop playing all">✕</button></span></div>` : ""}
+    ${pl ? `<div class="plrow"><span class="small">🎵 连播 ${PL.i + 1}/${PL.ids.length}</span><span class="row" style="gap:6px"><button class="tagc" id="plprev" aria-label="Previous song">⏮</button><button class="tagc" id="plnext" aria-label="Next song">⏭</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf">🔀 随机</button><button class="tagc" id="plstop" aria-label="Stop playing all">✕</button></span></div>` : plHereOk(it) ? `<div class="plrow"><button class="tagc" id="plhere">▶ 从这首开始连播 · Play all from here</button></div>` : ""}
     <input type="range" id="lseek" min="0" max="1000" value="0" aria-label="Position">
     <div class="lctl"><span class="small muted lt" id="lpos">0:00</span><button class="btn ghost" id="lb5" aria-label="Back 5 s">⟲5</button><button class="btn" id="lpp" aria-label="Play">▶</button><button class="btn ghost" id="lf5" aria-label="Forward 5 s">5⟳</button><button class="tagc" id="lrate">${LST.rate || 1}×</button>${talk ? `<button class="btn soft" id="llostb">没跟上${LST.lost.length ? ` (${LST.lost.length})` : ""}</button>` : ""}<span class="small muted lt" id="ldur"></span></div></div>`;
   document.body.append(bar); placeBar();
@@ -4152,8 +4162,9 @@ async function drawPlayer(it) {
   if (pl) {
     $("#plprev").onclick = () => plGo(-1); $("#plnext").onclick = () => plGo(1);
     $("#plstop").onclick = () => { PL = null; mediaMeta(it); drawPlayer(it); };
-    $("#plshuf").onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} PL.ids = [it.id, ...plOrder().filter(x => x !== it.id)]; PL.i = 0; drawPlayer(it); };
+    $("#plshuf").onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} PL.ids = plOrder(it.id); PL.i = 0; drawPlayer(it); };
   }
+  const ph = $("#plhere"); if (ph) ph.onclick = () => plHere(it);
   pp.onclick = () => { if (AUD.paused) { LST.play = true; LST.stopAt = null; AUD.play().catch(() => toast("播放不了这个文件 · Can't play this file")); } else AUD.pause(); };
   $("#lb5").onclick = () => { LST.stopAt = null; AUD.currentTime = Math.max(0, AUD.currentTime - 5); };
   $("#lf5").onclick = () => { LST.stopAt = null; AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); };
