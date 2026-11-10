@@ -788,7 +788,8 @@ function mergeStates(a, b) {
   m.r2del = [...new Set([...(m.r2del || []), ...(o.r2del || [])])];
   m.reqDone = [...new Set([...(m.reqDone || []), ...(o.reqDone || [])])].slice(-500);
   m.mgDone = [...new Set([...(m.mgDone || []), ...(o.mgDone || [])])].slice(-400);
-  m.mg = byId(m.mg || [], o.mg || [], "k").sort((p, q) => p.t - q.t).slice(-MG_MAX);
+  { const om = new Map((o.mg || []).map(z => [z.k, z])); // same entry on both devices: keep the model's feedback / Claude's answer from either
+    m.mg = byId((m.mg || []).map(z => { const y = om.get(z.k); return y && ((!z.cl && y.cl) || (!z.fb && y.fb)) ? Object.assign({}, z, { cl: z.cl || y.cl, fb: z.fb || y.fb }) : z; }), o.mg || [], "k").sort((p, q) => p.t - q.t).slice(-MG_MAX); }
   { const ag = Object.assign({}, o.agree); for (const k in m.agree || {}) ag[k] = byId(m.agree[k], ag[k] || [], 0).sort((p, q) => p[0] - q[0]).slice(-60); m.agree = ag; }
   for (const k of ["nudge", "ckSum"]) { const x = o[k], y = m[k]; if (x && (!y || (x.t || 0) > (y.t || 0))) m[k] = x; else if (x && y && x.t === y.t && x.seen) m[k] = x; }
   { const rd = new Set(m.reqDone); m.req = byId(m.req || [], o.req || [], "rid").filter(x => !rd.has(x.rid)); }
@@ -2090,7 +2091,7 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
             ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a", chunkVerdict(g));
           if (!placement) addOverride(fb, item, raw, sc, g._by || G.name);
-          if (G.prov && !placement) recordMG(item.id, raw, g._by || G.name, g._model, sc, chunkVerdict(g));
+          if (G.prov && !placement) recordMG(item.id, raw, g._by || G.name, g._model, sc, chunkVerdict(g), 0, g);
           if (G.prov && (S.offw || []).length) setTimeout(autoCheck, 4000); // a model is answering again: catch up
         } catch (e) {
           if (cancelled || answered) return;
@@ -2276,7 +2277,7 @@ async function autoCheck() {
       batch.forEach((e, j) => {
         if (!res[j]) return; got++;
         if (e.self != null && e.self < 2 && (+res[j].score || 0) >= 2) sum.raised++;
-        if (batch.by) recordMG(e.id, e.raw, batch.by, batch.real, Math.round(+res[j].score || 0), chunkVerdict(res[j]), Math.round(e.t / 1000));
+        if (batch.by) recordMG(e.id, e.raw, batch.by, batch.real, Math.round(+res[j].score || 0), chunkVerdict(res[j]), Math.round(e.t / 1000), res[j]);
         if (settleOffline(e, res[j], batch.by)) sum.fine++; else sum.cards++;
         sum.n++;
       });
@@ -2921,7 +2922,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v54 · 11/9 21:17"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v55 · 11/9 22:38"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5280,21 +5281,25 @@ function reqWaitCard() {
 }
 /* ---------- sample re-check of model grades (step 4d, offline copy) ----------
    S.mg = the last 100 grades from Gemini / Qwen (live or automatic): {k, id, at (answer time in s), raw, by, real
-   (the model the reply names, e.g. what an alias points to), score, chunk, t}. On days with new ones, the note asks
+   (the model the reply names, e.g. what an alias points to), score, chunk, t, fb?, cl?}. Since 2026-11-09 (learner: compare
+   feedback, not only scores) fb = the model's own {fixed, good, notes}, and cl = Claude's {score, chunk, fixed, notes} once
+   the daily check answers it (kept on the entry; see mgFeedback). On days with new ones, the note asks
    Claude to regrade up to 10 of those from the last 2 days, picked at random (not ones you already sent with 问 Claude).
    Claude's grade always wins (schedule follows it, and a brief note says how many it changed); a big disagreement
    (pass/fail flips or 2+ points) is shown like 问 Claude, with a feedback card if the model had passed it.
    S.agree[model] keeps [t, model score, Claude score] (last 60) for the Another AI card; a nudge to re-run the
    comparison appears when same pass/fail drops below 80% over the last 30 checks, or the model behind a name changes. */
 const MG_MAX = 100;
-function recordMG(id, raw, by, real, score, chunk, at) {
+function mgFb(g) { if (!g) return undefined; const fb = { fixed: String(g.fixed || "").slice(0, 300), good: String(g.good || "").slice(0, 300), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(n => String(n).slice(0, 300)) }; return fb.fixed || fb.good || fb.notes.length ? fb : undefined; }
+function recordMG(id, raw, by, real, score, chunk, at, g) {
   if (HOSTED || !by || by === "Claude") return;
   if (!at) { const it = S.items[id]; at = it && it.h && it.h.length ? it.h[it.h.length - 1][0] : Math.round(now() / 1000); }
   const k = id + ":" + at;
   const prev = (S.mg || []).filter(x => x.by === by && x.real).slice(-1)[0];
   if (real && prev && prev.real !== real && !(S.nudge && S.nudge.kind === "model" && S.nudge.to === real))
     S.nudge = { kind: "model", by, from: prev.real, to: real, t: now(), seen: false };
-  S.mg = (S.mg || []).filter(x => x.k !== k).concat([{ k, id, at, raw, by, real: real || "", score, chunk, t: now() }]).slice(-MG_MAX);
+  const e = { k, id, at, raw, by, real: real || "", score, chunk, t: now() }, fb = mgFb(g); if (fb) e.fb = fb;
+  S.mg = (S.mg || []).filter(x => x.k !== k).concat([e]).slice(-MG_MAX);
   save();
 }
 function checkRequests() {
@@ -5311,6 +5316,7 @@ function applyCheck(a, r) {
   const score = Math.round(+a.score); if (!(score >= 0 && score <= 3) || !LADDER.has(x.id)) { r.bad++; return; }
   const g = { score, chunk: ["ok", "wrong", "missing"].includes(a.chunk) ? a.chunk : "ok", fixed: String(a.fixed || ""), notes: (Array.isArray(a.notes) ? a.notes : []).slice(0, 3).map(String) };
   S.mgDone = (S.mgDone || []).concat([k]).slice(-400);
+  x.cl = { score: g.score, chunk: g.chunk, fixed: g.fixed, notes: g.notes }; // side by side with x.fb for comparing feedback
   const key = x.by; S.agree = Object.assign({}, S.agree); S.agree[key] = (S.agree[key] || []).concat([[now(), x.score, g.score]]).slice(-60);
   const changed = g.score !== x.score || g.chunk !== (x.chunk || "ok");
   const big = (g.score >= 2) !== (x.score >= 2) || Math.abs(g.score - x.score) >= 2;

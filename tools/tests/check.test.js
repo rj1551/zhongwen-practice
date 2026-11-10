@@ -117,6 +117,8 @@ async function answer(pg, text, id) {
   for (const [i, id] of ids.entries()) { M.score = i < 6 ? 3 : 2; await answer(pg, "测试答案" + i, id); await sleep(1100); }
   const mg = await pg.evaluate(() => S.mg.map(x => [x.id, x.by, x.real, x.score].join("|")));
   ok(mg.length === 12 && mg[0] === "L01|Gemini flash-lite-latest|gemini-3.5-flash-lite|3", "every model grade recorded, with the model behind the alias: " + mg[0]);
+  const fb0 = await pg.evaluate(() => S.mg.filter(x => x.fb && x.fb.fixed === "改好的句子" && x.fb.notes.length === 1 && /^note from /.test(x.fb.notes[0])).length);
+  ok(fb0 === 12, "the model's own correction + notes are kept with each grade (2026-11-09): " + fb0 + "/12");
   // ask Claude on one → not in the sample
   await pg.evaluate(() => { const b = askClaudeButton("L20", "测试答案11", "Gemini flash-lite-latest", 2); b.click(); });
   await sleep(1800); await pg.evaluate(() => ghSyncNow()); await sleep(1800); await pg.evaluate(() => SYNCQ); await pg.evaluate(() => ghSyncNow());
@@ -133,6 +135,10 @@ async function answer(pg, text, id) {
   await pg.evaluate(() => ghSyncNow());
   const r = await pg.evaluate(() => ({ ag: (S.agree["Gemini flash-lite-latest"] || []).length, cs: S.ckSum, done: (S.mgDone || []).length, graded: (S.graded || []).filter(x => x.check).length, fb: (S.offfb || []).filter(x => x.k.startsWith("c:")).length }));
   ok(r.ag === 10 && r.done === 10, "10 checks recorded for Gemini");
+  const cl = await pg.evaluate(p => p.map(x => { const m = S.mg.find(y => y.k === x.c.rid.slice(2)); return m.cl && m.cl.score === x.score && m.cl.fixed === "改好的" && m.cl.notes[0] === "n" && m.fb && m.fb.fixed === "改好的句子"; }), plan);
+  ok(cl.every(Boolean), "Claude's answer is kept beside the model's feedback on each checked grade");
+  const mrg = await pg.evaluate(() => { const a = JSON.parse(JSON.stringify(S)), b = JSON.parse(JSON.stringify(S)); const k = S.mg.find(x => x.cl).k; a.mg.find(x => x.k === k).cl = undefined; delete a.mg.find(x => x.k === k).cl; delete a.mg.find(x => x.k === k).fb; const m = mergeStates(a, b); const e = m.mg.find(x => x.k === k); return !!(e.cl && e.fb) && m.mg.length === S.mg.length; });
+  ok(mrg, "merging with a device that has Claude's answer / the model's feedback keeps them");
   ok(r.cs.n === 10 && r.cs.changed === nChanged && r.cs.big === big.length, `note counts: checked 10, changed ${nChanged}, big ${big.length} (` + JSON.stringify(r.cs) + ")");
   ok(r.graded === big.length, "the big disagreements are on the results card (" + r.graded + ")");
   const passedBig = big.filter(p => p.c.modelScore >= 2).length;
