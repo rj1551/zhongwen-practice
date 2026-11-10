@@ -1848,6 +1848,10 @@ function startSession(goal) {
   const g = goal === undefined ? ((S.settings && S.settings.goal) || 0) : goal;
   SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), retry: [], requeued: new Set(), promoted: 0, mastered: 0, ended: false };
   SESSION.fbUsed = new Set();
+  // 2026-11-10 (learner): the 复习完了 divider shows once per app day. If it was already reached today, on this device
+  // or another (the synced time log), a new session skips it and everything in it counts as extra time — the only
+  // cards it can start with are same-day retries, since real reviews only come due again at 3:38.
+  if (daySplit(S.log[dayKey()]).done) { SESSION.used.add("divshown"); SESSION.pastDiv = true; }
   (S.offfb || []).filter(f => !f.seen).forEach(f => SESSION.used.add("lad" + f.id)); // feedback first, then the drill (next session)
   SESSION.q = addFeedback(buildBlock(8, SESSION.used), SESSION);
   topUpSentences(SESSION);
