@@ -247,7 +247,13 @@ const norm = s => Array.from(String(s || "")).filter(c => !isPunct(c)).join("").
 let CLOCK_OFF = 0, SIM = false; // the stock-up forecast fast-forwards a copy of your progress
 const now = () => Date.now() + CLOCK_OFF;
 const DAY = 864e5, MIN = 6e4;
-const dayKey = (t = now()) => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+// The app's day starts at 3:38 am local time, the same time as Claude's nightly run (2026-11-10, learner: practice
+// after midnight still belongs to "today"). dayOf = the calendar date the app counts a moment under; dayKey = its
+// label; midnight() (below) = when that app day began; dayAt(key) = when a given app day begins.
+const DAY_START_MIN = 3 * 60 + 38;
+const dayOf = t => { const d = new Date(t); if (d.getHours() * 60 + d.getMinutes() < DAY_START_MIN) d.setDate(d.getDate() - 1); return d; };
+const dayAt = key => { const d = new Date(key + "T00:00"); d.setHours(0, DAY_START_MIN, 0, 0); return d.getTime(); };
+const dayKey = (t = now()) => { const d = dayOf(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
 function toast(msg, ms = 2200) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms); }
 // Keep toasts at the top of what you can actually see, at normal size, even when the page is zoomed in.
 function placeToasts() {
@@ -1176,9 +1182,9 @@ const TRANGES = [["7", "7 天 days"], ["30", "30 天 days"], ["12w", "12 周 wee
 function timeCardHtml() {
   // buckets: days (7, 30), weeks (12w, Monday start) or months (all)
   const B = [], add = (lab, keys, day) => B.push({ lab, keys, day });
-  if (TRANGE === "7" || TRANGE === "30") { const n = +TRANGE; for (let i = n - 1; i >= 0; i--) { const t = now() - i * DAY, dt = new Date(t); add(n === 7 ? "日一二三四五六"[dt.getDay()] : (i % 5 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : ""), [dayKey(t)], true); } }
+  if (TRANGE === "7" || TRANGE === "30") { const n = +TRANGE; for (let i = n - 1; i >= 0; i--) { const t = now() - i * DAY, dt = new Date(dayKey(t) + "T12:00"); add(n === 7 ? "日一二三四五六"[dt.getDay()] : (i % 5 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : ""), [dayKey(t)], true); } }
   else if (TRANGE === "12w") { const m0 = new Date(midnight(now())); const back = (m0.getDay() + 6) % 7; const mon = midnight(now()) - back * DAY; for (let w = 11; w >= 0; w--) { const s0 = mon - w * 7 * DAY, keys = []; for (let i = 0; i < 7; i++) keys.push(dayKey(s0 + i * DAY + 3 * 3600e3)); const dt = new Date(s0); add(w % 2 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : "", keys); } }
-  else { const ks = Object.keys(S.log || {}).sort(), first = ks.length ? new Date(ks[0] + "T12:00") : new Date(); const cur = new Date(); let y = first.getFullYear(), mo = first.getMonth(); const months = []; while (y < cur.getFullYear() || (y === cur.getFullYear() && mo <= cur.getMonth())) { months.push([y, mo]); mo++; if (mo > 11) { mo = 0; y++; } } months.slice(-24).forEach(([y, mo]) => { const pre = `${y}-${String(mo + 1).padStart(2, "0")}`; add(`${mo + 1}月`, ks.filter(k => k.startsWith(pre))); }); }
+  else { const ks = Object.keys(S.log || {}).sort(), first = ks.length ? new Date(ks[0] + "T12:00") : new Date(); const cur = new Date(dayKey() + "T12:00"); let y = first.getFullYear(), mo = first.getMonth(); const months = []; while (y < cur.getFullYear() || (y === cur.getFullYear() && mo <= cur.getMonth())) { months.push([y, mo]); mo++; if (mo > 11) { mo = 0; y++; } } months.slice(-24).forEach(([y, mo]) => { const pre = `${y}-${String(mo + 1).padStart(2, "0")}`; add(`${mo + 1}月`, ks.filter(k => k.startsWith(pre))); }); }
   let T = { due: 0, extra: 0, rd: 0, old: 0 }, days = 0, doneDays = 0;
   B.forEach(b => { b.s = { due: 0, extra: 0, rd: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of ["due", "extra", "rd", "old"]) b.s[f] += sp[f]; if (sp.due + sp.extra + sp.rd + sp.old > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = b.s.due + b.s.extra + b.s.rd + b.s.old; for (const f in T) T[f] += b.s[f]; });
   const max = Math.max(60, ...B.map(b => b.tot)), all = T.due + T.extra + T.rd + T.old;
@@ -1221,7 +1227,7 @@ const fsrsR = (w, days, s) => Math.pow(1 + fsrsF(w) * Math.max(0, days) / s, -w[
 const fsrsIvl = (w, s, r) => s / fsrsF(w) * (Math.pow(r, -1 / w[20]) - 1);
 const clampD = d => Math.min(10, Math.max(1, d)), clampS = s => Math.min(36500, Math.max(0.001, s));
 const fsrsD0 = (w, g) => w[4] - Math.exp((g - 1) * w[5]) + 1;
-const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const midnight = t => { const d = dayOf(t); d.setHours(0, DAY_START_MIN, 0, 0); return d.getTime(); }; // start of the app day (3:38), see dayKey
 // one review with grade g (1 Again, 2 Hard, 3 Good, 4 Easy) at time t
 function fsrsStep(w, st, g, t) {
   if (!st) return { s: clampS(w[g - 1]), d: clampD(fsrsD0(w, g)), lr: t };
@@ -1270,7 +1276,7 @@ function fsrsReplay(it) {
   const st = fsrsState(it, h);
   if (!st) return it;
   it.s = +st.s.toFixed(4); it.d = +st.d.toFixed(4); it.lr = st.lr;
-  if (h.length) it.due = midnight(st.lr) + fsrsDays(it, st.s) * DAY; // due from the morning of that day
+  if (h.length) { const d = new Date(midnight(st.lr)); d.setDate(d.getDate() + fsrsDays(it, st.s)); it.due = d.getTime(); } // 3:38 that many calendar days on (stays 3:38 across clock changes)
   return it;
 }
 // keep the log short: fold the oldest answers into the seed
@@ -1336,6 +1342,15 @@ function migrateFsrs() {
     const keep = it.due;
     fsrsReplay(it);
     if (!logged) it.due = keep || now();
+  }
+  // 2026-11-10: the app day starts at 3:38, so review due times made before (12:00 am; 11 pm / 1 am across a clock change)
+  // move to 3:38 that morning.
+  // Safe to run every time (a 3:38 due isn't touched) and catches ones merged from a device not yet updated.
+  for (const id in S.items) {
+    const it = S.items[id]; if (!FSRS_KINDS.has(it.t) || !it.due) continue;
+    const d = new Date(it.due); if (![0, 1, 23].includes(d.getHours()) || d.getMinutes() || d.getSeconds() || d.getMilliseconds()) continue;
+    // old code's 12:00 am, or 11 pm / 1 am when the interval crossed a clock change → 3:38 of the day it meant
+    const m = new Date(it.due + 2 * 3600e3); m.setHours(0, DAY_START_MIN, 0, 0); it.due = m.getTime(); changed = true;
   }
   if (changed && !SIM) save();
 }
@@ -1605,7 +1620,7 @@ const CAT_NAME = { lad: "造句 Production", sen: "短句精读 Sentence parsing
 function renderHome(main) {
   const w = weights();
   const today = S.log[dayKey()] || { n: 0, sec: 0 };
-  const d = new Date(); // no due count anywhere: a backlog number only makes you want to give up
+  const d = new Date(dayKey() + "T12:00"); // the app day (starts 3:38). No due count anywhere: a backlog number only makes you want to give up
   main.innerHTML = `
   <div class="top"><div><h1>中文练功房</h1><p class="date">${d.getMonth() + 1}月${d.getDate()}日 · 星期${"日一二三四五六"[d.getDay()]}</p></div>
   <p class="small muted" style="text-align:right">今天 ${Math.round(today.sec / 60)} 分钟<br>${today.n} 题</p></div>
@@ -1707,7 +1722,7 @@ function minsPerDay() {
   const days = Object.keys(S.log || {}).sort(), today = dayKey();
   const first = days.find(d => d !== today);
   if (!first) return 15;
-  const span = Math.min(14, Math.max(3, Math.round((midnight(now()) - new Date(first + "T00:00").getTime()) / DAY)));
+  const span = Math.min(14, Math.max(3, Math.round((midnight(now()) - dayAt(first)) / DAY)));
   let a = 0, b = 0;
   for (let i = 1; i <= span; i++) { const d = S.log[dayKey(now() - i * DAY)], wt = Math.pow(0.85, i - 1); a += (d ? d.sec / 60 : 0) * wt; b += wt; }
   return Math.max(10, a / b);
@@ -1733,7 +1748,7 @@ function load7() {
 const isNewToday = it => it && it.t !== "frag" && it.h && it.h.length && !it.z && dayKey(it.h[0][0] * 1000) === dayKey();
 function tripNewCap() {
   const c = stockCfg(); if (!c.trip) return null;
-  const today = midnight(now()), from = new Date(c.from + "T00:00").getTime(), to = new Date(c.to + "T00:00").getTime();
+  const today = midnight(now()), from = dayAt(c.from), to = dayAt(c.to);
   if (today < from || today > to) return null;
   const left = Math.round((to - today) / DAY) + 1;
   const unseen = [...LADDER.keys()].filter(id => !S.items[id]).length + [...CTX.keys()].filter(id => !S.items[id]).length + Object.keys(S.bank).filter(w => !S.items["B:" + w]).length;
@@ -2928,7 +2943,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v56 · 11/9 23:40"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v57 · 11/10 00:55"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5056,7 +5071,7 @@ function forecast(days, mins) {
     let covered = 0, simDays = 0; const used0 = { lad: 0, sen: 0 };
     // v23: each simulated day runs the real session builder (reviews, same-day repeats, divider, new-item budget)
     // for `mins` minutes; typed cards ~90 s, others ~25 s; 85% of drills and 90% of other cards right.
-    const cfg = stockCfg(), tripStart = cfg.trip ? new Date(cfg.from + "T00:00").getTime() : 0;
+    const cfg = stockCfg(), tripStart = cfg.trip ? dayAt(cfg.from) : 0;
     const base = tripStart > Date.now() + keepOff ? tripStart : midnight(Date.now() + keepOff + DAY); // the trip's first day, or tomorrow
     for (let d = 1; d <= days; d++) {
       CLOCK_OFF = midnight(base + (d - 1) * DAY + 12 * 3600e3) + 9 * 3600e3 - Date.now();
