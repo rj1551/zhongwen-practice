@@ -2947,7 +2947,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v58 · 11/10 16:39"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v59 · 11/11 18:25"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5378,7 +5378,10 @@ function checkHomeCards() {
     <p class="small">${nd.kind === "model" ? `「${esc(nd.by)}」背后的模型换了：${esc(nd.from)} → ${esc(nd.to)}。<br>The model behind ${esc(nd.by)} changed (${esc(nd.from)} → ${esc(nd.to)}). Its grading may have changed too.` : `Claude 最近 30 次抽查里，${esc(nd.by)} 只有 ${nd.pct}% 的对/不对和 Claude 一样。<br>In Claude's last 30 checks, ${esc(nd.by)} agreed with Claude on pass/fail only ${nd.pct}% of the time (threshold 80%).`} 可以再跑一次比较测试 · Worth running the comparison again.</p>
     <div class="row"><button class="btn soft" id="nudge-go">去比较 Open the comparison</button><button class="btn ghost" id="nudge-ok">知道了 Got it</button></div></div>`;
   const cs = S.ckSum;
-  if (cs && !cs.seen && cs.n) h += `<div class="card"><p class="small">🔍 Claude 抽查了 ${cs.n} 句${Object.keys(cs.by || {}).map(esc).join("、")}的批改，改了 ${cs.changed} 句${cs.big ? `（${cs.big} 句差得多，见上面）` : ""}，复习安排已经按 Claude 的算。<br>Claude checked ${cs.n} of ${Object.keys(cs.by || {}).map(esc).join(" / ")}'s grades and changed ${cs.changed}${cs.big ? ` (${cs.big} by a lot, shown above)` : ""}; your schedule follows Claude.</p><button class="btn ghost" id="ck-ok">知道了 Got it</button></div>`;
+  // the ones Claude changed by a lot are in the "Claude 的批改" card below this one (gradedCard) until you've seen them
+  const bigLeft = cs ? (S.graded || []).filter(x => x.check && !x.seen).length : 0;
+  const bigZh = n => `（${n} 句差得多，${bigLeft ? "见下面「Claude 的批改」" : "已经给你看过了"}）`, bigEn = n => ` (${n} by a lot, ${bigLeft ? "shown below under Claude's regrades" : "already shown to you"})`;
+  if (cs && !cs.seen && cs.n) h += `<div class="card"><p class="small">🔍 Claude 抽查了 ${cs.n} 句${Object.keys(cs.by || {}).map(esc).join("、")}的批改，改了 ${cs.changed} 句${cs.big ? bigZh(cs.big) : ""}，复习安排已经按 Claude 的算。<br>Claude checked ${cs.n} of ${Object.keys(cs.by || {}).map(esc).join(" / ")}'s grades and changed ${cs.changed}${cs.big ? bigEn(cs.big) : ""}; your schedule follows Claude.</p><button class="btn ghost" id="ck-ok">知道了 Got it</button></div>`;
   return h;
 }
 const readPerDay = () => +(((S.settings || {}).reading || {}).perDay) || 0.5;

@@ -140,6 +140,11 @@ async function answer(pg, text, id) {
   const mrg = await pg.evaluate(() => { const a = JSON.parse(JSON.stringify(S)), b = JSON.parse(JSON.stringify(S)); const k = S.mg.find(x => x.cl).k; a.mg.find(x => x.k === k).cl = undefined; delete a.mg.find(x => x.k === k).cl; delete a.mg.find(x => x.k === k).fb; const m = mergeStates(a, b); const e = m.mg.find(x => x.k === k); return !!(e.cl && e.fb) && m.mg.length === S.mg.length; });
   ok(mrg, "merging with a device that has Claude's answer / the model's feedback keeps them");
   ok(r.cs.n === 10 && r.cs.changed === nChanged && r.cs.big === big.length, `note counts: checked 10, changed ${nChanged}, big ${big.length} (` + JSON.stringify(r.cs) + ")");
+  // the summary card sits above the "Claude 的批改" card, so it points down to it (2026-11-11: it used to say 见上面 / shown above)
+  const hc = await pg.evaluate(() => { const d = document.createElement("div"); d.innerHTML = checkHomeCards() + gradedCard(); const t = d.textContent; return { t, sumFirst: t.indexOf("🔍") >= 0 && t.indexOf("🔍") < t.indexOf("Claude 的批改") }; });
+  ok(big.length > 0 && hc.sumFirst && hc.t.includes("见下面「Claude 的批改」") && hc.t.includes("shown below under Claude's regrades") && !hc.t.includes("见上面") && !hc.t.includes("shown above"), "the check summary says the big changes are below it, and they are");
+  const hs = await pg.evaluate(() => { const keep = S.graded.map(x => x.seen); S.graded.forEach(x => { x.seen = true; }); const t = checkHomeCards(); S.graded.forEach((x, i) => { x.seen = keep[i]; }); return t; });
+  ok(hs.includes("已经给你看过了") && hs.includes("already shown to you"), "once those are seen, it says they were already shown");
   ok(r.graded === big.length, "the big disagreements are on the results card (" + r.graded + ")");
   const passedBig = big.filter(p => p.c.modelScore >= 2).length;
   ok(r.fb === passedBig, "feedback cards for big ones the model had passed (" + r.fb + "/" + passedBig + ")");
