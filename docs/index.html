@@ -84,6 +84,9 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .cells i{flex:1 0 8px;max-width:22px;height:8px;border-radius:2px;background:var(--line)}
 .cells i.ok{background:var(--good)} .cells i.no{background:var(--bad)} .cells i.now{background:var(--accent)}
 .combo{font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums;min-width:56px;text-align:right;font-size:14px}
+.dnote{margin:0 0 10px;padding:7px 12px;border-radius:10px;background:var(--good-soft);color:var(--good);font-size:14px;transition:opacity .5s}
+.dnote.gone{opacity:0}
+.setdone{color:var(--good);font-weight:600}
 .combo.pop{animation:pop .35s ease}
 @keyframes pop{50%{transform:scale(1.35)}}
 .x{width:36px;height:36px;border-radius:10px;border:1px solid var(--line);font-size:18px;line-height:1;color:var(--muted)}
@@ -1193,17 +1196,17 @@ function timeCardHtml() {
   const today = daySplit(S.log[dayKey()]);
   if (TSEL == null || TSEL >= B.length) TSEL = B.length - 1;
   const sb = B[TSEL], dl = sb.day ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 周${"日一二三四五六"[t.getDay()]}`; })() : TRANGE === "12w" ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 那周 week of`; })() : sb.lab;
-  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该复习的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
+  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
   return `<span class="label">时间 · Time spent</span>
     <div class="row" style="gap:6px">${TRANGES.map(([k, l]) => `<button class="tagc ${TRANGE === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div>
     <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.rd, C.rd)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
     ${detail}
-    <div class="tkey small"><span><i style="background:${C.due}"></i>该复习的 Scheduled</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.rd}"></i>阅读 Reading</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
+    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.rd}"></i>阅读 Reading</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
     <div class="stack small" style="gap:4px">
       <span><b>这段时间 In this period: ${fmtMin(all)}</b> · ${fmtMinEn(all)}${days ? ` · 练了 ${days} 天 on ${days} day${days > 1 ? "s" : ""} (avg ${fmtMinEn(all / days)})` : ""}</span>
-      <span>练习 Exercises <b>${fmtMinEn(T.due + T.extra)}</b> = 该复习的 scheduled ${fmtMinEn(T.due)} + 额外 extra ${fmtMinEn(T.extra)}${doneDays && TRANGE !== "all" ? ` · 复习做完 all reviews done on ${doneDays} day${doneDays > 1 ? "s" : ""}` : ""}</span>
+      <span>练习 Exercises <b>${fmtMinEn(T.due + T.extra)}</b> = 该做的 today's set ${fmtMinEn(T.due)} + 额外 extra ${fmtMinEn(T.extra)}${doneDays && TRANGE !== "all" ? ` · 做完 set done on ${doneDays} day${doneDays > 1 ? "s" : ""}` : ""}</span>
       <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
-      <span class="muted">今天 Today: 该复习的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 听力不算在内 Listening isn't counted.</span></div>`;
+      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 听力不算在内 Listening isn't counted.</span></div>`;
 }
 function bindTimeCard(scope) {
   const redraw = () => { $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); };
@@ -1622,7 +1625,7 @@ function renderHome(main) {
   const today = S.log[dayKey()] || { n: 0, sec: 0 };
   const d = new Date(dayKey() + "T12:00"); // the app day (starts 3:38). No due count anywhere: a backlog number only makes you want to give up
   main.innerHTML = `
-  <div class="top"><div><h1>中文练功房</h1><p class="date">${d.getMonth() + 1}月${d.getDate()}日 · 星期${"日一二三四五六"[d.getDay()]}</p></div>
+  <div class="top"><div><h1>中文练功房</h1><p class="date">${d.getMonth() + 1}月${d.getDate()}日 · 星期${"日一二三四五六"[d.getDay()]}${daySplit(S.log[dayKey()]).done ? ` <span class="setdone" title="今天该做的都做完了 · Today's set is done">✓</span>` : ""}</p></div>
   <p class="small muted" style="text-align:right">今天 ${Math.round(today.sec / 60)} 分钟<br>${today.n} 题</p></div>
   ${!S.placed ? `<div class="card"><span class="label">第一步 · First step</span><h2>先做水平测试（约 10 分钟）</h2>
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
@@ -1637,7 +1640,7 @@ function renderHome(main) {
     <button class="btn wide start" id="start">开始 Start</button>
     <div class="stack" style="gap:8px"><span class="label">目标（可选）· Goal (optional)</span>
       <div class="goals">${[[0, "不设 None"], [5, "5 分钟"], [15, "15 分钟"], [30, "30 分钟"]].map(([g, l]) => `<button class="goal ${((S.settings || {}).goal || 0) === g ? "on" : ""}" data-goal="${g}">${l}</button>`).join("")}</div>
-      <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="light" style="margin-top:3px;flex:none" ${(S.settings || {}).lightTyping ? "checked" : ""}> 少打字 · Fewer typing cards (1 in 8 instead of 1 in 4), for on the go</label></div>
+      <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="light" style="margin-top:3px;flex:none" ${(S.settings || {}).lightTyping ? "checked" : ""}> 少打字 · Fewer typing cards (1 in 8 instead of 1 in 2), for on the go</label></div>
     <div class="stack" style="gap:8px"><span class="label">今日重点 · Today's mix</span>
     <div class="mix">${Object.keys(w).map(k => `<i style="width:${w[k] * 100}%;background:${CAT_COLORS[k]}"></i>`).join("")}</div>
     <div class="legend">${Object.keys(w).map(k => `<span><b style="background:${CAT_COLORS[k]}"></b>${CAT_NAME[k]} ${pct(w[k])}</span>`).join("")}</div></div>
@@ -1694,9 +1697,10 @@ function backupNudge() {
     <button class="btn soft" id="backup-go">去导出 Go to export</button></div>`;
 }
 function mixReason() {
-  const k = ["ctx", "news", "pick", "write", "speed"].map(x => [x, skillVal(x)]).sort((a, b) => a[1] - b[1]);
+  // only the skills that set the mix (weights): reading speed is trained in 阅读, not here (2026-11-13)
+  const k = ["ctx", "news", "pick", "write"].map(x => [x, skillVal(x)]).sort((a, b) => a[1] - b[1]);
   const names = { ctx: "words in context", seg: "chunking", news: "written-register parsing", pick: "choosing natural Chinese", write: "writing Chinese", speed: "reading speed" };
-  return `Your weakest areas right now: <b>${names[k[0][0]]}</b> (${pct(k[0][1])}) and <b>${names[k[1][0]]}</b> (${pct(k[1][1])}). The weaker a skill, the more of the session it gets; production always gets a boost because it's your main goal.`;
+  return `Your weakest areas right now: <b>${names[k[0][0]]}</b> (${pct(k[0][1])}) and <b>${names[k[1][0]]}</b> (${pct(k[1][1])}). The weaker a skill, the more of the session it gets (drills, parsing sentences and words); production always gets a boost because it's your main goal. Reading speed is practised in 阅读.`;
 }
 
 /* ---------- session ---------- */
@@ -1729,8 +1733,10 @@ function minsPerDay() {
 }
 const REVIEW_SEC = { lad: 90, word: 25 };
 // minutes of reviews expected over the next 7 days, assuming each review succeeds at the target
-function load7() {
-  const t = now(), end = t + 7 * DAY;
+function load7() { return loadSec(7) / 60; }
+// FSRS review seconds expected over the next `days` days (drills ~90 s per review, words ~25 s)
+function loadSec(days) {
+  const t = now(), end = t + days * DAY;
   let sec = 0;
   for (const id in S.items) {
     const it = S.items[id]; if (!FSRS_KINDS.has(it.t) || !it.s) continue;
@@ -1743,7 +1749,7 @@ function load7() {
       s = s * (1 + Math.exp(w[8]) * (11 - d) * Math.pow(s, -w[9]) * (Math.exp((1 - r) * w[10]) - 1));
     }
   }
-  return sec / 60;
+  return sec;
 }
 const isNewToday = it => it && it.t !== "frag" && it.h && it.h.length && !it.z && dayKey(it.h[0][0] * 1000) === dayKey();
 function tripNewCap() {
@@ -1755,23 +1761,71 @@ function tripNewCap() {
   const doneNew = Object.values(S.items).filter(isNewToday).length;
   return Math.ceil((unseen + doneNew) / left);
 }
-// chance that a slot after the divider is a new drill/word (the rest: new parsing sentences)
-function newChance() {
+// ---- Today's allowance of new items (2026-11-13, learner; claude/design-new-material-rhythm.md) ----
+// New drills and words (the items that create future reviews) are given out per app day, sized so the next two weeks'
+// reviews take about half of the usual card time (practice minutes, not reading). Set once per app day (S.nb), at
+// least 1 a day (0 only when reviews alone would fill the whole usual time), at most 12. Trip dates: the trip pace.
+const NEW_MAX = 12, REVIEW_SHARE = 0.5, NOTE_MS = 6000, FIRST_SEC = 45, NEW_KINDS = new Set(["lad", "ctx", "bank"]);
+const newTodayN = () => Object.values(S.items).filter(it => NEW_KINDS.has(it.t) && isNewToday(it)).length;
+// usual card minutes a day: like minsPerDay, but without reading time (days before the 2026-11-09 split: total − reading)
+function cardMinsPerDay() {
+  if (BUDGET_MINS) return BUDGET_MINS;
+  const days = Object.keys(S.log || {}).sort(), today = dayKey();
+  const first = days.find(d => d !== today);
+  if (!first) return 10;
+  const span = Math.min(14, Math.max(3, Math.round((midnight(now()) - dayAt(first)) / DAY)));
+  let a = 0, b = 0;
+  for (let i = 1; i <= span; i++) {
+    const d = S.log[dayKey(now() - i * DAY)], wt = Math.pow(0.85, i - 1), sp = d ? daySplit(d) : null;
+    const sec = !d ? 0 : d.by ? sp.due + sp.extra + sp.old : Math.max(0, (d.sec || 0) - (sp.rd || 0));
+    a += sec / 60 * wt; b += wt;
+  }
+  return Math.max(10, a / b);
+}
+// review seconds one new item adds over the next 14 days (from a first meeting graded Good)
+function newCost(grp) {
+  const w = fsrsW(grp), r = TARGET_R[grp], end = 14;
+  let s = w[2], d = Math.min(10, Math.max(1, w[4] - Math.exp(w[5] * 2) + 1)), day = 0, sec = 0, k = 0;
+  while (k++ < 8) {
+    day += Math.max(1, fsrsIvl(w, s, r)); if (day >= end) break;
+    sec += REVIEW_SEC[grp];
+    s = s * (1 + Math.exp(w[8]) * (11 - d) * Math.pow(s, -w[9]) * (Math.exp((1 - r) * w[10]) - 1));
+  }
+  return sec;
+}
+function newAllowance() {
   const today = dayKey();
-  if (!S.nb || S.nb.d !== today) S.nb = { d: today, over: 0 };
-  const cap = tripNewCap(), newN = Object.values(S.items).filter(isNewToday).length;
-  // during a trip the stock is spread evenly over the days left (the trip has an end, so this pace leads)
-  if (cap != null) { S.nb.under = true; return newN >= cap ? 0.05 : 0.6; }
-  if (load7() / 7 <= 0.6 * minsPerDay()) { S.nb.under = true; return 0.6; }
-  S.nb.under = false;
-  return Math.max(0.05, Math.pow(0.5, S.nb.over / 3));
+  if (S.nb && S.nb.d === today && S.nb.allow != null) return S.nb.allow;
+  const trip = tripNewCap();
+  let a;
+  if (trip != null) a = trip; // during a trip the stock is spread evenly over the days left (the trip has an end)
+  else {
+    const usual = cardMinsPerDay() * 60 * 14, load = loadSec(14);
+    if (load > usual) a = 0;
+    else {
+      const w = weights(), cost = Math.max(30, (w.lad * newCost("lad") + w.ctx * newCost("word")) / (w.lad + w.ctx));
+      // and first meetings (+ the odd same-day retry, ~45 s each) must fit in the other half of today's usual time
+      const today = Math.floor((1 - REVIEW_SHARE) * cardMinsPerDay() * 60 / FIRST_SEC);
+      a = Math.max(1, Math.min(NEW_MAX, today, Math.floor((REVIEW_SHARE * usual - load) / cost)));
+    }
+  }
+  S.nb = { d: today, allow: a };
+  return a;
+}
+// after today's set: the chance that a slot is one more new drill/word (the rest: parsing sentences, re-reads);
+// halves every 3 new items beyond the allowance. Extra new items raise tomorrow's forecast, so tomorrow's allowance shrinks.
+function newChance() {
+  const over = Math.max(0, newTodayN() - newAllowance());
+  return Math.max(0.05, 0.4 * Math.pow(0.5, over / 3));
 }
 // One block of up to n cards (v22, v23):
 // 1. same-day repeats of misses whose time has come (≥10 min after the miss);
-// 2. due reviews in the weighted mix, a typed review in up to every 2nd slot (every 8th with 少打字);
-// 3. once no reviews are left: the divider (once per session), then the new phase — each slot is a new drill/word
-//    with probability newChance(), otherwise a new parsing sentence; if those run out, new drills/words anyway;
-//    then reused old sentences. A card already queued this session, answered today, or sharing a key chunk with one
+// 2. due reviews in the weighted mix, a typed review in up to every 2nd slot (every 8th with 少打字), with today's
+//    new drills/words (newAllowance, 2026-11-13) mixed in, one every `used.newGap` cards (≈ the first 40% of the
+//    session); reviews done → the rest of today's new items, with new parsing sentences between them;
+// 3. today's set done: the note (once per app day, as a slim line above the next card), then endless — each slot is
+//    one more new drill/word with probability newChance() (tapering), otherwise a new parsing sentence or a re-read;
+//    if those run out, new drills/words anyway; then reused old sentences. A card already queued this session, answered today, or sharing a key chunk with one
 //    of those is skipped. Returns [] when there's nothing at all left.
 function buildBlock(n, used, rnd = Math.random) {
   const every = S.settings && S.settings.lightTyping ? 8 : 2;
@@ -1802,28 +1856,44 @@ function buildBlock(n, used, rnd = Math.random) {
     return pools[k].splice(i, 1)[0];
   };
   const ws = () => { while (writing.length && !free(writing[0])) writing.shift(); return writing.length ? writing.shift() : null; };
-  let pNew = null;
+  // today's new items (newAllowance) go in among the reviews, one every `gap` cards, so they fall in roughly the
+  // first 40% of the session; the gap is set once per session from what's due when it starts
+  let newLeft = Math.max(0, newAllowance() - newTodayN());
+  const dueN = () => Object.keys(pools).reduce((a, k) => a + pools[k].filter(c => c.due && free(c)).length, 0) + writing.filter(free).length;
+  if (used.newGap == null) used.newGap = newLeft ? Math.max(2, Math.floor(0.4 * (dueN() + newLeft) / newLeft)) : 0;
+  const takeNew = () => { const c = next(false, ["lad", "ctx"]); if (c) { take(c); newLeft--; used.sinceNew = 0; } return !!c; };
+  let pNew = null, blockNew = 0;
   while (out.length < n) {
     if (!used.has("div")) {
+      const reviewsLeft = dueLeft() || writing.some(free);
+      if (newLeft > 0 && reviewsLeft && (used.sinceNew || 0) >= used.newGap - 1 && takeNew()) continue;
       let c = null;
       if ((out.length + 1) % every === 0 || !dueLeft()) c = ws();
       if (!c) c = next(true);
       if (!c) c = ws();
-      if (c) { take(c); continue; }
-      used.add("div"); // reviews done: the divider goes in front of the first new card
+      if (c) { take(c); used.sinceNew = (used.sinceNew || 0) + 1; continue; }
+      // reviews done: the rest of today's new items, with new parsing sentences between them
+      if (newLeft > 0) {
+        if (rnd() < 0.6 && takeNew()) continue;
+        const sc = next(false, ["sen"]); if (sc) { take(sc); continue; }
+        if (takeNew()) continue;
+      }
+      used.add("div"); // today's set is done: the note goes in front of the next card
     }
-    // 3. new phase
+    // 3. after today's set (endless): parsing sentences, re-reads, and now and then one more new drill/word
     if (pNew == null) pNew = newChance();
     let c = null, isNew = false;
     if (!out.some(x => x.t === "rr") && rnd() < 0.15) { const rp = rereadable(used)[0]; if (rp) { used.add("rr" + rp.id); c = { t: "rr", id: rp.id }; } }
     if (!c && rnd() < pNew) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
     if (!c) c = next(false, ["sen"]);
-    if (!c) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
+    // out of new sentences: re-reads and old sentences before more new drills/words, so going on longer doesn't
+    // flood the schedule (2026-11-13: the simulation added 20+ new items on a long day otherwise)
     if (!c) { const rp = rereadable(used)[0]; if (rp) { used.add("rr" + rp.id); c = { t: "rr", id: rp.id }; } }
     if (!c) { const i = pools.sen.findIndex(x => x.re && free(x)); if (i >= 0) c = pools.sen.splice(i, 1)[0]; }
+    if (!c) { c = next(false, ["lad", "ctx"]); isNew = !!c; }
     if (!c) break;
-    if (isNew && S.nb && !S.nb.under) { S.nb.over++; pNew = Math.max(0.05, Math.pow(0.5, S.nb.over / 3)); }
-    if (!used.has("divshown")) { used.add("divshown"); out.push({ t: "div", id: "div", none: !used.has("rev") && !out.some(x => x.due) }); }
+    if (isNew) { blockNew++; pNew = Math.max(0.05, newChance() * Math.pow(0.5, blockNew / 3)); } // taper within this block too (answers update newChance between blocks)
+    if (!used.has("divshown")) { used.add("divshown"); out.push({ t: "div", id: "div" }); }
     take(c);
   }
   if (out.some(c => c.due)) used.add("rev");
@@ -1873,19 +1943,18 @@ function renderSession(main) {
   const n = answered(s);
   main.innerHTML = `<div class="sbar"><button class="x" id="quit" aria-label="结束">■</button>
     <div class="cells">${s.goalN && !s.goalShown ? `<div class="mix" style="flex:1;background:var(--line)"><i style="width:${Math.min(100, n / s.goalN * 100)}%;background:var(--accent)"></i></div><span class="small muted" style="margin-left:8px">${n}/${s.goalN}</span>` : `<span class="small muted">第 ${n + 1} 张${s.goalShown ? " · 目标已达成 ✓" : ""} · 点 ■ 结束</span>`}</div>
-    <span class="combo" id="combo">${s.combo >= 2 ? "连对 ×" + s.combo : ""}</span></div><div id="slot"></div>`;
+    <span class="combo" id="combo">${s.combo >= 2 ? "连对 ×" + s.combo : ""}</span></div>${s.noteUntil > now() ? `<div class="dnote" id="dnote">今天该做的都做完了 ✓ · Everything for today is done</div>` : ""}<div id="slot"></div>`;
+  const dn = $("#dnote"); if (dn) setTimeout(() => { dn.classList.add("gone"); setTimeout(() => dn.remove(), 600); }, Math.max(0, s.noteUntil - now()));
   $("#quit").onclick = () => { s.ended = true; render(); };
   if (card.t === "ofb") return renderOfflineFb(card.k, $("#slot"), again => {
     if (again) { s.used.add("lad" + again.id); s.q.splice(s.i + 1, 0, again); }
     s.i++; render(); window.scrollTo(0, 0);
   });
   if (card.t === "div") {
-    s.pastDiv = true; logDone(); save(); // every review due today is done: from here on time counts as extra
-    $("#slot").innerHTML = `<div class="card" id="cc"><span class="label">${card.none ? "今天没有要复习的 · Nothing due today" : "复习完了 · Reviews done"}</span>
-      <h2>${card.none ? "今天没有要复习的" : "今天该复习的都完成了 ✓"}</h2>
-      <p class="muted">${card.none ? "Nothing is due for review today." : "That's everything due for review today."} From here on it's new material (new sentences and drills) and the odd re-read. Keep going as long as you like; tap ■ whenever.</p></div>`;
-    nextButton($("#cc"), () => { s.i++; render(); window.scrollTo(0, 0); });
-    return;
+    // today's set (due reviews + today's new items) is done: from here on time counts as extra. No card of its own:
+    // a slim line sits above the next card for a few seconds (2026-11-13, learner), then practice simply goes on.
+    s.pastDiv = true; logDone(); save();
+    s.noteUntil = now() + NOTE_MS; s.i++; return render();
   }
   const t0 = now();
   renderCard(card, $("#slot"), (r) => {
@@ -2947,7 +3016,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v59 · 11/11 18:25"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v60 · 11/13 13:32"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];

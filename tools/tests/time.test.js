@@ -34,7 +34,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
   await page.click('#tabs button[data-tab="me"]'); await sleep(300);
   const card = () => page.locator("#timecard").innerText();
   let txt = await card();
-  ok(/该复习的 scheduled 5 min/.test(txt) && /额外 extra 3 min/.test(txt) && /阅读 Reading 6 min/.test(txt), "(both devices) the card splits exercises into scheduled + extra, and reading: " + txt.split("\n").filter(l => /Exercises|Reading/.test(l)).join(" | "));
+  ok(/该做的 today's set 5 min/.test(txt) && /额外 extra 3 min/.test(txt) && /阅读 Reading 6 min/.test(txt), "(both devices) the card splits exercises into scheduled + extra, and reading: " + txt.split("\n").filter(l => /Exercises|Reading/.test(l)).join(" | "));
   ok(await page.locator("#timecard .tb").count() === 7 && /✓/.test(txt), "7 days by default, ✓ on a day all reviews were done");
   ok(/今天|周/.test(await page.locator(".tdet").innerText()) && /\d+ min/.test(await page.locator(".tdet").innerText()), "the latest bar's minutes are shown under the chart without hovering: " + await page.locator(".tdet").innerText());
   await page.locator('[data-tb="0"]').click(); await sleep(100);
