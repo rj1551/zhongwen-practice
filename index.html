@@ -2540,7 +2540,7 @@ function renderCtx(item, el, onResult, onNext, placement) {
 }
 function renderBank(id, el, onResult, onNext) {
   const b = S.bank[id];
-  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">生词 · From your reading</span></div>
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">你存的词 · Your saved word</span></div>
     <p class="sent">${b.s ? esc(b.s).replace(esc(b.zh), `<mark>${esc(b.zh)}</mark>`) : `<mark>${esc(b.zh)}</mark>`}</p>
     <button class="btn soft" id="rev">想一想，再看答案 Reveal</button><div id="fb"></div></div>`;
   const cc = $("#cc", el);
