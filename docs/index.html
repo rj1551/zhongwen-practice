@@ -3016,7 +3016,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v61 · 11/13 13:44"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v62 · 11/14 23:55"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];

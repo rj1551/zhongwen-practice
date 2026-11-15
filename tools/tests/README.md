@@ -25,3 +25,9 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
 - `daystart.test.js` (2026-11-10): the app day starts at 3:38 am (New York time zone in the test, daylight-saving nights included) — day labels, due times at 3:38, once-a-day rule, time log, home date, migration of old 12:00 am due times.
 - `divider.test.js` (2026-11-10, reworked 2026-11-13): today's set done → a slim note above the next card for a few seconds (no full-screen divider), once per app day on any device; later sessions start with same-day retries, no second note, all time extra; home ✓; back the next day.
 - `rhythm.test.js` (2026-11-13): today's allowance of new items (light/heavy load, card time not reading, 0 only when reviews fill the whole time, fixed per app day, trip pace) and placement (retries first, new items in the first ~40%, note after reviews + allowance).
+- `nosignal.test.js` + `hangsrv.js` (2026-11-14): opening the app with no signal. `hangsrv.js` serves a copy of `docs/` and can be told to
+  hang (accept requests, never answer, like a phone with no signal), be slow (5 s) or answer normally. Serve `docs/` copied to
+  `/home/claude/tests/site` with the service-worker line's `location.protocol === "https:"` check removed (it only registers on https):
+  `sed -i 's/!window.claude \&\& location.protocol === "https:") navigator.serviceWorker.register/!window.claude) navigator.serviceWorker.register/' site/index.html`,
+  then `setsid node hangsrv.js site 8790 &` and `node nosignal.test.js`. Checks: no signal → opens from the saved copy in ~3 s (before the
+  fix it never opened); offline → at once; online → a new version straight away; slow → saved copy, and the late answer is saved for next time.
