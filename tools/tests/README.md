@@ -31,3 +31,5 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   `sed -i 's/!window.claude \&\& location.protocol === "https:") navigator.serviceWorker.register/!window.claude) navigator.serviceWorker.register/' site/index.html`,
   then `setsid node hangsrv.js site 8790 &` and `node nosignal.test.js`. Checks: no signal → opens from the saved copy in ~3 s (before the
   fix it never opened); offline → at once; online → a new version straight away; slow → saved copy, and the late answer is saved for next time.
+- `nudge.test.js` (2026-11-15, same server/site as `nosignal.test.js`): the 备份 Backup reminder never shows when GitHub sync is set up on the
+  device (it used to flash on the first draw, before sync connected), and still shows on a device without sync.

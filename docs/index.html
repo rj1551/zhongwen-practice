@@ -1690,7 +1690,7 @@ function syncWarn() {
 }
 function backupNudge() {
   if (HOSTED) return "";
-  if (COL && COL.gh && GH.lastOk && now() - GH.lastOk < 4 * DAY) return ""; // GitHub holds a copy already
+  { const g = ghCfg(); if (g && g.token) return ""; } // GitHub sync set up on this device: it holds the copy (checked from the saved setting, so it doesn't flash before sync connects; 2026-11-15)
   const practicedSince = (S.updatedAt || 0) > (S.lastExport || 0) + MIN;
   if (!practicedSince || now() - (S.lastExport || 0) < 4 * DAY || !Object.keys(S.items).length) return "";
   return `<div class="card"><span class="label">备份 · Backup</span><p class="small">This offline copy only keeps progress on this device. Last copied out: <b>${ago(S.lastExport)}</b>. Copy a code (and merge it into the online version when you can).</p>
@@ -3016,7 +3016,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v62 · 11/14 23:55"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v63 · 11/15 14:58"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];

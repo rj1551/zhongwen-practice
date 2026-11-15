@@ -1689,7 +1689,7 @@ function syncWarn() {
 }
 function backupNudge() {
   if (HOSTED) return "";
-  if (COL && COL.gh && GH.lastOk && now() - GH.lastOk < 4 * DAY) return ""; // GitHub holds a copy already
+  { const g = ghCfg(); if (g && g.token) return ""; } // GitHub sync set up on this device: it holds the copy (checked from the saved setting, so it doesn't flash before sync connects; 2026-11-15)
   const practicedSince = (S.updatedAt || 0) > (S.lastExport || 0) + MIN;
   if (!practicedSince || now() - (S.lastExport || 0) < 4 * DAY || !Object.keys(S.items).length) return "";
   return `<div class="card"><span class="label">备份 · Backup</span><p class="small">This offline copy only keeps progress on this device. Last copied out: <b>${ago(S.lastExport)}</b>. Copy a code (and merge it into the online version when you can).</p>
