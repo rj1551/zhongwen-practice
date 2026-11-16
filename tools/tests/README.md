@@ -28,8 +28,11 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
 - `nosignal.test.js` + `hangsrv.js` (2026-11-14): opening the app with no signal. `hangsrv.js` serves a copy of `docs/` and can be told to
   hang (accept requests, never answer, like a phone with no signal), be slow (5 s) or answer normally. Serve `docs/` copied to
   `/home/claude/tests/site` with the service-worker line's `location.protocol === "https:"` check removed (it only registers on https):
-  `sed -i 's/!window.claude \&\& location.protocol === "https:") navigator.serviceWorker.register/!window.claude) navigator.serviceWorker.register/' site/index.html`,
+  `sed -i 's/!window.claude \&\& location.protocol === "https:") {/!window.claude) {/' site/index.html` (since v64; before that the line ended in `navigator.serviceWorker.register`),
   then `setsid node hangsrv.js site 8790 &` and `node nosignal.test.js`. Checks: no signal → opens from the saved copy in ~3 s (before the
   fix it never opened); offline → at once; online → a new version straight away; slow → saved copy, and the late answer is saved for next time.
 - `nudge.test.js` (2026-11-15, same server/site as `nosignal.test.js`): the 备份 Backup reminder never shows when GitHub sync is set up on the
   device (it used to flash on the first draw, before sync connected), and still shows on a device without sync.
+- `update.test.js` (2026-11-16, same server/site): "新版本已下载 · New version ready". Online + same version → no notice; slow → opens the saved
+  version, the notice appears once the late download is saved; hidden during practice, back on the next screen; ✕ hides it for that
+  version; 切换 Switch runs the new version; an older saved copy never offers a switch.

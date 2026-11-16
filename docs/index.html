@@ -49,6 +49,7 @@ p{margin:0}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;border-radius:12px;font-weight:600;background:var(--accent);color:var(--accent-ink);min-height:46px}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
 .btn.soft{background:var(--accent-soft);color:var(--ink)}
+.updline{flex-direction:row;align-items:center;gap:10px;padding:10px 12px} .updline>span{flex:1} .updline .btn{min-height:40px;padding:6px 14px}
 .fpick{position:relative;cursor:pointer}.fpick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;font-size:16px}
 .btn.wide{width:100%}
 .btn:disabled{opacity:.45;cursor:default}
@@ -1614,6 +1615,7 @@ function render() {
   else if (VIEW === "read") renderRead(main);
   else if (VIEW === "me") renderMe(main);
   else if (VIEW === "listen") renderListen(main);
+  drawUpdate();
 }
 $("#tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (!b) return; if (b.dataset.tab === "read") READ = null; if (b.dataset.tab === "listen" && !(AUD && !AUD.paused)) { stopAudio(); LST = null; } setView(b.dataset.tab); });
 
@@ -3016,7 +3018,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v63 · 11/15 14:58"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v64 · 11/16 13:07"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5643,6 +5645,33 @@ function rescoreLastPlacement() {
   save();
 }
 
+/* ============ new version ready (2026-11-16) ============ */
+// On a slow connection the offline copy opens the saved version and the new one finishes downloading later (sw.js NET_WAIT).
+// Then a slim line at the top offers to switch. Never reloads by itself, and never shows mid-card or mid-song (busyView):
+// it waits for the next screen. ✕ hides it for that version until the app is opened again.
+const UPD = { ver: null, hide: null };
+const UPD_RE = new RegExp("const APP_" + "VERSION = \"([^\"]+)\""); // split so this line doesn't match itself
+const verNum = v => { const m = /zwlgf-v(\d+)/.exec(v || ""); return m ? +m[1] : 0; };
+async function checkUpdate() {
+  if (APP_VERSION.startsWith("__") || !("caches" in window)) return;
+  try {
+    const r = await caches.match(location.href.split("#")[0], { ignoreSearch: true }) || await caches.match("index.html", { ignoreSearch: true });
+    if (!r) return;
+    const m = UPD_RE.exec(await r.text()), v = m && m[1];
+    const newer = v && v !== APP_VERSION && !v.startsWith("__") && verNum(v) >= verNum(APP_VERSION);
+    if ((newer ? v : null) !== UPD.ver) { UPD.ver = newer ? v : null; drawUpdate(); }
+  } catch (e) {}
+}
+function drawUpdate() {
+  const old = $("#updline"); if (old) old.remove();
+  if (!UPD.ver || UPD.hide === UPD.ver || busyView()) return;
+  const d = document.createElement("div"); d.id = "updline"; d.className = "card updline";
+  d.innerHTML = `<span class="small">新版本已下载 · New version ready</span><button class="btn soft" id="upd-go">切换 Switch</button><button class="btn ghost" id="upd-x" aria-label="以后再说 Later">✕</button>`;
+  $("#main").prepend(d);
+  $("#upd-go").onclick = () => { save(); location.reload(); };
+  $("#upd-x").onclick = () => { UPD.hide = UPD.ver; d.remove(); };
+}
+
 /* ============ boot ============ */
 (async function boot() {
   try { await loadData(); }
@@ -5656,7 +5685,13 @@ function rescoreLastPlacement() {
   drawOffline();
   connectRemote();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(v => { PERSISTED = v; if (VIEW === "me") render(); }).catch(() => {}); } catch (e) {}
-  if ("serviceWorker" in navigator && !window.claude && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && !window.claude && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+    navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "page-saved") checkUpdate(); });
+    navigator.serviceWorker.addEventListener("controllerchange", () => checkUpdate());
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });
+    setTimeout(checkUpdate, 1500);
+  }
 })();
 </script>
 
