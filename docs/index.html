@@ -1021,7 +1021,7 @@ let DICT = new Map(), C = null, ANKI = { s: 0, f: 0, k: 0, l: 0, u: 0 };
 const LADDER = new Map(), SEG = new Map(), CTX = new Map(), PSG = new Map(), SEN = new Map();
 async function loadData() {
   const [w, c] = await Promise.all([fetch("data/words.json").then(r => r.json()), fetch("data/content.json").then(r => r.json())]);
-  for (const [word, py, gl, lv, tier, lapses] of w) { DICT.set(word, { py, gl, lv, tier, lapses }); ANKI[tier]++; }
+  for (const [word, py, gl, lv, tier, lapses, ivl] of w) { DICT.set(word, { py, gl, lv, tier, lapses, ivl: ivl || 0 }); ANKI[tier]++; }
   C = c;
   c.ladder.forEach(x => LADDER.set(x.id, x));
   c.seg.forEach(x => SEG.set(x.id, x));
@@ -3018,7 +3018,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v65 · 11/16 20:41"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v66 · 11/16 22:53"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4795,17 +4795,67 @@ async function saveTextFile(name, text) {
 // Rules for comprehension questions Claude writes (generated passages and your own texts).
 const QS_RULES = `exactly 3 questions in English about the content; each has 4 options in English with the correct one FIRST, plus "why": 4 one-line reasons in the same order (for the correct option quote the Chinese words that decide it; for each wrong option say exactly what it gets wrong, quoting the text where useful). Make the questions hard to answer by elimination: every wrong option must be built from details that really are in the text (a detail from a different sentence, the wrong person or place, cause and effect reversed, a missed 不/没/并非/未必 or contrast like 但/却/反而/而是, an overstatement such as all vs some or already vs expected, or a true statement that doesn't answer the question), so it sounds right to someone who only skimmed; never use options that general knowledge alone rules out. At least one question must hinge on a structure word or phrase (negation, contrast, condition, degree, time). Options roughly the same length.`;
 const toQs = qs => (Array.isArray(qs) ? qs : []).slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => { const o = { q: String(q.q), opts: q.opts.slice(0, 4).map(String) }; if (Array.isArray(q.why) && q.why.length === o.opts.length) o.ex = q.why.map(String); return o; });
-function targetWords(n) {
-  const pool = [];
-  for (const [w, d] of DICT) if ((d.tier === "l" || d.tier === "f" || d.tier === "k") && w.length >= 2) pool.push(w);
-  return shuffle(pool).slice(0, n);
+// What generated readings and drills aim at (2026-11-16, learner agreed): follows progress instead of the frozen
+// Anki list alone. Anki is retired, so its Oct 2026 snapshot is only a starting pool that the app's own cards correct.
+//  reviewWords: word cards in the app that are struggling now (last answer missed, low stability or close to forgotten),
+//    soonest due first, then saved words not met yet (newest first): meeting them in a passage backs up the card.
+//  fadingWords: Anki leech/fading/shaky words that were once learned (Anki interval > 30 days, learner's rule) and
+//    have no card in the app yet.
+//  newWords: words not learned yet, alternating two pools so neither crowds out the other: weak Anki words that never
+//    got past a 30-day interval (lower HSK level first) and unseen HSK 7–9 words. A word offered in OFFER_MAX generated
+//    passages and never saved stops being offered.
+const OFFER_MAX = 3, WEAK_IVL = 30;
+function wordCards() {
+  const m = new Map();
+  for (const [id, it] of Object.entries(S.items)) if (it.t === "bank" && id.startsWith("B:")) m.set(id.slice(2), it);
+  for (const [id, x] of CTX) { const it = S.items[id]; if (it) m.set(x.w, it); }
+  return m;
+}
+let OFFERS = { n: -1, m: new Map() };
+function passageOffers() { // how many generated passages each word appears in (as a token)
+  const list = S.gen.passages || [];
+  if (OFFERS.n === list.length) return OFFERS.m;
+  const m = new Map();
+  for (const p of list) { const seen = new Set(); for (const para of p.paras || []) for (const t of String(para).split("|")) seen.add(t.trim()); for (const t of seen) m.set(t, (m.get(t) || 0) + 1); }
+  OFFERS = { n: list.length, m }; return m;
+}
+function vocabTargets() {
+  const cards = wordCards(), t = now(), hash = dayShuffle;
+  const struggling = [];
+  for (const [w, it] of cards) {
+    const h = it.h || []; if (!h.length) continue;
+    const last = h[h.length - 1], lastMiss = typeof last[2] === "number" && last[2] < 50;
+    const r = it.s && it.lr ? fsrsR(fsrsW(fsrsGroup(it.t)), (t - it.lr) / DAY, it.s) : 1;
+    if (lastMiss || (it.s && it.s < 7) || r < 0.85) struggling.push([w, it.due || 0]);
+  }
+  struggling.sort((a, b) => a[1] - b[1]);
+  const unseenSaved = Object.entries(S.bank || {}).filter(([w]) => !(S.items["B:" + w] || {}).h).sort((a, b) => (b[1].t || 0) - (a[1].t || 0)).map(([w]) => w);
+  const reviewWords = [...new Set(struggling.map(x => x[0]).concat(unseenSaved))].slice(0, 15);
+  const weak = d => d.tier === "l" || d.tier === "f" || d.tier === "k", offers = passageOffers();
+  const fading = [], barely = [], unseen = [];
+  for (const [w, d] of DICT) {
+    if (w.length < 2 || cards.has(w) || (S.bank || {})[w]) continue;
+    if (weak(d) && d.ivl > WEAK_IVL) fading.push(w);
+    else if ((offers.get(w) || 0) >= OFFER_MAX) continue;
+    else if (weak(d)) barely.push(w);
+    else if (d.tier === "u" && d.lv >= 5) unseen.push(w);
+  }
+  const rank = new Map(hash(barely).map((w, i) => [w, i]));
+  barely.sort((a, b) => (DICT.get(a).lv - DICT.get(b).lv) || (rank.get(a) - rank.get(b)));
+  const u = hash(unseen), fresh = [];
+  for (let i = 0; fresh.length < 40 && (i < barely.length || i < u.length); i++) { if (i < barely.length) fresh.push(barely[i]); if (i < u.length) fresh.push(u[i]); }
+  return { reviewWords, fadingWords: hash(fading).slice(0, 25), newWords: fresh.slice(0, 40) };
+}
+function targetWords(n) { // for the in-app Generate buttons: words to practise (struggling first, then fading)
+  const v = vocabTargets(); return [...new Set(v.reviewWords.concat(v.fadingWords))].slice(0, n);
 }
 async function genPassage(kind, quiet) {
   const genStatus = quiet ? () => {} : window.genStatus;
   const targets = targetWords(10);
   const genre = { xhs: "a Xiaohongshu-style post (casual, internet slang, emoji allowed) about everyday life or travel in China", news: "a short news brief in formal written register (据…显示, 随着…, 有望 etc.), clearly fictional figures", book: "a short literary narrative excerpt, past tense, descriptive", travel: "a realistic dialogue between a traveller and a local in China (ordering, directions, tickets, hotels), each line prefixed 甲：or 乙：" }[kind];
   const prompt = `Write a short Chinese reading passage for an advanced learner (knows HSK 1–6 well; struggles to parse running text quickly). Genre: ${genre}. 140–220 characters, simplified Chinese.
-Naturally include at least 5 of these words the learner keeps forgetting: ${targets.join("、")}.
+Naturally include at least 4 of these words the learner is reviewing or forgetting: ${targets.join("、")}.
+Also use 2–4 words the learner hasn't learned yet, chosen from this list because they fit this text naturally and are worth knowing (common in this kind of writing): ${vocabTargets().newWords.slice(0, 25).join("、")}.
 Reply with only JSON:
 {"title":"Chinese title","paras":["token|token|token|…"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}
 Questions: ${QS_RULES}
@@ -5512,10 +5562,10 @@ function applyRepoPacks() {
 function dayShuffle(list) { const d = dayKey(); const h = x => { let v = 2166136261; for (const c of d + x) { v ^= c.charCodeAt(0); v = Math.imul(v, 16777619); } v ^= v >>> 15; v = Math.imul(v, 2246822507); v ^= v >>> 13; return v >>> 0; }; return list.slice().sort((a, b) => h(a) - h(b)); }
 // what the next generation should aim at: the same lists the Generate buttons use
 function genHints() {
-  const pool = []; for (const [w, d] of DICT) if ((d.tier === "l" || d.tier === "f" || d.tier === "k") && w.length >= 2) pool.push(w);
+  const v = vocabTargets();
   return {
     missedDrills: [...LADDER.values()].filter(x => { const it = S.items[x.id]; return it && it.n > it.ok; }).slice(0, 15).map(x => ladParts(x).key + " (" + x.en + ")"),
-    forgottenWords: dayShuffle(pool).slice(0, 30),
+    reviewWords: v.reviewWords, fadingWords: v.fadingWords, newWords: v.newWords,
     misreadStructures: Object.values(S.items).filter(it => it.t === "frag" && it.p).sort((a, b) => (a.due || 0) - (b.due || 0)).map(it => it.p).slice(0, 12),
     recentDrillsEn: S.gen.ladder.slice(-40).map(x => x.en) // so new drills don't repeat these
   };

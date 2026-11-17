@@ -53,10 +53,10 @@ const note = {
   hints: {}, packsDone: strs(o.packsDone, 80, 70).filter(x => /^[\w.-]{1,60}$/.test(x)),
 };
 const h = o.hints || {};
-for (const [k, n, max] of [["missedDrills", 40, 240], ["forgottenWords", 40, 20], ["misreadStructures", 20, 30], ["recentDrillsEn", 60, 240]]) {
+for (const [k, n, max] of [["missedDrills", 40, 240], ["forgottenWords", 40, 20], ["reviewWords", 20, 20], ["fadingWords", 30, 20], ["newWords", 50, 20], ["misreadStructures", 20, 30], ["recentDrillsEn", 60, 240]]) {
   const list = strs(h[k], n, max), kept = list.filter(x => !suspect(x));
   if (kept.length < list.length) held.push({ rid: "hints." + k, why: `${list.length - kept.length} hint(s) looked like instructions and were left out` });
-  note.hints[k] = kept;
+  if (kept.length || k !== "forgottenWords") note.hints[k] = kept; // forgottenWords: only from notes written by app versions before v66
 }
 
 // the texts questions are asked about: only the items requested, only the fields needed

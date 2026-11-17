@@ -79,7 +79,10 @@ V得 complements, 把, 连…都). Leeches are formal written-register words (�
 choose from, or "auto" = your choice, mostly news and xhs). Only write passages in the listed genres.
 
 `hints` in the note: `missedDrills` (key chunk + English of drills they got wrong: write NEW drills on these
-chunks/patterns, never reuse the sentence), `forgottenWords` (use some as key chunks and in passages),
+chunks/patterns, never reuse the sentence), `reviewWords` (word cards the learner is struggling with now or saved
+and hasn't met yet: use them first, in passages and as key chunks), `fadingWords` (once-learned words likely fading:
+use some in passages and as key chunks), `newWords` (not learned yet, lower HSK level first: passages only, see
+below; notes from older app versions have `forgottenWords` instead of the three: treat it as `fadingWords`),
 `misreadStructures` (use them, written exactly as listed, in some parsing sentences — **at most 2 sentences per
 structure per pack**; the app saves sentences containing them for that structure's spaced reviews, and the check
 enforces the limit), `recentDrillsEn` (don't repeat
@@ -121,8 +124,11 @@ Each: `{"kind": "xhs|news|travel|book", "title": "Chinese title", "paras": ["tok
   a traveller and a local in China (ordering, directions, tickets, hotels), each line prefixed 甲：or 乙：. Rotate
   genres; news and xhs most often.
 - 140–220 characters, simplified Chinese, 2–4 paragraphs; every paragraph segmented with | between EVERY token
-  (punctuation is its own token: 我|今天|去|了|上海|。). Naturally include at least 5 `forgottenWords`.
-- `gl` covers every slang word, name, HSK7+ word, each target word you used, and every word whose pronunciation or
+  (punctuation is its own token: 我|今天|去|了|上海|。). Naturally include at least 4 words from `reviewWords` +
+  `fadingWords` (prefer `reviewWords`), and 2–4 `newWords`: pick ones that fit the text naturally and are worth knowing
+  (common in this genre), not just the first in the list; use each new word as one token so the app can see it was
+  offered; don't build a passage around them, and spread different new words across a pack's passages.
+- `gl` covers every slang word, name, HSK7+ word, each target word and new word you used, and every word whose pronunciation or
   meaning here differs from its most common one (pinyin and meaning used in THIS context).
 - Questions: exactly 3 questions in English about the content; each has 4 options in English with the correct one
   FIRST, plus "why": 4 one-line reasons in the same order (for the correct option quote the Chinese words that decide

@@ -88,7 +88,7 @@ const genCounts = pg => pg.evaluate(() => ({ lad: S.gen.ladder.length, sen: S.ge
   const A = await device(browser, g, stateWith({ L01: { t: "lad", n: 1, h: [[T, 5, 3]] } }), null);
   await connect(A.page); await sleep(1500); await A.page.evaluate(() => ghSyncNow());
   const ob = g.files()["outbox.json"] && JSON.parse(g.files()["outbox.json"]);
-  ok(ob && ob.v === 1 && ob.target.mode === "ahead" && ob.target.days === 14 && ob.short && ob.hints && Array.isArray(ob.hints.forgottenWords), "outbox.json written: target 14 days, short " + (ob && JSON.stringify(ob.short)));
+  ok(ob && ob.v === 1 && ob.target.mode === "ahead" && ob.target.days === 14 && ob.short && ob.hints && ["reviewWords", "fadingWords", "newWords"].every(k => Array.isArray(ob.hints[k])), "outbox.json written: target 14 days, short " + (ob && JSON.stringify(ob.short)));
   const c0 = g.count(); await A.page.evaluate(() => ghSyncNow()); await A.page.evaluate(() => ghSyncNow());
   ok(g.count() === c0, "no new commits when nothing changed (outbox stable)");
   // a pack arrives in the repo

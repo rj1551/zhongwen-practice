@@ -36,3 +36,7 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
 - `update.test.js` (2026-11-16, same server/site): "新版本已下载 · New version ready". Online + same version → no notice; slow → opens the saved
   version, the notice appears once the late download is saved; hidden during practice, back on the next screen; ✕ hides it for that
   version; 切换 Switch runs the new version; an older saved copy never offers a switch.
+- `vocab.test.js` (2026-11-16, 8765 server): what generated readings aim at — `reviewWords` (struggling saved/word cards
+  first, then saved words not met yet), `fadingWords` (weak Anki words with interval > 30 days, no card in the app),
+  `newWords` (weak words that never passed 30 days alternating with unseen HSK 7–9; not after 3 offers in generated
+  passages); the note carries the three lists; `inputs.js` keeps them (and an older app's `forgottenWords`).

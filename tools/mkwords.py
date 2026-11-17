@@ -24,9 +24,9 @@ for o in d:
   py=o['py'].replace('//','').replace('-',' ')
   t=T[o['tier']]
   if t=='u' and LV[o['lv']]<=4 and LV[o['lv']]>0: t='s'
-  out.append([o['w'],py,short(o['en']),LV[o['lv']],t,o['lapses']])
+  out.append([o['w'],py,short(o['en']),LV[o['lv']],t,o['lapses'],o.get('ivl',0)])  # ivl: Anki interval (days) at export, Oct 2026
 OV={'了':'(particle: completed action / change of state)','的':'(particle: possessive, modifier)','得':'(particle linking a verb to its complement)','着':'(particle: ongoing action or state)','地':'(particle: adverbial, -ly)','过':'(particle: past experience); pass, cross','吗':'(question particle)','吧':'(particle: suggestion, assumption)','呢':'(particle: and what about…?, ongoing)','啊':'(particle: softening, exclamation)','行':'OK, capable; to walk, go','把':'(object marker); handle; classifier for things with handles'}
-out=[[r[0],r[1],OV.get(r[0],r[2]) or r[2],r[3],r[4],r[5]] for r in out]
+out=[[r[0],r[1],OV.get(r[0],r[2]) or r[2],r[3],r[4],r[5],r[6]] for r in out]
 for r in out:
   if not r[2].strip(' ,.'): r[2]='—'
 json.dump(out,open(sys.argv[2],'w'),ensure_ascii=False,separators=(',',':'))
