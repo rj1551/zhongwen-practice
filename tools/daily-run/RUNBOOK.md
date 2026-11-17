@@ -151,6 +151,9 @@ Each has a `rid` (copy it exactly into the answer) and a `kind`:
   ONE natural sentence (simplified Chinese, 10–25 characters) that uses the word exactly as written, in the given
   meaning if one is given, in the register the word normally belongs to (everyday for colloquial words, formal for
   written-register words); the rest can use normal advanced vocabulary. Supply py/gl only if they were missing.
+  With `"new": true` the word is one the app picked for the learner to learn (they haven't met it yet): the sentence
+  is its first card, so make the context point to the meaning (they guess it before looking), use the word in its most
+  common sense, and keep the other words everyday ones; still 10–25 characters and natural.
 - **`questions`** `{rid: "q:mine:<partId>" | "q:listen:<id>", target, id}`: comprehension questions for one of the
   learner's own texts or a listening transcript. The text is in `/tmp/run-inputs.json` → `texts[rid]`: own texts
   have `paras` (tokens joined by `|`), transcripts `cues` (`[[seconds or null, line], …]`; use all the lines).

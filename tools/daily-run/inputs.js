@@ -74,7 +74,7 @@ for (const r of Array.isArray(o.requests) ? o.requests.slice(0, 400) : []) {
   const kind = oneOf(r.kind, Object.keys(RID)), rid = str(r.rid, 90);
   if (!kind || !RID[kind].test(rid)) { hold(rid || "?", "unknown request kind or id"); continue; }
   let q;
-  if (kind === "sentence") q = { rid, kind, w: str(r.w, 20), py: str(r.py, 60), gl: str(r.gl, 160) };
+  if (kind === "sentence") { q = { rid, kind, w: str(r.w, 20), py: str(r.py, 60), gl: str(r.gl, 160) }; if (r.new === true) q.new = true; }
   else if (kind === "passage") q = { rid, kind, genre: oneOf(r.genre, GENRES), topic: str(r.topic, 80) };
   else if (kind === "pyfix") {
     const id = str(r.id, 60), h = str(r.h, 12), auto = strs(r.auto, 300, 1500);

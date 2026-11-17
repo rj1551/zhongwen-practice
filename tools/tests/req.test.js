@@ -115,7 +115,7 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
   await pg.evaluate(() => { document.querySelector('[data-genre="book"]').click(); });
   await sleep(1500); await pg.evaluate(() => ghSyncNow()); await sleep(1800); await pg.evaluate(() => SYNCQ); await pg.evaluate(() => ghSyncNow());
   const ob = JSON.parse(g.files()["outbox.json"]);
-  const kinds = ob.requests.map(r => r.kind).sort().join(",");
+  const kinds = ob.requests.filter(r => !r.new).map(r => r.kind).sort().join(","); // new: sentences for words the app picked (v67), always topped up
   ok(kinds === "passage,questions,questions,regrade,sentence", "outbox lists every request: " + kinds);
   ok(ob.requests.find(r => r.kind === "passage").genre === "news" && ob.requests.find(r => r.kind === "passage").topic === "高铁", "passage request carries genre + topic");
   ok(ob.requests.find(r => r.kind === "regrade").en && ob.requests.find(r => r.kind === "regrade").ref.length, "regrade request carries the drill");
@@ -157,7 +157,7 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
   ok(/Claude disagrees/.test(home) && !/Waiting for Claude/i.test(home), "home: Claude's regrade shown (disagrees), waiting card gone");
   await pg.screenshot({ path: "req-results.png" });
   await sleep(1800); await pg.evaluate(() => ghSyncNow()); await sleep(1800); await pg.evaluate(() => SYNCQ); await pg.evaluate(() => ghSyncNow());
-  ok(JSON.parse(g.files()["outbox.json"]).requests.length === 0, "the note to Claude no longer lists them");
+  ok(JSON.parse(g.files()["outbox.json"]).requests.filter(r => !r.new).length === 0, "the note to Claude no longer lists them");
   const B = await device(browser, g, null, null); await connect(B.page); await sleep(1000);
   ok(await B.page.evaluate(() => (S.req || []).length === 0 && S.packLog.length === 1 && S.bank.测试词.s === "这是一个测试词的例句。"), "device B: same results, nothing applied twice");
   console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");

@@ -775,7 +775,7 @@ function mergeStates(a, b) {
     if (!y) { m.bank[k] = x; continue; }
     const hasS = b => !!b.s && !b.needS;
     const keep = hasS(y) || !hasS(x) ? y : x, tags = [...new Set([...(y.tags || []), ...(x.tags || [])])];
-    m.bank[k] = Object.assign({}, keep, tags.length ? { tags } : {});
+    m.bank[k] = Object.assign({}, keep, tags.length ? { tags } : {}, x.saved || y.saved ? { saved: true } : {});
   }
   for (const k in o.reads || {}) {
     const x = o.reads[k], y = m.reads[k];
@@ -1587,7 +1587,19 @@ function candidates(cat, done = doneToday()) {
     for (const [id] of SEG) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "seg", id }); else if (it.due <= t) due.push({ t: "seg", id, due: it.due }); }
   } else {
     for (const [id] of CTX) { if (done(id)) continue; const it = S.items[id]; if (!it) fresh.push({ t: "ctx", id }); else if (it.due <= t) due.push({ t: "ctx", id, due: it.due, k0: dueKey(it) }); }
-    for (const id in S.bank) { if (done("B:" + id)) continue; const it = S.items["B:" + id]; if (!it) fresh.unshift({ t: "bank", id }); else if (it.due <= t) due.push({ t: "bank", id, due: it.due, k0: dueKey(it) }); }
+    const savedF = [], autoF = [];
+    for (const id in S.bank) {
+      if (done("B:" + id)) continue; const it = S.items["B:" + id], b = S.bank[id];
+      if (!it) { if (!isAutoWord(b)) savedF.unshift({ t: "bank", id }); else if (b.s && !b.needS) autoF.push({ t: "bank", id, at: b.t || 0 }); }
+      else if (it.due <= t) due.push({ t: "bank", id, due: it.due, k0: dueKey(it) });
+    }
+    autoF.sort((a, b) => a.at - b.at);
+    // alternate: if the last word met for the first time was a saved one, an auto word comes first, and the other way round
+    const lastFirst = auto => Math.max(0, ...Object.keys(S.bank).filter(w => isAutoWord(S.bank[w]) === auto).map(w => (((S.items["B:" + w] || {}).h || [])[0] || [0])[0]));
+    const autoFirst = lastFirst(false) >= lastFirst(true) && autoF.length;
+    const words = [];
+    for (let i = 0; i < Math.max(savedF.length, autoF.length); i++) { const a = autoF[i], v = savedF[i]; if (autoFirst) { if (a) words.push(a); if (v) words.push(v); } else { if (v) words.push(v); if (a) words.push(a); } }
+    fresh.unshift(...words);
     for (const id in S.items) { const it = S.items[id]; if (it.t === "frag" && it.due <= t && !done(id)) due.push({ t: "frag", id, due: it.due, k0: dueKey(it) }); }
   }
   due.sort((a, b) => (a.k0 != null && b.k0 != null ? a.k0 - b.k0 : a.due - b.due));
@@ -1918,6 +1930,7 @@ function readingSwap(s) {
   return null;
 }
 function startSession(goal) {
+  autoTopUp();
   const g = goal === undefined ? ((S.settings && S.settings.goal) || 0) : goal;
   SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), retry: [], requeued: new Set(), promoted: 0, mastered: 0, ended: false };
   SESSION.fbUsed = new Set();
@@ -2543,7 +2556,8 @@ function renderCtx(item, el, onResult, onNext, placement) {
 }
 function renderBank(id, el, onResult, onNext) {
   const b = S.bank[id];
-  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">你存的词 · Your saved word</span></div>
+  if (isAutoWord(b) && !S.items["B:" + id]) return renderNewWord(id, el, onResult, onNext);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">${isAutoWord(b) ? "词汇 · Vocabulary" : "你存的词 · Your saved word"}</span></div>
     <p class="sent">${b.s ? esc(b.s).replace(esc(b.zh), `<mark>${esc(b.zh)}</mark>`) : `<mark>${esc(b.zh)}</mark>`}</p>
     <button class="btn soft" id="rev">想一想，再看答案 Reveal</button><div id="fb"></div></div>`;
   const cc = $("#cc", el);
@@ -2556,6 +2570,26 @@ function renderBank(id, el, onResult, onNext) {
       recordBox("B:" + id, "bank", ok, "ctx");
       $$("[data-k]", el).forEach(y => y.disabled = true);
       onResult({ ok, score: ok ? 1 : 0 });
+      nextButton(cc, onNext);
+    });
+  };
+}
+// First meeting of a word the app picked (2026-11-16): it's new, so no 记得/忘了. Guess it from the sentence, look,
+// then 知道了 starts its reviews (counts as a first good meeting), or 我认识 drops it (no card, not picked again).
+function renderNewWord(id, el, onResult, onNext) {
+  const b = S.bank[id];
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">新词 · New word</span></div>
+    <p class="sent">${esc(b.s).replace(esc(b.zh), `<mark>${esc(b.zh)}</mark>`)}</p>
+    <button class="btn soft" id="rev">先从句子猜猜，再看意思 Guess from the sentence, then look</button><div id="fb"></div></div>`;
+  const cc = $("#cc", el);
+  $("#rev", el).onclick = () => {
+    $("#rev", el).remove();
+    $("#fb", el).innerHTML = `<div class="fb mid"><span><span class="zh" style="font-size:22px">${esc(b.zh)}</span> ${esc(b.py || "")}</span><span>${esc(b.gl || "")}</span>
+      <div class="row"><button class="btn soft" data-k="learn">知道了，以后复习 Got it, review later</button><button class="btn ghost" data-k="know">我认识这个词 I know this word</button></div></div>`;
+    $$("[data-k]", el).forEach(x => x.onclick = () => {
+      $$("[data-k]", el).forEach(y => y.disabled = true);
+      if (x.dataset.k === "learn") { recordBox("B:" + id, "bank", true, "ctx"); onResult({ ok: true, score: 1 }); }
+      else { removeFromBank(id, false); onResult({ ok: true, score: 1, skip: true }); toast("好的，不再出现 · OK, it won't come up"); }
       nextButton(cc, onNext);
     });
   };
@@ -3018,7 +3052,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v66 · 11/16 22:53"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v67 · 11/17 00:19"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -3027,7 +3061,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const L = A ? { py: A.readings[0].py, gl: A.readings[0].gl, tier: A.tier, lv: A.lv } : null;
   const parts = tok.includes("/") ? tok.split("/").map(x => ({ x, d: lookup(x, p.gl || {}) })) : [];
   const chars = charBreak(tok);
-  const inBank = !!S.bank[word];
+  const inBank = !!S.bank[word] && !isAutoWord(S.bank[word]);
   const wide = window.innerWidth >= 900;
   const sh = document.createElement("div"); sh.className = "sheet" + (wide ? " pop" : ""); sh.id = "sheet";
   const more = parts.length || chars.length > 1 || (A && A.readings.length > 3);
@@ -3073,6 +3107,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   $("#cls", sh).onclick = closeSheet;
   const mb = $("#more", sh); if (mb) mb.onclick = () => { $("#moreb", sh).hidden = !$("#moreb", sh).hidden; mb.textContent = $("#moreb", sh).hidden ? "更多 More" : "收起 Less"; place(); };
   $("#addb", sh).onclick = () => {
+    if (S.bank[word] && isAutoWord(S.bank[word])) { S.bank[word].saved = true; save(); closeSheet(); toast("已在复习中 · Already in your review"); return; }
     if (S.bank[word]) { removeFromBank(word); toast("已移出复习 Removed"); closeSheet(); return; }
     S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? L.gl : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
     if (p.tags && p.tags.length) S.bank[word].tags = p.tags.slice();
@@ -3163,7 +3198,7 @@ function parseTags(str) {
 function allTags() {
   const n = {};
   for (const p of (S.gen.mine || [])) if (p.part === 0) for (const t of p.tags || []) n[t] = (n[t] || 0) + 1;
-  for (const b of Object.values(S.bank)) for (const t of b.tags || []) n[t] = (n[t] || 0) + 1;
+  for (const b of Object.values(S.bank)) if (!isAutoWord(b)) for (const t of b.tags || []) n[t] = (n[t] || 0) + 1;
   for (const it of S.gen.listen || []) for (const t of it.tags || []) n[t] = (n[t] || 0) + 1;
   return Object.keys(n).sort((a, b) => n[b] - n[a]);
 }
@@ -3411,9 +3446,10 @@ function bindBankAdd(card, redraw) {
   $("#aok", card).onclick = () => {
     const tags = parseTags(BANK_ADD.tags);
     for (const r of BANK_ADD.rows) {
-      const rd = r.rds[r.pick] || null, old = S.bank[r.w] || {};
+      const rd = r.rds[r.pick] || null, old = S.bank[r.w] || {}, wasAuto = isAutoWord(old);
       S.bank[r.w] = Object.assign({}, old, { zh: r.w, py: rd ? rd.py : old.py || "", gl: rd ? rd.gl : old.gl || "", s: r.s ? r.s : old.s && old.s !== r.w ? old.s : "", t: now(), src: old.src || "manual",
         tags: [...new Set([...(old.tags || []), ...tags])] });
+      if (wasAuto) { S.bank[r.w].s = old.s || S.bank[r.w].s; S.bank[r.w].saved = true; } // no second card; its sentence stays (learner)
       S.bank[r.w].needS = !S.bank[r.w].s;
       if (!S.bank[r.w].tags.length) delete S.bank[r.w].tags;
     }
@@ -3462,7 +3498,7 @@ Reply with only a JSON array: [{"i": number, "s": "sentence", "py": "pinyin with
   if (VIEW === "home" || VIEW === "me") render();
 }
 function sentWaitHtml() {
-  const left = wordsNeedingSentence().length;
+  const left = wordsNeedingSentence().filter(b => !isAutoWord(b)).length;
   if (!HOSTED || (!left && !SENT_RUN)) return "";
   if (SENT_RUN) return `<p class="small"><span class="spin"></span> 🔤 Claude 在写例句… Writing example sentences ${SENT_RUN.done}/${SENT_RUN.n}</p>`;
   const req = Math.ceil(left / SENT_BATCH);
@@ -4758,7 +4794,7 @@ function bindProv() {
 
 /* ============ export saved words for Anki / Pleco ============ */
 function exportWords(format, scope) {
-  let list = Object.values(S.bank).sort((a, b) => a.t - b.t);
+  let list = Object.values(S.bank).filter(b => !isAutoWord(b)).sort((a, b) => a.t - b.t);
   if (scope === "new") list = list.filter(b => b.t > (S.lastWordExport || 0));
   else if (scope && scope.startsWith("tag:")) list = list.filter(b => (b.tags || []).includes(scope.slice(4)));
   if (!list.length) { toast("没有可导出的词 · No words to export"); return; }
@@ -4829,7 +4865,7 @@ function vocabTargets() {
     if (lastMiss || (it.s && it.s < 7) || r < 0.85) struggling.push([w, it.due || 0]);
   }
   struggling.sort((a, b) => a[1] - b[1]);
-  const unseenSaved = Object.entries(S.bank || {}).filter(([w]) => !(S.items["B:" + w] || {}).h).sort((a, b) => (b[1].t || 0) - (a[1].t || 0)).map(([w]) => w);
+  const unseenSaved = Object.entries(S.bank || {}).filter(([w, b]) => !isAutoWord(b) && !(S.items["B:" + w] || {}).h).sort((a, b) => (b[1].t || 0) - (a[1].t || 0)).map(([w]) => w);
   const reviewWords = [...new Set(struggling.map(x => x[0]).concat(unseenSaved))].slice(0, 15);
   const weak = d => d.tier === "l" || d.tier === "f" || d.tier === "k", offers = passageOffers();
   const fading = [], barely = [], unseen = [];
@@ -4845,6 +4881,28 @@ function vocabTargets() {
   const u = hash(unseen), fresh = [];
   for (let i = 0; fresh.length < 40 && (i < barely.length || i < u.length); i++) { if (i < barely.length) fresh.push(barely[i]); if (i < u.length) fresh.push(u[i]); }
   return { reviewWords, fadingWords: hash(fading).slice(0, 25), newWords: fresh.slice(0, 40) };
+}
+// New words as cards (2026-11-16, learner agreed): besides words you save, the app picks new ones from the same pool
+// as readings' newWords and keeps AUTO_AHEAD of them waiting (S.bank entries with auto: true, src "auto"); the daily run
+// writes each a sentence (a "sentence" request with new: true), and only then can it come up. In the words category new
+// cards alternate between your saved words and these (candidates). Pace: the usual daily allowance (learner: slow is fine).
+// Saving one from a reading or by hand sets saved: true: no second card, its sentence stays (learner). 我认识 on the
+// first card deletes it (gone mark), so it isn't picked again. Words shown in 3+ generated passages without being
+// saved aren't picked (newWords already leaves them out: you could read them).
+const AUTO_AHEAD = 5;
+const isAutoWord = b => !!(b && b.auto && !b.saved);
+function autoTopUp() {
+  if (!DICT.size) return 0;
+  const waiting = Object.entries(S.bank).filter(([w, b]) => isAutoWord(b) && !S.items["B:" + w]).length;
+  let added = 0;
+  for (const w of vocabTargets().newWords) {
+    if (waiting + added >= AUTO_AHEAD) break;
+    if (S.bank[w] || (S.gone || {})["bank:" + w]) continue;
+    const d = DICT.get(w); if (!d) continue;
+    S.bank[w] = { zh: w, s: "", py: d.py || "", gl: d.gl || "", t: now(), src: "auto", auto: true, needS: true }; added++;
+  }
+  if (added) save();
+  return added;
 }
 function targetWords(n) { // for the in-app Generate buttons: words to practise (struggling first, then fading)
   const v = vocabTargets(); return [...new Set(v.reviewWords.concat(v.fadingWords))].slice(0, n);
@@ -4885,7 +4943,7 @@ function renderMe(main) {
   <div class="card"><span class="label">能写出来的句型 · Production-ready</span>
     <div class="row" style="align-items:flex-end"><span class="big">${ready}</span><span class="muted">/ ${LADDER.size} · 在练 ${started}</span></div>
     <div class="mix" style="background:var(--line)"><i style="width:${LADDER.size ? ready / LADDER.size * 100 : 0}%;background:var(--accent)"></i></div>
-    <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词记住一周以上 · leeches held 7+ days</span></div><div class="stat"><b>${Object.keys(S.bank).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
+    <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词记住一周以上 · leeches held 7+ days</span></div><div class="stat"><b>${Object.values(S.bank).filter(b => !isAutoWord(b)).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
   <div class="card stack" id="timecard">${timeCardHtml()}</div>
   <div class="card"><span class="label">技能 · Skills</span>
     ${S.skills ? `<div class="bars">${Object.keys(names).map(k => `<div class="bar"><span>${names[k]}</span><span class="t"><i style="width:${pct(skillVal(k))}"></i></span><span class="v">${pct(skillVal(k))}</span></div>`).join("")}</div>` : `<p class="muted">还没测试 — take the placement test to fill these in.</p>`}
@@ -4931,7 +4989,7 @@ function renderMe(main) {
 const BANK_SHOW = 20;
 let BANK_ALL = false, BANK_Q = "", BANK_TAG = "", BANK_EXP = false;
 function bankCard() {
-  const every = Object.values(S.bank).sort((a, b) => b.t - a.t);
+  const every = Object.values(S.bank).filter(b => !isAutoWord(b)).sort((a, b) => b.t - a.t);
   const tags = [...new Set(every.flatMap(b => b.tags || []))];
   if (BANK_TAG && !tags.includes(BANK_TAG)) BANK_TAG = "";
   const all = BANK_TAG ? every.filter(b => (b.tags || []).includes(BANK_TAG)) : every, n = all.length;
@@ -5316,7 +5374,7 @@ function addReq(r) {
 function doneReq(rid) { S.req = (S.req || []).filter(x => x.rid !== rid); S.reqDone = (S.reqDone || []).concat([rid]).slice(-500); }
 const reqWaiting = rid => (S.req || []).some(x => x.rid === rid);
 function outboxRequests() {
-  const out = wordsNeedingSentence().sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 150).map(b => ({ rid: "w:" + b.zh, kind: "sentence", w: b.zh, py: b.py || "", gl: String(b.gl || "").slice(0, 120) }));
+  const out = wordsNeedingSentence().sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 150).map(b => Object.assign({ rid: "w:" + b.zh, kind: "sentence", w: b.zh, py: b.py || "", gl: String(b.gl || "").slice(0, 120) }, isAutoWord(b) ? { new: true } : {}));
   for (const q of S.req || []) {
     if (q.kind === "regrade") { const it = LADDER.get(q.id); if (!it) continue; const lp = ladParts(it); out.push({ rid: q.rid, kind: "regrade", drill: q.id, en: it.en, ref: [lp.model, ...(it.alt || [])], key: lp.key, answer: q.raw, model: q.by, modelScore: q.score, modelChunk: q.chunk || null }); }
     else if (q.kind === "questions") {
@@ -5417,7 +5475,7 @@ function applyAnswers(pk, r) {
 // home card (offline copy): what's waiting for Claude's next daily run
 function reqWaitCard() {
   if (HOSTED || !COL || !COL.gh) return "";
-  const ws = wordsNeedingSentence().length, rq = S.req || [];
+  const ws = wordsNeedingSentence().filter(b => !isAutoWord(b)).length, rq = S.req || []; // picked new words wait in the background
   const n = { questions: rq.filter(x => x.kind === "questions").length, regrade: rq.filter(x => x.kind === "regrade").length, passage: rq.filter(x => x.kind === "passage").length };
   if (!ws && !n.questions && !n.regrade && !n.passage) return "";
   const parts = [ws ? `${ws} 个生词等例句 · word${ws > 1 ? "s" : ""} waiting for an example sentence` : "", n.questions ? `${n.questions} 份等出题 · waiting for questions` : "", n.regrade ? `${n.regrade} 句等 Claude 看 · answer${n.regrade > 1 ? "s" : ""} for Claude to regrade` : "", n.passage ? `${n.passage} 篇短文 · passage${n.passage > 1 ? "s" : ""} requested` : ""].filter(Boolean);
@@ -5586,6 +5644,7 @@ function shortage(f, cfg) {
   return out;
 }
 function computeOutbox() {
+  autoTopUp();
   const cfg = stockCfg(), f = forecast(cfg.days, cfg.mins);
   FORECAST = f;
   OUTBOX = { v: 1, day: dayKey(), target: cfg.trip ? { mode: "trip", from: cfg.from, to: cfg.to, days: cfg.days, mins: cfg.mins } : { mode: "ahead", days: cfg.days, mins: cfg.mins },

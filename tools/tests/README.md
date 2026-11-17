@@ -40,3 +40,7 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   first, then saved words not met yet), `fadingWords` (weak Anki words with interval > 30 days, no card in the app),
   `newWords` (weak words that never passed 30 days alternating with unseen HSK 7–9; not after 3 offers in generated
   passages); the note carries the three lists; `inputs.js` keeps them (and an older app's `forgottenWords`).
+- `autowords.test.js` (2026-11-16, 8765 server): new words as cards — 5 picked words kept waiting, none before its
+  sentence, sentence requests flagged `new`, alternation with saved words (both directions), 新词 first card without
+  记得/忘了, 知道了 starts reviews, later label 词汇, 我认识 drops it for good, saving it from a reading keeps one card and
+  its sentence, merge keeps `saved`. (`req.test.js` ignores `new` sentence requests since v67.)
