@@ -1680,7 +1680,7 @@ function gradedCard() {
       <span>你的：<span class="zh">${esc(x.raw)}</span></span>
       ${x.fixed && norm(x.fixed) !== norm(x.raw) ? `<span>改一改：<span class="zh">${esc(x.fixed)}</span></span>` : ""}
       ${x.notes.length ? `<ul>${x.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
-      <span class="small muted">参考：${esc(x.model)}</span></div>`).join("")}
+      <span>参考：<span class="zh">${esc(x.model)}</span></span></div>`).join("")}
     ${g.length ? `<button class="btn ghost" id="graded-ok">知道了 Got it</button>` : ""}</div>`;
 }
 function syncWarn() {
@@ -2432,7 +2432,7 @@ function renderOfflineFb(k, el, done) {
   if (!f || !item) return done();
   const p = ladParts(item), d = new Date(f.t);
   const selfLab = f.self == null ? "" : ` · 你自评 ${f.self >= 3 ? "对了" : f.self === 2 ? "意思对" : "不对"}`;
-  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">${f.by && f.by !== "Claude" ? "之前写的 · Written earlier" : "离线写的 · Written offline"}</span><span class="chip">${d.getMonth() + 1}月${d.getDate()}日</span></div>
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">之前写的 · Written earlier</span><span class="chip">${d.getMonth() + 1}月${d.getDate()}日</span></div>
     <p class="prompt-en">${esc(item.en)}</p>
     <div class="stack" style="gap:4px"><span class="small muted">你当时写的 · What you wrote${selfLab}</span><p class="sent" style="font-size:21px">${esc(f.raw)}</p></div>
     <div id="ofb" class="stack"><p class="small">能看出哪里不太对吗？先想一想。<br><span class="muted">${esc(f.by || "Claude")} found something to fix. Can you spot it? Think first, then look.</span></p>
@@ -2442,7 +2442,7 @@ function renderOfflineFb(k, el, done) {
     $("#ofb", el).innerHTML = `<div class="fb ${f.score === 2 ? "mid" : "no"}"><span class="verdict">${f.score === 2 ? "意思对，可以更地道" : "还不对"}</span>
       ${f.fixed && norm(f.fixed) !== norm(f.raw) ? `<span>改一改：<span class="zh" style="font-size:18px">${esc(f.fixed)}</span></span>` : ""}
       ${f.notes.length ? `<ul>${f.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
-      <span class="small muted">参考：<span class="zh">${esc(p.model)}</span></span></div>
+      <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span></div>
       <div class="row"><button class="btn ghost" id="again">再写一次 Write it again</button><button class="btn" id="ok">知道了 Next</button></div>`;
     if (!HOSTED && f.by && f.by !== "Claude") { const row = document.createElement("div"); row.className = "row"; row.append(askClaudeButton(f.id, f.raw, f.by, f.score, Math.round(f.t / 1000))); $("#ofb", el).append(row); }
     $("#again", el).onclick = () => done({ t: "lad", id: f.id, r: Math.min(5, Math.max(4, (S.items[f.id] || {}).r || 4)) });

@@ -1,5 +1,5 @@
 // Offline cache for the standalone (GitHub Pages) version.
-const CACHE = "zwlgf-v64";
+const CACHE = "zwlgf-v65";
 const FILES = ["./", "index.html", "data/words.json", "data/content.json", "data/cedict.txt", "data/zhconv.txt", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 // Tell open pages a newer page may be saved; the page compares versions and offers 切换 · Switch (index.html checkUpdate).
