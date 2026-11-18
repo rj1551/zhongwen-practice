@@ -14,7 +14,7 @@ execSync(`python3 "${REPO}/tools/csp.py" "${idx}"`); // patched script → fresh
 const NEW_SW = fs.readFileSync(path.join(site, "sw.js"), "utf8");
 const CUR = /const CACHE = "zwlgf-v(\d+)"/.exec(NEW_SW)[1], V = n => "zwlgf-v" + n, NOW = V(CUR), NEXT = V(+CUR + 1), NEXT2 = V(+CUR + 2);
 const DATA = /const DATA = "([^"]+)"/.exec(NEW_SW)[1], DATA2 = DATA.replace(/\d+$/, n => +n + 1);
-const OLD_SW = execSync(`git -C "${REPO}" show 6c92580:sw.js`).toString(); // v67: one store, dictionary inside
+const OLD_SW = fs.readFileSync(path.join(__dirname, "fixtures/sw-v67.js"), "utf8"); // v67 (commit 6c92580): one store, dictionary inside
 const hits = {}; const count = f => hits[f] || 0;
 const types = { ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".txt": "text/plain", ".png": "image/png" };
 const srv = http.createServer((q, r) => {
