@@ -5007,7 +5007,8 @@ function refreshStock() {
   c.outerHTML = packCard(); bindPackCard();
   const n = $("#packcard"); if (!n) return;
   $$("details", n).forEach((d, i) => { if (open[i]) d.open = true; });
-  for (const id in vals) { const x = n.querySelector("#" + id); if (x && x.tagName === "TEXTAREA") x.value = vals[id]; }
+  // only what you're filling in is put back (paste box, passage request); settings fields show what's saved
+  for (const id of ["pk-text", "pk-topic", "pk-g1"]) { const x = n.querySelector("#" + id); if (x && id in vals) x.value = vals[id]; }
   if (msg !== null && $("#pk-msg", n) && !$("#pk-msg", n).innerHTML) $("#pk-msg", n).innerHTML = msg;
   if (focus) { const f = n.querySelector("#" + focus); if (f) f.focus({ preventScroll: true }); }
 }

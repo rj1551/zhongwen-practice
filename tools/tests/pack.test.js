@@ -120,8 +120,9 @@ const genCounts = pg => pg.evaluate(() => ({ lad: S.gen.ladder.length, sen: S.ge
   await A.page.evaluate(() => setView("me"));
   await A.page.waitForFunction(() => { document.querySelectorAll("#packcard details").forEach(d => d.open = true); const t = document.querySelector("#pk-text"); return t && t.offsetParent !== null; }, null, { timeout: 20000, polling: 200 });
   // the card is redrawn in the background (note recomputed after a sync): the open box and what's typed survive
-  await A.page.fill("#pk-text", "half-pasted"); await A.page.evaluate(() => refreshStock());
-  ok(await A.page.evaluate(() => document.querySelector("#pk-text").offsetParent !== null && document.querySelector("#pk-text").value === "half-pasted"), "background redraw of the stock card: paste box stays open, text kept");
+  await A.page.fill("#pk-text", "half-pasted"); await A.page.fill("#pk-topic", "高铁"); await A.page.selectOption("#pk-g1", "news"); await A.page.evaluate(() => refreshStock());
+  ok(await A.page.evaluate(() => document.querySelector("#pk-text").offsetParent !== null && document.querySelector("#pk-text").value === "half-pasted" && document.querySelector("#pk-topic").value === "高铁" && document.querySelector("#pk-g1").value === "news"), "background redraw of the stock card: open boxes, pasted text and the passage request's topic/genre kept");
+  await A.page.fill("#pk-topic", "");
   await A.page.fill("#pk-text", "hello"); await A.page.click("#pk-go");
   ok(/isn't a pack/.test(await A.page.$eval("#pk-msg", e => e.textContent)), "pasting junk: clear message");
   await A.page.fill("#pk-text", "Here you go:\n```json\n" + JSON.stringify(Object.assign({}, PACK, { id: "chat-1" })) + "\n```"); await A.page.click("#pk-go");
