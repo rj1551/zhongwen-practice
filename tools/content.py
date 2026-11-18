@@ -271,7 +271,7 @@ lad("Suddenly it started pouring.",
     ["下来", "下去", "下出"],
     ["突然开始倒雨了。", "突然大雨开始下了。"],
     "V起 + object + 来 = 'start V-ing' — the object sits inside 起…来. 'Pouring' → 大雨; 倒 is for pouring a liquid yourself.", "pattern")
-lad("Keep going, don't stop.",
+lad("Keep talking, don't stop.",
     "继续|说|[下去]|，|别|停|。",
     ["接着说，别停。", "你接着说下去，别停。", "继续说下去，别停下来。"],
     ["起来", "出来", "过来"],

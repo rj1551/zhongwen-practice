@@ -1,6 +1,6 @@
 // Time log (2026-11-08): scheduled vs extra exercises vs reading, per device (two devices on one day add up),
 // older days kept as "not split", the Progress → 时间 card with 7 / 30 / 12 weeks / all. Serve docs/ on 8765.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {

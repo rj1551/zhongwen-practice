@@ -1,6 +1,6 @@
 // Requests the daily run held back as suspicious (2026-11-08): the pack's "held" list closes them and the
 // stock card shows why until the learner taps 知道了. Serve docs/ on 8765.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {

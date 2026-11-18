@@ -1,0 +1,27 @@
+# Runs every browser test on each push (v69). GitHub emails the account that pushed when it fails.
+# Tests docs/ exactly as committed — what GitHub Pages serves — then checks docs/ matches the sources.
+name: tests
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright + Chromium
+        run: |
+          npm install --no-save --no-package-lock --prefix tools/tests playwright@1.63.0
+          npx --prefix tools/tests playwright install --with-deps chromium
+      - name: Browser tests (committed docs/)
+        run: tools/tests/run-all.sh --no-build
+      - name: docs/ was rebuilt after the last source change
+        run: |
+          cp -r . "$RUNNER_TEMP/b" && (cd "$RUNNER_TEMP/b" && ./build.sh)
+          norm() { sed -E 's/zwlgf-v[0-9]+ · [0-9/]+ [0-9:]+/VERSION/; s/sha256-[A-Za-z0-9+\/=]+/FINGERPRINT/' "$1"; }
+          diff <(norm docs/index.html) <(norm "$RUNNER_TEMP/b/docs/index.html") > /dev/null || { echo "docs/index.html is out of date: run ./build.sh and commit docs/"; exit 1; }
+          diff -r -x index.html docs "$RUNNER_TEMP/b/docs" || { echo "docs/ is out of date: run ./build.sh and commit docs/"; exit 1; }

@@ -1,4 +1,4 @@
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const crypto = require("crypto");
 const { sigv4 } = require("./sigv4.js");
 const URL0 = "http://localhost:8765/";
@@ -153,7 +153,7 @@ let browser;
   ok(await B.page.evaluate(() => !!r2Cfg() && r2Cfg().bucket === "zhongwen-audio"), "device B: R2 settings arrived through the keys file");
   await B.page.evaluate(() => setView("listen")); await sleep(800);
   ok(/Download all audio \(2, 0\.6 MB\)/.test(await B.page.evaluate(() => document.body.innerText)), "device B: 'Download all audio (2, 0.6 MB)'");
-  await B.page.screenshot({ path: "r2-list.png" });
+  await B.page.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "r2-list.png") });
   // open one: it downloads with a bar, then plays from this device
   await B.page.evaluate(() => { window.__maxDown = 0; setInterval(() => { for (const k in R2.down) window.__maxDown = Math.max(window.__maxDown, R2.down[k] + 0.0001); }, 2); });
   await B.page.evaluate(id => { LST = { id, mode: "hide", lost: [] }; render(); }, id1);

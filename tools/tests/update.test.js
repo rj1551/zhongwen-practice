@@ -1,6 +1,6 @@
 // "新版本已下载 · New version ready": after a slow open shows the saved version, the late download offers a switch.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
-const fs = require("fs"), B = "http://localhost:8790/", F = "/home/claude/tests/site/index.html";
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
+const fs = require("fs"), B = "http://localhost:8790/", F = require("path").join(process.env.TEST_SITE || "/home/claude/tests/site", "index.html");
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 const mode = async m => (await fetch(B + "__mode/" + m)).text();
 const line = pg => pg.evaluate(() => !!document.querySelector("#updline"));
@@ -15,6 +15,7 @@ const ready = pg => pg.waitForFunction(() => { const t = document.querySelector(
     // a new version on the server, slow connection
     const NEW = cur.replace(/·.*/, "· 12/31 23:59");
     fs.writeFileSync(F, orig.replace(`const APP_VERSION = "${cur}"`, `const APP_VERSION = "${NEW}"`));
+    require("child_process").execFileSync("python3", [require("path").resolve(__dirname, "../csp.py"), F]); // a real release gets a new script-lock fingerprint from build.sh
     await mode("slow"); await pg.goto(B, { timeout: 30000 }); await ready(pg);
     ok(await pg.evaluate(() => APP_VERSION) === cur, "slow: opens the saved version");
     ok(!(await line(pg)), "slow: no notice before the new version has arrived");

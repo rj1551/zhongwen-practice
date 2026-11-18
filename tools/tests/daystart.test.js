@@ -1,6 +1,6 @@
 // The app day starts at 3:38 am local time, like Claude's nightly run (2026-11-10, learner): practice after midnight
 // still counts as the day before; reviews come due at 3:38, not 12:00 am. Runs in America/New_York, DST included.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: 390, height: 800 }, timezoneId: "America/New_York" });

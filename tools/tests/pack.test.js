@@ -1,4 +1,4 @@
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const crypto = require("crypto");
 const URL0 = "http://localhost:8765/";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -135,7 +135,7 @@ const genCounts = pg => pg.evaluate(() => ({ lad: S.gen.ladder.length, sen: S.ge
   await sleep(1500); await A.page.evaluate(() => ghSyncNow()); await sleep(500); await A.page.evaluate(() => SYNCQ);
   const ob2 = JSON.parse(g.files()["outbox.json"]);
   ok(ob2.target.mode === "trip" && ob2.target.days === 21, "trip dates → outbox trip mode, 21 days");
-  const cardEl = await A.page.$("#packcard"); await cardEl.scrollIntoViewIfNeeded(); await cardEl.screenshot({ path: "packcard.png" });
+  const cardEl = await A.page.$("#packcard"); await cardEl.scrollIntoViewIfNeeded(); await cardEl.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "packcard.png") });
   console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });

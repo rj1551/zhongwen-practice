@@ -4,7 +4,14 @@ These drive the built app (`docs/`) in Chromium with fakes in place of the outsi
 a fake GitHub (in-memory git with fast-forward checks), fake Gemini/Groq, and a fake Cloudflare R2 that checks every
 request's Signature V4. (The hosted-version tests were removed with the hosted code in v68.)
 
-How they were run (paths are hard-coded for the cloud sandbox; adjust if yours differ):
+**Run them all (v69):** `tools/tests/run-all.sh` (builds first) or `tools/tests/run-all.sh --no-build` (tests the
+committed `docs/`, as the GitHub `tests` workflow does on every push); add suite names to run only those. It makes
+its own copies of `docs/` in a temp folder, starts the servers below and stops them, and exits non-zero if any suite
+fails. Environment: `PLAYWRIGHT` (path to the playwright package; default `playwright`, the runner also tries the
+global npm folder), `TEST_SITE` (the patched copy nosignal/update edit), `TEST_OUT` (screenshots). Pages whose script
+text is patched for a test get a fresh script-lock fingerprint with `tools/csp.py` (else the app wouldn't start).
+
+Older notes on running suites by hand (the runner now does all of this):
 1. `./build.sh`, then copy `docs/` to `/home/claude/tests/site` and serve it:
    `setsid python3 -m http.server 8765 -d /home/claude/tests/site > /tmp/http.log 2>&1 < /dev/null &`
    (`keepalive.test.js` also needs a copy in `site2/` with `https://api.github.com/repos/` replaced by
@@ -53,3 +60,8 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   nothing is written over until it's removed; storage full → toast once + home card, gone after a save that works;
   the error log (Progress → 出错记录): repeats counted, uncaught errors and promise rejections caught, last 30, copy,
   clear, a damaged log never breaks it.
+- `csp.test.js` (2026-11-18, v69, 8765 server + its own on 8792): the script lock. The app starts and normal use
+  (every tab, a session) causes no violations; https requests and blob: audio still work; injected `onerror=`,
+  `javascript:` links, `<script>` elements, scripts from other sites, frames and objects are refused (checked: the
+  same injections all run on a copy without the lock); the policy allows only the fingerprint (no eval, no inline);
+  a stale fingerprint stops the app and `csp.py` fixes it; `csp.py` refuses markup with inline handlers.

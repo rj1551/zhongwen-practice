@@ -1,4 +1,4 @@
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const crypto = require("crypto");
 const URL0 = "http://localhost:8765/";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -154,7 +154,7 @@ async function answer(pg, text, id) {
   await pg.evaluate(() => setView("home"));
   const home = await pg.evaluate(() => document.body.innerText);
   ok(/checked 10 of Gemini flash-lite-latest's grades and changed ${nChanged}/.test(home) || new RegExp("changed " + nChanged).test(home), "home: brief note 'Claude checked 10 … changed N'");
-  await pg.screenshot({ path: "check-home.png" });
+  await pg.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "check-home.png") });
   await pg.evaluate(() => setView("me"));
   const card = await pg.$eval("#provcard", e => e.textContent);
   ok(new RegExp("same score\\s*" + nSame + "/10").test(card) && new RegExp("same pass/fail\\s*" + nPf + "/10").test(card), `Another AI card: agreement line (same score ${nSame}/10, pass/fail ${nPf}/10)`);

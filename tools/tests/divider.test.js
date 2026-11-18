@@ -1,7 +1,7 @@
 // Today's set done (2026-11-10, reworked 2026-11-13): no full-screen divider; when today's due reviews and today's
 // new items are done, a slim note sits above the next card for a few seconds, once per app day on any device. Later
 // sessions that day skip it, start with any same-day retries, and count all their time as extra.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {

@@ -1,6 +1,6 @@
 // v68: saving on this device and the error log (8765 server, clean copy of docs/).
 // Unreadable saved progress is kept aside, never written over; a failed save shows a card; quiet failures are logged.
-const PW = process.env.PLAYWRIGHT || "/home/claude/.npm-global/lib/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT || "playwright";
 const { chromium } = require(PW);
 const B = process.env.SITE || "http://localhost:8765/";
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };

@@ -1,5 +1,5 @@
 // Step 3: grading chain (Gemini → Groq → self-grade) and automatic grading of waiting answers. Mocked providers.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 const GEM = "https://generativelanguage.googleapis.com/v1beta/openai", GROQ = "https://api.groq.com/openai/v1";
@@ -66,7 +66,7 @@ const lastBy = () => M.log[M.log.length - 1];
   ok(M.log.map(x => x.id).join() === "groq", "daily limit: no Gemini requests until reset");
   await pg.evaluate(() => setView("me"));
   ok(/free quota is used up/.test(await pg.$eval("#provcard", e => e.textContent)), "Another AI card shows the quota note");
-  await pg.screenshot({ path: "/home/claude/tests/order-card.png", clip: await pg.$eval("#provcard", e => { const b = e.getBoundingClientRect(); return { x: b.x, y: b.y + scrollY, width: b.width, height: 330 }; }) }).catch(() => {});
+  await pg.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "order-card.png"), clip: await pg.$eval("#provcard", e => { const b = e.getBoundingClientRect(); return { x: b.x, y: b.y + scrollY, width: b.width, height: 330 }; }) }).catch(() => {});
   await pg.evaluate(() => { localStorage.removeItem("zwlgf:provstate"); setView("home"); });
   // 4. per-minute 429 → only skipped briefly, not for the day
   M.gem = "minute"; await answer(pg, "本来是去。");
@@ -123,7 +123,7 @@ const lastBy = () => M.log[M.log.length - 1];
   ok(st.regraded === 13, "every answer's log entry regraded (schedule corrected): " + st.regraded);
   ok(st.sum && st.sum.n === 13 && st.sum.raised >= 1, "summary counts the run (graded " + (st.sum && st.sum.n) + ", raised " + (st.sum && st.sum.raised) + ")");
   ok(/Graded/.test(await p2.evaluate(() => document.body.innerText)), "home shows the summary card");
-  await p2.screenshot({ path: "/home/claude/tests/auto-summary.png" });
+  await p2.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "auto-summary.png") });
   await p2.click("#offw-ok"); ok(await p2.evaluate(() => !S.offwSummary), "Got it clears the summary");
   // the feedback card in practice names the model
   const fbText = await p2.evaluate(() => { const el = document.createElement("div"); document.body.prepend(el); renderOfflineFb(S.offfb[0].k, el, () => {}); return el.innerText; });

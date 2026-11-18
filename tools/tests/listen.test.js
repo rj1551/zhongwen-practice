@@ -2,7 +2,7 @@
 // pinyin, word lookup + saving from lyrics, no sideways scrolling; LRCLIB length match + order; fix timing;
 // tap along; ~20-minute sections; deleting that sticks across devices + Recently deleted.
 // Serve docs/ on 8765 first (see README).
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const URL0 = "http://localhost:8765/";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0;

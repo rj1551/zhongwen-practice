@@ -1,6 +1,6 @@
 // Claude's pinyin check (2026-11-09): songs ask for it with the pinyin the app shows; answers are corrections only
 // (position + 1–4 characters + reading / grouping / meaning); the app applies them; 一/不 tone changes on the device.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {},

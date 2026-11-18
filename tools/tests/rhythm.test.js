@@ -2,7 +2,7 @@
 // sized so the next 2 weeks' reviews take ~half the usual card time (not reading), 1–12 a day (0 only when reviews
 // alone fill the whole usual time), set once per app day, trip pace during a trip; mixed into roughly the first 40%
 // of a session after same-day retries; the note only once reviews and the allowance are done.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: 390, height: 800 }, timezoneId: "America/New_York" });

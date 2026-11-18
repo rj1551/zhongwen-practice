@@ -1,5 +1,5 @@
 // The 备份 Backup reminder: never shown when GitHub sync is set up (not even before sync connects); still shown without it.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const B="http://localhost:8790/"; let fails=0; const ok=(c,m)=>{console.log((c?"PASS ":"FAIL ")+m); if(!c)fails++;};
 (async()=>{
   const br=await chromium.launch();

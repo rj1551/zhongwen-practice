@@ -1,7 +1,7 @@
 // Merge fixes (2026-11-09): songs / texts merge by group of fields (a rename on one device and a timing fix on the
 // other both survive); settings merge key by key (an offline session elsewhere no longer undoes a settings change);
 // the "do all lyrics" choice and its undo sync by time; answers still merge as a union. Serve docs/ on 8765.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {
   const b = await chromium.launch(), page = await (await b.newContext()).newPage();

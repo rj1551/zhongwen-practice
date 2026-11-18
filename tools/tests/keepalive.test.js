@@ -1,5 +1,5 @@
 
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const crypto = require("crypto"), http = require("http");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function makeGit(opts = {}) {

@@ -1,4 +1,4 @@
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const crypto = require("crypto");
 const URL0 = "http://localhost:8765/";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -123,7 +123,7 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
   ok(!JSON.stringify(ob).includes("高铁很方便"), "transcript not copied into the note (the run reads it from progress)");
   await pg.evaluate(() => setView("home"));
   ok(/waiting for an example sentence/.test(await pg.evaluate(() => document.body.innerText)) && /Waiting for Claude/i.test(await pg.evaluate(() => document.body.innerText)), "home: waiting card");
-  await pg.screenshot({ path: "req-home.png" });
+  await pg.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "req-home.png") });
   // a pack answering everything; checked with the real check script first
   const rid = r => ob.requests.find(x => x.kind === r).rid;
   const q3 = [1, 2, 3].map(i => ({ q: "Q" + i, opts: ["a", "b", "c", "d"], why: ["1", "2", "3", "4"] }));
@@ -135,12 +135,12 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
   const dd = fs.mkdtempSync("/tmp/zwd-"); fs.mkdirSync(path.join(dd, "progress")); fs.mkdirSync(path.join(dd, "packs"));
   const f = g.files(); for (const p in f) if (!p.startsWith("settings/")) { fs.mkdirSync(path.join(dd, path.dirname(p)), { recursive: true }); fs.writeFileSync(path.join(dd, p), f[p]); }
   fs.writeFileSync(path.join(dd, "packs", "new.json"), JSON.stringify(pack));
-  let out = ""; try { out = execFileSync("node", ["/home/claude/zhongwen-practice/tools/daily-run/check-pack.js", path.join(dd, "packs", "new.json"), "--data", dd, "--app", "/home/claude/zhongwen-practice"]).toString(); } catch (e) { out = e.stdout.toString(); }
+  let out = ""; try { out = execFileSync("node", [require("path").resolve(__dirname, "../daily-run") + "/check-pack.js", path.join(dd, "packs", "new.json"), "--data", dd, "--app", require("path").resolve(__dirname, "../..")]).toString(); } catch (e) { out = e.stdout.toString(); }
   ok(/^OK/m.test(out), "check-pack accepts the answer pack: " + out.trim().split("\n").pop());
   const bad = JSON.parse(JSON.stringify(pack)); bad.sentences.测试词 = "没有那个词。"; bad.regrades[0].score = 5; bad.questions[0].rid = "q:mine:NOPE";
   bad.sen = [1, 2, 3].map(i => ({ s: "截至|发稿|时|，|第" + i + "|次|。", q: "?", opts: ["a", "b", "c", "d" + i] }));
   fs.writeFileSync(path.join(dd, "packs", "bad.json"), JSON.stringify(bad));
-  try { execFileSync("node", ["/home/claude/zhongwen-practice/tools/daily-run/check-pack.js", path.join(dd, "packs", "bad.json"), "--data", dd, "--app", "/home/claude/zhongwen-practice"]); out = "passed"; } catch (e) { out = e.stdout.toString(); }
+  try { execFileSync("node", [require("path").resolve(__dirname, "../daily-run") + "/check-pack.js", path.join(dd, "packs", "bad.json"), "--data", dd, "--app", require("path").resolve(__dirname, "../..")]); out = "passed"; } catch (e) { out = e.stdout.toString(); }
   ok(/must contain the word/.test(out) && /score must be/.test(out) && /rid must be a questions request/.test(out) && /at most 2 per pack/.test(out), "check-pack rejects a bad sentence, score, rid and 3 sentences on one structure");
   putFile(g, "packs/2026-11-08.json", JSON.stringify(pack));
   await pg.evaluate(() => ghSyncNow());
@@ -155,7 +155,7 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
   await pg.evaluate(() => setView("home"));
   const home = await pg.evaluate(() => document.body.innerText);
   ok(/Claude disagrees/.test(home) && !/Waiting for Claude/i.test(home), "home: Claude's regrade shown (disagrees), waiting card gone");
-  await pg.screenshot({ path: "req-results.png" });
+  await pg.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "req-results.png") });
   await sleep(1800); await pg.evaluate(() => ghSyncNow()); await sleep(1800); await pg.evaluate(() => SYNCQ); await pg.evaluate(() => ghSyncNow());
   ok(JSON.parse(g.files()["outbox.json"]).requests.filter(r => !r.new).length === 0, "the note to Claude no longer lists them");
   const B = await device(browser, g, null, null); await connect(B.page); await sleep(1000);

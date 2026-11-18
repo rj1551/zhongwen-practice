@@ -1,4 +1,4 @@
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const B="http://localhost:8790/"; let fails=0; const ok=(c,m)=>{console.log((c?"PASS ":"FAIL ")+m); if(!c)fails++;};
 (async()=>{
   const br=await chromium.launch(); const ctx=await br.newContext(); const pg=await ctx.newPage();
@@ -13,7 +13,7 @@ const B="http://localhost:8790/"; let fails=0; const ok=(c,m)=>{console.log((c?"
   ok(loaded,`no signal (requests hang): app opens from the offline copy (${((Date.now()-t)/1000).toFixed(1)} s)`);
   // 3. online again: a new version arrives on the next open (network first when the network answers)
   await (await fetch(B+"__mode/ok")).text();
-  const fs=require("fs"); const f="/home/claude/tests/site/index.html"; const orig=fs.readFileSync(f,"utf8");
+  const fs=require("fs"); const f=require("path").join(process.env.TEST_SITE || "/home/claude/tests/site", "index.html"); const orig=fs.readFileSync(f,"utf8");
   fs.writeFileSync(f, orig.replace("<title>中文练功房</title>","<title>中文练功房 NEWVER</title>"));
   await pg.goto(B); ok((await pg.title()).includes("NEWVER"),"online: a new version is used straight away");
   // 4. a late answer (after the 3 s wait) still refreshes the saved copy

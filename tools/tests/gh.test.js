@@ -1,5 +1,5 @@
 // GitHub sync tests against a fake GitHub (in-memory git with fast-forward checks), two browser "devices".
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const crypto = require("crypto");
 const URL0 = "http://localhost:8765/";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -92,7 +92,7 @@ const repoItems = g => { const f = g.files(), ids = []; for (const p in f) if (p
   ok(g.count() === 2, "A: one commit for the whole first sync (commits " + g.count() + ")");
   ok(!JSON.stringify(f).includes('"token"') && !f["progress/state.json"].includes("good"), "token not in any file");
   ok(await A.page.$eval("#ghcard", e => /已同步/.test(e.textContent)), "A: card says synced");
-  await A.page.screenshot({ path: "/home/claude/tests/ghcard-A.png", fullPage: false });
+  await A.page.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "ghcard-A.png"), fullPage: false });
   const exp = await A.page.evaluate(() => JSON.stringify(S)); ok(!exp.includes("groq-KEY") && !exp.includes("good"), "keys/token not in progress (so not in codes)");
 
   // ---- 2. second device, fresh, different local work ----
@@ -161,7 +161,7 @@ const repoItems = g => { const f = g.files(), ids = []; for (const p in f) if (p
   ok(g.log.length - n9 <= 2, "revoked token: no retry loop (" + (g.log.length - n9) + " requests in 20 s)");
   ok(await A.page.evaluate(() => { setView("home"); return !!document.querySelector("#gh-fix"); }), "revoked token: home card says sync stopped");
   ok(await A.page.evaluate(() => !!S.items.L09 && JSON.parse(localStorage.getItem("zwlgf:state:v1")).items.L09), "revoked token: answer kept on the device");
-  await A.page.screenshot({ path: "/home/claude/tests/gh-home-stopped.png" });
+  await A.page.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "gh-home-stopped.png") });
   g.tokens.add("good2");
   await A.page.click("#gh-fix"); await A.page.click("#ghtoken"); await connect(A.page, "good2");
   ok(repoItems(g).includes("L09") && !(await A.page.evaluate(() => !!document.querySelector("#gh-fix"))), "new token: sync resumes, waiting answer written");

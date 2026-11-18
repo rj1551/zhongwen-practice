@@ -1,7 +1,7 @@
 // New words as cards (2026-11-16): the app picks new words (same pool as readings' newWords), asks the daily run for a
 // sentence, then they alternate with saved words; first card = 新词 with no 记得/忘了; saving one keeps one card and its
 // sentence; 我认识 drops it for good. Run against the 8765 server.
-const { chromium } = require("/home/claude/.npm-global/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 (async () => {
   const br = await chromium.launch(); const pg = await br.newPage(); pg.on("pageerror", e => console.log("ERR", e.message));
