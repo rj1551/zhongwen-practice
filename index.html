@@ -257,6 +257,37 @@ const DAY_START_MIN = 3 * 60 + 38;
 const dayOf = t => { const d = new Date(t); if (d.getHours() * 60 + d.getMinutes() < DAY_START_MIN) d.setDate(d.getDate() - 1); return d; };
 const dayAt = key => { const d = new Date(key + "T00:00"); d.setHours(0, DAY_START_MIN, 0, 0); return d.getTime(); };
 const dayKey = (t = now()) => { const d = dayOf(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+/* Error log (v68): failures that used to vanish in an empty catch are noted here, so a phone-only problem can be
+   copied into a chat (Progress → 出错记录 · Error log). This device only, not synced; last ERR_MAX entries; the same
+   error repeated in a row is counted, not stored again. Never throws (it's called from inside catch blocks). */
+const ERR_KEY = "zwlgf:errlog", ERR_MAX = 30;
+let ERRS = null;
+function errList() { if (!ERRS) { try { ERRS = JSON.parse(localStorage.getItem(ERR_KEY) || "[]"); } catch (e) { ERRS = []; } if (!Array.isArray(ERRS)) ERRS = []; } return ERRS; }
+function noteErr(where, e) {
+  try {
+    const msg = String((e && (e.message || e.code || (e.status && "HTTP " + e.status))) || e || "?").slice(0, 300) + (e && e.code && e.message ? ` [${e.code}]` : "");
+    let v = ""; try { v = APP_VERSION; } catch (x) {}
+    const L = errList(), last = L[L.length - 1];
+    if (last && last.w === where && last.m === msg) { last.n = (last.n || 1) + 1; last.t = Date.now(); }
+    else L.push({ t: Date.now(), w: String(where), m: msg, v: v.split(" ")[0] });
+    while (L.length > ERR_MAX) L.shift();
+    try { localStorage.setItem(ERR_KEY, JSON.stringify(L)); } catch (x) {}
+  } catch (x) {}
+}
+addEventListener("error", e => noteErr("uncaught", e.error || { message: e.message + (e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : "") }));
+addEventListener("unhandledrejection", e => noteErr("uncaught (promise)", e.reason));
+function errCard() {
+  const L = errList(); if (!L.length) return "";
+  const when = t => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  return `<div class="card stack" id="errcard"><span class="label">出错记录 · Error log</span>
+    <p class="small muted">后台出过的错，只存在这台设备上。有问题时复制给 Claude 看 · Things that failed quietly in the background, kept on this device only. If something seems wrong, copy this into a chat with Claude.</p>
+    <div class="small" style="max-height:180px;overflow:auto">${L.slice().reverse().map(x => `<div>${when(x.t)} · <b>${esc(x.w)}</b>${x.n > 1 ? ` ×${x.n}` : ""}: ${esc(x.m)}</div>`).join("")}</div>
+    <div class="row"><button class="btn soft" id="err-copy">复制 Copy</button><button class="btn ghost" id="err-clear">清空 Clear</button></div></div>`;
+}
+function bindErrCard(main) {
+  const c = $("#err-copy", main); if (c) c.onclick = () => navigator.clipboard.writeText(errList().map(x => `${new Date(x.t).toISOString()} ${x.v} ${x.w}${x.n > 1 ? " x" + x.n : ""}: ${x.m}`).join("\n") + `\n${navigator.userAgent}`).then(() => toast("复制了 · Copied"), () => toast("复制不了 · Couldn't copy"));
+  const k = $("#err-clear", main); if (k) k.onclick = () => { ERRS = []; try { localStorage.removeItem(ERR_KEY); } catch (e) {} render(); };
+}
 function toast(msg, ms = 2200) { const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms); }
 // Keep toasts at the top of what you can actually see, at normal size, even when the page is zoomed in.
 function placeToasts() {
@@ -280,11 +311,63 @@ function freshState() {
   return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [], listen: [] }, best: { combo: 0 } };
 }
 let S = freshState();
-try { const raw = localStorage.getItem(LS_KEY); if (raw) S = Object.assign(freshState(), JSON.parse(raw)); } catch (e) {}
+/* Saving on this device (v68). Progress is one localStorage entry (browsers allow ~5 MB; real progress was ~320 KB
+   in Nov 2026). Two things used to go wrong silently:
+   - the entry couldn't be read (damaged): the app started empty and its next save wrote over the old copy. Now the
+     unreadable text is first copied to BAD_KEY; if even that copy fails, nothing is written to this device until
+     the copy is dealt with (LOCAL_HOLD), so the original is never lost. Home card: storeCard().
+   - a save failed (storage full): only a flag was set. Now LOCAL_FULL shows a home card (and a toast once mid-session);
+     it clears on the next save that works. GitHub sync still sends the in-memory progress either way. */
+const BAD_KEY = "zwlgf:state:unreadable";
+let LOCAL_FULL = false, LOCAL_HOLD = false;
+{
+  let raw = null;
+  try { raw = localStorage.getItem(LS_KEY); } catch (e) { noteErr("load: read", e); }
+  if (raw) {
+    try { S = Object.assign(freshState(), JSON.parse(raw)); }
+    catch (e) {
+      noteErr("load: unreadable progress", e);
+      let have = null; try { have = localStorage.getItem(BAD_KEY); } catch (e2) {}
+      if (have === null) { try { localStorage.setItem(BAD_KEY, raw); } catch (e2) { LOCAL_HOLD = true; noteErr("load: keeping a copy", e2); } }
+      else if (have !== raw) LOCAL_HOLD = true; // an older unreadable copy is already kept: don't write over this one either
+    }
+  }
+}
+function badCopy() { try { return localStorage.getItem(BAD_KEY); } catch (e) { return null; } }
+// every write of the progress to this device goes through here
+function writeLocal(json) {
+  if (LOCAL_HOLD) return false;
+  try { localStorage.setItem(LS_KEY, json); }
+  catch (e) {
+    if (!LOCAL_FULL) { LOCAL_FULL = true; noteErr("save: storage full", e); toast(COL ? "这台设备存不下了，进度还在同步到 GitHub · This device's storage is full; progress still syncs to GitHub" : "这台设备存不下了：关掉 app 之前先导出一份 · This device's storage is full: copy a code before closing the app", 6000); if (VIEW === "home") render(); }
+    return false;
+  }
+  if (LOCAL_FULL) { LOCAL_FULL = false; if (VIEW === "home") render(); }
+  return true;
+}
+function storeCard() {
+  const bad = badCopy();
+  if (!LOCAL_FULL && !LOCAL_HOLD && bad === null) return "";
+  const gh = !!(ghCfg() || {}).token;
+  let h = "";
+  if (LOCAL_FULL) h += `<div class="card stack" style="border-color:var(--bad)"><span class="label">这台设备存不下了 · Storage full on this device</span>
+    <p class="small">最近的进度没能存在这台设备上。${gh ? "它还在同步到 GitHub，联网时不会丢。" : "关掉 app 就会丢，先到 进度 → 导出 复制一份代码。"}<br>Your latest progress couldn't be saved on this device. ${gh ? "It still syncs to GitHub, so nothing is lost while you're online; offline, answers since then would be lost if the app is closed." : "It will be lost when the app closes: copy a code first (进度 → 导出 Copy code)."} This message goes away by itself once saving works again.</p></div>`;
+  if (LOCAL_HOLD || bad !== null) h += `<div class="card stack" style="border-color:var(--bad)"><span class="label">进度读不出来 · Saved progress couldn't be read</span>
+    <p class="small">这台设备上存的进度坏了，读不出来。原来那份没有删，${LOCAL_HOLD ? "这台设备暂时不再存新的进度，免得盖掉它。" : "另存了一份。"}${gh ? "你的进度会从 GitHub 自动拿回来。" : ""}<br>The progress saved on this device was damaged and couldn't be read. The original is kept, not deleted${LOCAL_HOLD ? "; until it's dealt with, this device doesn't save new progress, so nothing writes over it" : ""}. ${gh ? "Your progress comes back from GitHub automatically; check it looks right (进度 Progress), then remove the kept copy." : "Copy it and paste it into a chat with Claude, who can try to rescue it; then remove the kept copy."}</p>
+    <div class="row"><button class="btn soft" id="bad-copy">复制原来那份 Copy the original</button><button class="btn ghost" id="bad-del">删掉原来那份 Remove it</button></div></div>`;
+  return h;
+}
+function bindStoreCard(main) {
+  const c = $("#bad-copy", main); if (c) c.onclick = () => { const bad = badCopy(), cur = LOCAL_HOLD ? localStorage.getItem(LS_KEY) : null; const raw = cur !== null && bad !== null && bad !== cur ? cur + "\n\n----- older unreadable copy -----\n\n" + bad : cur !== null ? cur : bad; navigator.clipboard.writeText(raw || "").then(() => toast(`复制了 ${Math.round((raw || "").length / 1024)} KB · Copied`), () => toast("复制不了 · Couldn't copy")); };
+  const d = $("#bad-del", main); if (d) d.onclick = () => {
+    if (!d.dataset.sure) { d.dataset.sure = 1; d.textContent = "再点一次：删掉就找不回 · Tap again: can't be undone"; return; }
+    try { localStorage.removeItem(BAD_KEY); } catch (e) {}
+    if (LOCAL_HOLD) { LOCAL_HOLD = false; writeLocal(JSON.stringify(S)); }
+    toast("删掉了 · Removed"); render();
+  };
+}
 
-let DB = null, UID = null, remoteBusy = false, remoteDirty = false, remoteTimer = null;
-let SYNC_BYTES = 0, SYNC_FULL = false, LOCAL_FULL = false;
-const SYNC_LIMIT = 256 * 1024;
+let remoteBusy = false, remoteDirty = false, remoteTimer = null;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
 const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 320 }; // trash: TRASH_MAX purges properly first; this is only a backstop // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
@@ -295,9 +378,9 @@ function save() {
   const days = Object.keys(S.log).sort(); while (days.length > LOG_DAYS) delete S.log[days.shift()];
   for (const k in GEN_CAP) if ((S.gen[k] || []).length > GEN_CAP[k]) S.gen[k] = S.gen[k].slice(-GEN_CAP[k]);
   const json = JSON.stringify(S);
-  try { localStorage.setItem(LS_KEY, json); } catch (e) { LOCAL_FULL = true; }
+  writeLocal(json);
   // GitHub: one commit per write, so wait for a pause (15 s after the last answer; also written when the app is put away)
-  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, COL.gh ? 15000 : 2500); if (COL.gh) ghPrepareSoon(); }
+  if (COL) { remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 15000); ghPrepareSoon(); }
 }
 /* ---------- account sync: progress split across several documents ----------
    Storage layout only. Your progress is still one state object in the app and merging still works on whole
@@ -376,7 +459,7 @@ function joinDocs(list) {
 // key-order-independent comparison, so a document is rewritten only when its content changed
 const stable = v => Array.isArray(v) ? "[" + v.map(stable).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + stable(v[k])).join(",") + "}" : JSON.stringify(v === undefined ? null : v);
 let PULLED = false, COL = null, REMOTE = {}, SYNCQ = Promise.resolve(), LAST_PULL = 0, SYNC_DOCS = 0;
-const queueSync = fn => (SYNCQ = SYNCQ.then(fn, fn).catch(() => {}));
+const queueSync = fn => (SYNCQ = SYNCQ.then(fn, fn).catch(e => noteErr("sync", e)));
 const emptyDoc = d => (d.items && !Object.keys(d.items).length) || (d.list && !d.list.length);
 function pushRemote() {
   // never write before one successful read: writing blind could replace what another device saved
@@ -387,87 +470,66 @@ function pushRemote() {
     while (remoteDirty) {
       remoteDirty = false;
       const docs = splitState(S);
-      let full = false, biggest = 0, total = 0, n = 0;
+      let total = 0, n = 0;
       const changed = {};
       for (const id in docs) {
         const st = stable(docs[id]), b = bytesOf(st);
-        if (!emptyDoc(docs[id])) { biggest = Math.max(biggest, b); total += b; n++; }
+        if (!emptyDoc(docs[id])) { total += b; n++; }
         if (REMOTE[id] === st) continue;
         if (REMOTE[id] === undefined && emptyDoc(docs[id])) continue; // don't create empty documents
-        if (!COL.gh && b > SYNC_LIMIT - 2048) { full = true; continue; }
-        if (COL.gh) { changed[id] = st; continue; }
-        try { await COL.doc(id).set(JSON.parse(JSON.stringify(docs[id]))); REMOTE[id] = st; }
-        catch (e) {
-          if (e && (e.code === "invalid_argument" || e.code === "quota_exceeded")) { full = true; continue; }
-          remoteDirty = true; break; // offline or busy: try again shortly
-        }
+        changed[id] = st;
       }
       // GitHub: every changed part in one commit, accepted only if nobody else wrote since our last read
-      if (COL.gh && (Object.keys(changed).length || COL.extraDirty())) {
+      if (Object.keys(changed).length || COL.extraDirty()) {
         try { await COL.setMany(changed, docs); for (const id in changed) REMOTE[id] = changed[id]; }
         catch (e) {
           if (e && e.code === "conflict" && conflicts++ < 5) {
             // the other device wrote first: read its changes, merge them in, then write again
-            try { await pullInner(); } catch (e2) {}
+            try { await pullInner(); } catch (e2) { noteErr("sync: re-read after conflict", e2); }
             remoteDirty = true; continue;
           }
-          remoteDirty = true; stop = true; // try again on the next save, Sync now, reconnect or return to the app (never a fast loop)
+          noteErr("sync: write", e); remoteDirty = true; stop = true; // try again on the next save, Sync now, reconnect or return to the app (never a fast loop)
         }
       }
       if (stop) break;
-      SYNC_BYTES = biggest; SYNC_TOTAL = total; SYNC_DOCS = n;
+      SYNC_TOTAL = total; SYNC_DOCS = n;
       const si = document.getElementById("syncinfo"); if (si) si.innerHTML = syncInfo();
-      if (full !== SYNC_FULL) { SYNC_FULL = full; if (VIEW === "home" || VIEW === "me") render(); }
       if (remoteDirty) { await new Promise(r => setTimeout(r, 4000)); if (!ONLINE) break; }
     }
-    if (!remoteDirty && COL && COL.gh) GH.synced();
-  }).then(() => { remoteBusy = false; if (remoteDirty && ONLINE && !(COL && COL.gh && GH.fatal())) { clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, COL && COL.gh ? 15000 : 2500); } });
+    if (!remoteDirty && COL) GH.synced();
+  }).then(() => { remoteBusy = false; if (remoteDirty && ONLINE && !(COL && GH.fatal())) { clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 15000); } });
 }
 let SYNC_TOTAL = 0;
 function syncInfo() {
   if (!PULLED) return `<p class="small muted"><span class="spin"></span> 正在连接… Connecting…</p>`;
-  if (COL && COL.gh) return `<p class="small muted">同步记录 Sync record: ${Math.round(SYNC_TOTAL / 1024)} KB in ${SYNC_DOCS} parts</p>`;
-  return `<p class="small">同步记录 Sync record: <b>${Math.round(SYNC_TOTAL / 1024)} KB</b> in ${SYNC_DOCS} parts · biggest part ${Math.round(SYNC_BYTES / 1024)} KB / 256 KB${SYNC_FULL ? ' · <b style="color:var(--bad)">a part is full: not syncing</b>' : ""}</p><div class="mix" style="background:var(--line)"><i style="width:${Math.min(100, SYNC_BYTES / SYNC_LIMIT * 100)}%;background:${SYNC_BYTES > 0.8 * SYNC_LIMIT ? "var(--bad)" : "var(--accent)"}"></i></div>`;
+  return `<p class="small muted">同步记录 Sync record: ${Math.round(SYNC_TOTAL / 1024)} KB in ${SYNC_DOCS} parts</p>`;
 }
 // Read every document, merge them into what this device has, then write back whatever differs.
 function pullRemote() {
   if (!COL) return SYNCQ;
-  return queueSync(pullInner).then(() => { if (!HOSTED) { applyRepoPacks(); outboxSoon(); } remoteDirty = true; pushRemote(); processSentences(); if (!HOSTED) autoCheck(); });
+  return queueSync(pullInner).then(() => { applyRepoPacks(); outboxSoon(); remoteDirty = true; pushRemote(); autoCheck(); });
 }
 async function pullInner() {
   {
     const snap = await COL.get();
     const list = snap.docs.filter(d => d.exists).map(d => ({ id: d.id, data: JSON.parse(JSON.stringify(d.data())) }));
     LAST_PULL = now(); PULLED = true;
-    const legacy = list.find(d => d.id === "state" && !d.data.layout && d.data.items);
-    if (legacy && !COL.gh && !list.some(d => d.id === "state-v1-backup")) { try { await COL.doc("state-v1-backup").set(legacy.data); } catch (e) {} }
     REMOTE = {};
-    for (const d of list) if (d.id !== "state-v1-backup") REMOTE[d.id] = stable(d.data);
-    const remote = joinDocs(list.filter(d => d.id !== "state-v1-backup"));
+    for (const d of list) REMOTE[d.id] = stable(d.data);
+    const remote = joinDocs(list);
     if (remote) {
       const before = stable(S);
       S = mergeStates(S, remote); indexGen(); migrateFsrs(); if (C) rescoreLastPlacement(); housekeep();
-      try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {}
+      writeLocal(JSON.stringify(S));
       if (stable(S) !== before && !busyView()) render();
     }
   }
 }
-async function connectRemote() {
-  if (!HOSTED) { const c = ghCfg(); if (c && c.token && c.branch) ghStart(c); return; }
-  if (!window.claude || !window.claude.use) return;
-  try {
-    const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
-    if (!db || !user) return;
-    const id = await user.id(); if (!id) return;
-    DB = db; UID = id; COL = db.collection("data/users/" + id);
-    await pullRemote();
-    syncNote = "进度已同步到你的 Claude 账号（手机和电脑通用）";
-    if (VIEW === "me") render();
-  } catch (e) {}
-}
+function connectRemote() { const c = ghCfg(); if (c && c.token && c.branch) ghStart(c); }
+
 // Coming back to the app (other device may have practised meanwhile): fetch and merge, unless mid-card.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && COL && ONLINE && !busyView() && now() - LAST_PULL > 20000) pullRemote(); });
-let syncNote = window.claude ? "正在连接同步…" : "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
+let syncNote = "离线版：进度保存在这台设备上。用“导出/导入”在设备间搬运。";
 
 /* ============ GitHub sync (offline copy only, 2026-11-06) ============
    Same parts as account sync (state, items-0…7, gen-<kind>-0…7), stored as files progress/<part>.json in your
@@ -477,7 +539,7 @@ let syncNote = window.claude ? "正在连接同步…" : "离线版：进度保�
    never in a code). settings/keys.json carries the other-AI keys so each device needs only the token. */
 const GH_KEY = "zwlgf:gh", GH_DEF_REPO = "rj1551/zhongwen-data";
 function ghCfg() { try { return JSON.parse(localStorage.getItem(GH_KEY) || "null"); } catch (e) { return null; } }
-function ghSetCfg(c) { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch (e) {} }
+function ghSetCfg(c) { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch (e) { noteErr("save: GitHub settings", e); } }
 function ghPatchCfg(f) { const c = ghCfg(); if (c) { f(c); ghSetCfg(c); } }
 const GH = {
   err: null, lastOk: 0, busy: 0, manual: false, connecting: false, editing: false, formErr: "", confirmOff: false,
@@ -539,7 +601,7 @@ function ghKeysApply(m) {
 }
 // called whenever the other-AI settings are saved: if the keys part changed, write it to the repo soon
 function ghKeysTouched() {
-  const c = ghCfg(); if (!c || !COL || !COL.gh || !PULLED) return;
+  const c = ghCfg(); if (!c || !COL || !PULLED) return;
   if (stable(keysOf(provGet())) === c.keysFp) return;
   remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 3000);
 }
@@ -662,7 +724,7 @@ function ghDisconnect() {
   render();
 }
 async function ghSyncNow() {
-  if (!COL || !COL.gh || GH.manual) return;
+  if (!COL || GH.manual) return;
   GH.manual = true; ghDraw();
   try { await pullRemote(); await SYNCQ; } finally { GH.manual = false; ghDraw(); }
   if (GH.err) toast(GH.err.message, 8000); else if (!$$(".toast").length) toast("已同步 · Synced", 2500); // don't cover a "new material" toast
@@ -708,7 +770,7 @@ function ghDraw() {
   if (f !== GH_FATAL_SHOWN) { GH_FATAL_SHOWN = f; if (VIEW === "home") render(); }
 }
 function ghHomeCard() {
-  if (HOSTED || !GH.fatal() || !ghCfg()) return "";
+  if (!GH.fatal() || !ghCfg()) return "";
   return `<div class="card stack" style="border-color:var(--bad)"><span class="label">同步停了 · Sync stopped</span>
     <p class="small">${esc(GH.err.message || "")}<br>练习照常，进度先存在这台设备上 · Practice works as usual; progress is kept on this device until sync works again.</p>
     <button class="btn" id="gh-fix">去同步设置 Open sync settings</button></div>`;
@@ -721,16 +783,16 @@ function changedDocs() {
 }
 // a few seconds after each answer: build the next commit ahead of time (1.5 s later) (see prepare/flush in ghCollection)
 let ghPrepTimer = null;
-function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (OUTBOX && COL && COL.gh && stable(outboxRequests().concat(checkRequests())) !== stable(OUTBOX.requests)) { try { computeOutbox(); } catch (e) {} } if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
+function ghPrepareSoon() { clearTimeout(ghPrepTimer); ghPrepTimer = setTimeout(() => { if (OUTBOX && COL && stable(outboxRequests().concat(checkRequests())) !== stable(OUTBOX.requests)) { try { computeOutbox(); } catch (e) { noteErr("note to Claude", e); } } if (COL && COL.gh && PULLED && ONLINE && !remoteBusy) queueSync(() => COL.gh && COL.prepare(changedDocs()).catch(() => {})); }, 1500); }
 // putting the app away: write now instead of waiting the 15 s. If the commit is ready, one keepalive request finishes
 // the job even if the tab is closed or the app killed; otherwise the normal write starts (and may be cut off).
 const ghFlush = () => {
-  if (!(COL && COL.gh && PULLED && ONLINE) || !(remoteDirty || COL.extraDirty())) return;
+  if (!(COL && PULLED && ONLINE) || !(remoteDirty || COL.extraDirty())) return;
   clearTimeout(remoteTimer);
   const job = !remoteBusy && COL.flush(changedDocs());
   if (!job) { remoteDirty = true; pushRemote(); return; }
   const snap = changedDocs(); remoteBusy = true;
-  queueSync(async () => { try { await job; for (const id in snap) REMOTE[id] = snap[id]; } catch (e) {} })
+  queueSync(async () => { try { await job; for (const id in snap) REMOTE[id] = snap[id]; } catch (e) { noteErr("sync: quick write on close", e); } })
     .then(() => { remoteBusy = false; remoteDirty = true; pushRemote(); }); // anything newer, or a refused write: the normal path
 };
 document.addEventListener("visibilitychange", () => { if (document.hidden) ghFlush(); });
@@ -817,7 +879,6 @@ function mergeStates(a, b) {
   m.best = { combo: Math.max((m.best || {}).combo || 0, (o.best || {}).combo || 0) };
   for (const g of ["lad", "word"]) { const x = (o.fsrs || {})[g], y = (m.fsrs || {})[g]; if (x && (!y || (x.at || 0) > (y.at || 0))) m.fsrs = Object.assign({}, m.fsrs, { [g]: x }); }
   mergeSettings(m, o);
-  { const x = m.lyrAll, y = o.lyrAll; if (y && (!x || (y.t || 0) > (x.t || 0))) m.lyrAll = y; } // {on, t}: the latest choice wins
   m.placed = !!(m.placed || o.placed);
   if (!m.skills && o.skills) { m.skills = o.skills; m.recent = o.recent || {}; }
   for (const k of ["segSeen", "lastExport", "lastImport", "mig"]) m[k] = Math.max(m[k] || 0, o[k] || 0) || undefined;
@@ -865,7 +926,7 @@ function purgeTrash(e, quiet) {
   trashDrop(e);
   if (e.kind === "listen" && e.data && e.data.it && !S.gen.listen.some(x => x.id === e.data.it.id)) {
     const it = e.data.it; audioDel(it.id);
-    if (it.r2 && it.r2.key && !HOSTED) { S.r2del = (S.r2del || []).concat([it.r2.key]); setTimeout(r2Kick, 300); }
+    if (it.r2 && it.r2.key) { S.r2del = (S.r2del || []).concat([it.r2.key]); setTimeout(r2Kick, 300); }
   }
   if (!quiet) save();
 }
@@ -880,7 +941,7 @@ async function audioGc() {
   const alive = new Set([...(S.gen.listen || []).map(x => x.id), ...(S.gen.trash || []).filter(e => e.kind === "listen" && e.data && e.data.it).map(e => e.data.it.id)]);
   for (const k of await audioKeys()) if (S.gone["listen:" + k] && !alive.has(k)) audioDel(k);
 }
-function housekeep() { trashExpire(); audioGc().catch(() => {}); }
+function housekeep() { trashExpire(); audioGc().catch(e => noteErr("audio cleanup", e)); }
 // used by mergeStates: drop what was deleted (and not changed since), and bin entries emptied anywhere
 function applyGone(st) {
   const g = st.gone || {}, dead = (k, u) => g[k] && (u || 0) <= g[k];
@@ -909,22 +970,14 @@ function bindTrashCard(scope) {
 }
 
 /* ============ connection status ============ */
-const HOSTED = !!(window.claude && window.claude.use);
 let ONLINE = navigator.onLine !== false;
-function drawOffline() {
-  let b = $("#offbar");
-  if (!HOSTED || ONLINE) { if (b) b.remove(); return; }
-  if (!b) { b = document.createElement("div"); b.id = "offbar"; b.className = "offline"; $("#app").prepend(b); }
-  b.textContent = "离线中 · Offline. Practice keeps working and saves on this device; writing gets Claude's feedback once you reconnect. Don't close this page until you're back online.";
-}
-addEventListener("online", () => { ONLINE = true; drawOffline(); processPending(); processSentences(); if (COL) pullRemote(); if (!HOSTED) setTimeout(autoCheck, 2000); });
-addEventListener("offline", () => { ONLINE = false; drawOffline(); });
+addEventListener("online", () => { ONLINE = true; autoCheck(); if (COL) pullRemote(); setTimeout(autoCheck, 2000); });
+addEventListener("offline", () => { ONLINE = false; });
 let PERSISTED = null;
 
-/* ============ AI (Claude-hosted only) ============ */
-let AI = null;
+/* ============ grading ============ */
 /* ---------- grading chain (offline copy, step 3, 2026-11-06) ----------
-   Who grades typed answers: Claude in the hosted version. In the offline copy: Gemini Flash-Lite first, then Groq
+   Who grades typed answers: Gemini Flash-Lite first, then Groq
    (Qwen), each switched on in Progress → 其他 AI → 批改顺序 and using that service's saved key; null = self-grade.
    Per answer the next one is tried when the first is busy, over its per-minute limit, unreachable, or slower than
    15 s. Gemini's daily free limit → skipped until midnight Pacific (when Google resets it). The alias
@@ -939,14 +992,13 @@ const groqModel = p => (p.base && p.base.replace(/\/+$/, "") === GROQ_BASE && p.
 // this device's view of each service right now (not synced): skip-until times, daily-limit-until, retired models
 const PST_KEY = "zwlgf:provstate";
 function pstGet() { try { return Object.assign({ skip: {}, day: {}, gone: {} }, JSON.parse(localStorage.getItem(PST_KEY) || "{}")); } catch (e) { return { skip: {}, day: {}, gone: {} }; } }
-function pstSet(x) { try { localStorage.setItem(PST_KEY, JSON.stringify(x)); } catch (e) {} }
+function pstSet(x) { try { localStorage.setItem(PST_KEY, JSON.stringify(x)); } catch (e) { noteErr("save: grading state", e); } }
 function nextPacificMidnight() {
   const t = Date.now(), la = new Date(new Date(t).toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
   const off = t - la.getTime(), m = new Date(la); m.setHours(24, 0, 0, 0); return m.getTime() + off + 60000;
 }
 // every service that could grade (on + key + a usable model), with why it's skipped right now, if it is
 function gradeServices() {
-  if (HOSTED) return [];
   const p = provGet(), st = pstGet(), out = [];
   const gk = keyFor(p, GEM_BASE);
   if (gradeOn(p, "gem") && gk) {
@@ -991,7 +1043,6 @@ async function chainJson(prompt) {
 // kept for the home card: a service is switched on but its model was retired and there's no fallback left
 function provGone() {}
 function provGoneCard() {
-  if (HOSTED) return "";
   const g = gradeServices().filter(x => x.gone); if (!g.length) return "";
   return `<div class="card stack" style="border-color:var(--bad)"><span class="label">需要换模型 · Pick a new model</span>
     <p class="small">${g.map(x => `「${esc(x.model)}」`).join("")}用不了了，可能已经停用。<br>${g.map(x => esc(x.model)).join(", ")} isn't available any more (probably retired). ${gradeChain().length ? "The other model grades meanwhile." : "Until you pick another one, you grade your own answers."}</p>
@@ -999,20 +1050,11 @@ function provGoneCard() {
 }
 const provName = m => String(m || "").split("/").pop().replace(/^qwen/i, "Qwen");
 // the offline copy: waiting answers are graded a moment after start and whenever the app comes back
-document.addEventListener("visibilitychange", () => { if (!document.hidden && !HOSTED) { processPending(); autoCheck(); } });
-if (!HOSTED) setTimeout(() => { processPending(); autoCheck(); }, 3000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) autoCheck(); });
+setTimeout(autoCheck, 3000);
 function grader() {
-  if (AI) return { json: (pr, o) => AI.json(pr, o), name: "Claude", prov: false };
   if (ONLINE && provReady()) return { json: pr => chainJson(pr), name: gradeChain()[0].name, prov: true };
   return null;
-}
-if (window.claude && window.claude.use) claude.use("sample").then(s => { AI = s; if (VIEW === "me" || VIEW === "read") render(); processPending(); processSentences(); }).catch(() => {});
-function aiErr(e) {
-  const c = e && e.code;
-  if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared") { AI = null; return "AI 未授权，已改用自评。"; }
-  if (c === "rate_limited") return "Claude 暂时用不了（请求太多，或到了用量上限），稍后再试 · Claude isn't available right now (too many requests or your usage limit). Try again later.";
-  if (c === "invalid_json") return "AI 返回格式有误，再试一次。";
-  return "AI 暂时不可用。";
 }
 
 /* ============ data ============ */
@@ -1606,12 +1648,6 @@ function candidates(cat, done = doneToday()) {
 }
 /* ============ views ============ */
 let VIEW = "home";
-const GEN = {};
-function genStatus(key, html, busy) {
-  GEN[key] = html; GEN[key + "Busy"] = !!busy;
-  const el = document.getElementById("st-" + key); if (el) el.innerHTML = html;
-  $$(`[data-genkey="${key}"]`).forEach(b => b.disabled = !!busy);
-}
 let SESSION = null, PLACE = null, READ = null;
 const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid) || (VIEW === "listen" && LST && (LST.play || LST.review));
 function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
@@ -1643,10 +1679,8 @@ function renderHome(main) {
   ${!S.placed ? `<div class="card"><span class="label">第一步 · First step</span><h2>先做水平测试（约 10 分钟）</h2>
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
-  ${syncWarn()}
-  ${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
-  ${offwCard()}
-  ${sentWaitHtml() ? `<div class="card"><span class="label">等 Claude 处理 · Waiting for Claude</span>${sentWaitHtml()}</div>` : ""}
+  ${storeCard()}${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
+  ${autoCard()}
   ${reqWaitCard()}
   ${backupNudge()}
   <div class="card"><div class="spread"><h2>练习 · Practice</h2></div>
@@ -1664,9 +1698,6 @@ function renderHome(main) {
   $("#start", main).onclick = () => startSession();
   $$(".goal", main).forEach(b => b.onclick = () => { S.settings = setSettings({ goal: +b.dataset.goal }); save(); $$(".goal", main).forEach(x => x.classList.toggle("on", x === b)); });
   $("#light", main).onchange = e => { S.settings = setSettings({ lightTyping: e.target.checked }); save(); };
-  $$("[data-offw]", main).forEach(b => b.onclick = () => checkOffline(+b.dataset.offw));
-  const sn = $("#sentnow", main); if (sn) sn.onclick = () => processSentences(true);
-  const os = $("#offw-skip", main); if (os) os.onclick = skipOffline;
   const oo = $("#offw-ok", main); if (oo) oo.onclick = () => { S.offwSummary = null; save(); render(); };
   const gd = $("#graded-ok", main); if (gd) gd.onclick = () => { (S.graded || []).forEach(g => g.seen = true); save(); render(); };
   const bk = $("#backup-go", main); if (bk) bk.onclick = () => setView("me");
@@ -1674,6 +1705,7 @@ function renderHome(main) {
   const nk = $("#nudge-ok", main); if (nk) nk.onclick = () => { S.nudge.seen = true; save(); render(); };
   const ck = $("#ck-ok", main); if (ck) ck.onclick = () => { S.ckSum.seen = true; save(); render(); };
   const gf = $("#gh-fix", main); if (gf) gf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#ghcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
+  bindStoreCard(main);
   const pf = $("#prov-fix", main); if (pf) pf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
   const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
@@ -1695,14 +1727,7 @@ function gradedCard() {
       <span>参考：<span class="zh">${esc(x.model)}</span></span></div>`).join("")}
     ${g.length ? `<button class="btn ghost" id="graded-ok">知道了 Got it</button>` : ""}</div>`;
 }
-function syncWarn() {
-  if (!HOSTED || !DB) return "";
-  if (!SYNC_FULL && SYNC_BYTES < 0.8 * SYNC_LIMIT) return "";
-  return `<div class="card syncwarn"><span class="label">账号同步 · Account sync</span>
-    <p class="small">${SYNC_FULL ? "One part of your progress is too big to sync, so that part isn't reaching your other devices. Everything is still saved on this device." : `The biggest part of your sync record is ${Math.round(SYNC_BYTES / 1024)} KB of 256 KB.`} Ask Claude to look at the sync layout.</p></div>`;
-}
 function backupNudge() {
-  if (HOSTED) return "";
   { const g = ghCfg(); if (g && g.token) return ""; } // GitHub sync set up on this device: it holds the copy (checked from the saved setting, so it doesn't flash before sync connects; 2026-11-15)
   const practicedSince = (S.updatedAt || 0) > (S.lastExport || 0) + MIN;
   if (!practicedSince || now() - (S.lastExport || 0) < 4 * DAY || !Object.keys(S.items).length) return "";
@@ -1725,7 +1750,6 @@ const writingAllowed = () => true;
 function writingCandidates(exclude, done = doneToday()) {
   return candidates("lad", done).filter(c => c.due && c.r >= 4 && !exclude.has("lad" + c.id));
 }
-const isWriting = c => c && c.t === "lad" && (c.r === 4 || c.r === 5);
 
 /* ---------- new-item budget (v23) ----------
    No setting and no numbers on screen. New drills and words keep coming while the next week's projected reviews fit
@@ -1746,7 +1770,6 @@ function minsPerDay() {
 }
 const REVIEW_SEC = { lad: 90, word: 25 };
 // minutes of reviews expected over the next 7 days, assuming each review succeeds at the target
-function load7() { return loadSec(7) / 60; }
 // FSRS review seconds expected over the next `days` days (drills ~90 s per review, words ~25 s)
 function loadSec(days) {
   const t = now(), end = t + days * DAY;
@@ -1912,26 +1935,11 @@ function buildBlock(n, used, rnd = Math.random) {
   if (out.some(c => c.due)) used.add("rev");
   return out;
 }
-// Online: when unseen parsing sentences run low during practice, Claude writes 10 more (once per session, with a toast).
-function topUpSentences(s) {
-  if (s.toppedUp || !HOSTED || !AI || !ONLINE || GEN.senBusy) return;
-  const unseen = [...SEN.keys()].filter(id => !S.items[id]).length;
-  if (unseen >= 10) return;
-  s.toppedUp = true;
-  toast("Claude 正在写 10 个新短句 · Writing 10 new sentences", 3000);
-  genSen(true).then(n => toast(`加了 ${n || 0} 句新短句 · Added ${n || 0} sentences`)).catch(e => toast(aiErr(e), 4000));
-}
-// kept for tests and the spacing chat: a fixed-length plan
-function buildSession(minutes) { return buildBlock(GOAL_CARDS[minutes] || 10, new Set()); }
 const GOAL_CARDS = { 5: 8, 15: 22, 30: 42 };
-function readingSwap(s) {
-  for (const k of ["sen", "ctx", "seg"]) { const c = candidates(k).find(x => !s.used.has(x.t + x.id)); if (c) { s.used.add(c.t + c.id); return c; } }
-  return null;
-}
 function startSession(goal) {
   autoTopUp();
   const g = goal === undefined ? ((S.settings && S.settings.goal) || 0) : goal;
-  SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), retry: [], requeued: new Set(), promoted: 0, mastered: 0, ended: false };
+  SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), requeued: new Set(), promoted: 0, mastered: 0, ended: false };
   SESSION.fbUsed = new Set();
   // 2026-11-10 (learner): the 复习完了 divider shows once per app day. If it was already reached today, on this device
   // or another (the synced time log), a new session skips it and everything in it counts as extra time — the only
@@ -1939,7 +1947,6 @@ function startSession(goal) {
   if (daySplit(S.log[dayKey()]).done) { SESSION.used.add("divshown"); SESSION.pastDiv = true; }
   (S.offfb || []).filter(f => !f.seen).forEach(f => SESSION.used.add("lad" + f.id)); // feedback first, then the drill (next session)
   SESSION.q = addFeedback(buildBlock(8, SESSION.used), SESSION);
-  topUpSentences(SESSION);
   if (!SESSION.q.length) { SESSION = null; toast("今天的都练完了，也没有新题了 · All done for today, and no new cards left. 阅读 has passages to read or re-read."); return; }
   setView("session");
 }
@@ -1949,9 +1956,7 @@ function renderSession(main) {
   if (s.ended) { $("#tabs").hidden = false; return renderEnd(main); }
   // goal reached: one pause to celebrate, then keep going if you like
   if (s.goalN && !s.goalShown && answered(s) >= s.goalN) { s.goalShown = true; return renderGoal(main); }
-  const ri = s.retry.findIndex(x => x.at <= s.i);
-  if (ri >= 0) s.q.splice(s.i, 0, s.retry.splice(ri, 1)[0].card);
-  if (s.i >= s.q.length) { s.q.push(...addFeedback(buildBlock(8, s.used), s)); topUpSentences(s); }
+  if (s.i >= s.q.length) s.q.push(...addFeedback(buildBlock(8, s.used), s));
   if (s.i >= s.q.length) { s.ended = true; return render(); }
   const card = s.q[s.i];
   const n = answered(s);
@@ -2176,16 +2181,15 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
       given = raw;
       $("#check", body).disabled = true; $("#giveup", body).disabled = true; ta.disabled = true;
       if (accepted(item).has(norm(raw))) return finish(3, "", "x");
-      const queue = () => queueGrade(item, rung, raw, placement);
       const G = grader();
       if (G) {
         fb.innerHTML = `<div class="fb mid"><span><span class="spin"></span> 批改中… ${esc(G.name)} is reading your answer</span><button class="btn ghost" id="selfg">不等了，自己判断 Grade it myself</button></div>`;
-        let cancelled = false, entry = null;
+        let cancelled = false;
         // offline copy: grading yourself instead keeps the answer for the automatic check (a late reply is dropped)
-        $("#selfg", fb).onclick = () => { cancelled = true; if (G.prov) return noClaude(raw); entry = queue(); noClaude(raw, entry, true); };
+        $("#selfg", fb).onclick = () => { cancelled = true; noClaude(raw); };
         try {
           const g = await gradeAI(item, raw, G);
-          if (cancelled || answered) { if (entry) settleGrade(entry, g); return; }
+          if (cancelled || answered) return;
           const sc = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
           const notes = (Array.isArray(g.notes) ? g.notes : []).slice(0, 3);
           finish(sc, `<span>你的：<span class="zh">${esc(raw)}</span></span>
@@ -2193,47 +2197,43 @@ function renderLadder(item, rung, el, onResult, onNext, placement) {
             ${g.good ? `<span>👍 ${esc(g.good)}</span>` : ""}
             ${notes.length ? `<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}<span class="small muted">参考答案 Reference:</span>`, "a", chunkVerdict(g));
           if (!placement) addOverride(fb, item, raw, sc, g._by || G.name);
-          if (G.prov && !placement) recordMG(item.id, raw, g._by || G.name, g._model, sc, chunkVerdict(g), 0, g);
-          if (G.prov && (S.offw || []).length) setTimeout(autoCheck, 4000); // a model is answering again: catch up
+          if (!placement) recordMG(item.id, raw, g._by || G.name, g._model, sc, chunkVerdict(g), 0, g);
+          if ((S.offw || []).length) setTimeout(autoCheck, 4000); // a model is answering again: catch up
         } catch (e) {
           if (cancelled || answered) return;
-          // the offline copy: every model in the grading order failed (busy, limit, unreachable, slow) → self-grade;
+          // every model in the grading order failed (busy, limit, unreachable, slow) → self-grade;
           // the answer waits with the offline ones and is graded automatically later (autoCheck)
-          if (G.prov) return noClaude(raw);
-          const transient = !ONLINE || !e || !e.code || e.code === "upstream_error" || e.code === "rate_limited";
-          if (transient && AI) noClaude(raw, queue(), false);
-          else { toast(aiErr(e)); noClaude(raw); }
+          noteErr("grading", e && e.cause ? Object.assign({}, e, { code: e.cause }) : e);
+          noClaude(raw);
         }
-      } else if (AI) noClaude(raw, queue(), false);
-      else noClaude(raw);
+      } else noClaude(raw);
     };
     // No Claude right now: if the key chunk isn't in the answer it counts as a miss straight away (and is kept for
     // Claude to check later); otherwise you grade yourself, as before.
-    function noClaude(raw, entry, waiting) {
-      if (placement || hasChunk(raw, p.key)) return selfGrade(raw, entry, waiting);
-      if (entry) { entry.self = 0; save(); } else if (!HOSTED) keepOffline(item, rung, raw, 0);
-      finish(0, `<span>你的：<span class="zh">${esc(raw)}</span></span>${entry || !HOSTED ? `<span class="small muted">${entry ? `${esc(graderName())} 能用了会再看一遍 · ${esc(graderName())} will check it once available.` : "之后会自动批改，有问题会出反馈卡 · It'll be graded automatically later; a feedback card comes if something's off."}</span>` : ""}`, "k");
+    function noClaude(raw) {
+      if (placement || hasChunk(raw, p.key)) return selfGrade(raw);
+      keepOffline(item, rung, raw, 0);
+      finish(0, `<span>你的：<span class="zh">${esc(raw)}</span></span><span class="small muted">之后会自动批改，有问题会出反馈卡 · It'll be graded automatically later; a feedback card comes if something's off.</span>`, "k");
     }
-    function selfGrade(raw, entry, waiting) {
+    function selfGrade(raw) {
       fb.innerHTML = `<div class="fb mid"><span>你的：<span class="zh" style="font-size:18px">${esc(raw)}</span></span>
         <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span>
         ${item.alt && item.alt.length ? `<span class="alts">也可以：${item.alt.slice(0, 3).map(esc).join(" ／ ")}</span>` : ""}
-        ${!entry && !HOSTED && !placement ? `<span class="small">现在没有模型能批改（离线、太忙或额度用完）。先自己判断；之后会自动批改，有问题会出反馈卡。<br>No model can grade right now (offline, busy, or out of free quota). Grade yourself for now; it'll be graded automatically later, and a feedback card comes if something's off.</span>` : ""}
-        ${entry ? `<span class="small">${waiting ? `批改到了会放在首页 · ${esc(graderName())}'s feedback will appear on the home screen when it arrives.` : `现在用不了 ${esc(graderName())}（离线、太忙或到了用量上限）。先自己判断；能用了会补批改，结果放在首页。Can't reach ${esc(graderName())} right now (offline, busy, or usage limit), so grade yourself; its feedback will appear on the home screen once it's available again.`}</span>` : ""}
+        ${!placement ? `<span class="small">现在没有模型能批改（离线、太忙或额度用完）。先自己判断；之后会自动批改，有问题会出反馈卡。<br>No model can grade right now (offline, busy, or out of free quota). Grade yourself for now; it'll be graded automatically later, and a feedback card comes if something's off.</span>` : ""}
         <span class="small">自己判断 How did you do?</span>
         <div class="row"><button class="btn soft" data-s="3">对了</button><button class="btn soft" data-s="2">意思对，不够地道</button><button class="btn soft" data-s="0">不对</button></div></div>`;
-      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (entry) { entry.self = +b.dataset.s; save(); } else if (!HOSTED && !placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`, placement ? undefined : "s"); });
+      $$("[data-s]", fb).forEach(b => b.onclick = () => { if (!placement) keepOffline(item, rung, raw, +b.dataset.s); finish(+b.dataset.s, `<span>你的：<span class="zh">${esc(raw)}</span></span>`, placement ? undefined : "s"); });
     }
   }
 }
-const graderName = () => AI ? "Claude" : provReady() ? provName(provGet().model) : "Claude";
+const graderName = () => provReady() ? provName(provGet().model) : "Claude";
 // Disagree with the grade: your verdict replaces the grader's in the answer log (the schedule is recomputed) and is
 // kept in S.ovr (last 50) so the grading rules can be checked against your overrides later.
 function addOverride(fbEl, item, raw, sc, name) {
   const box = document.createElement("div"); box.className = "row"; box.style.cssText = "gap:6px;margin-top:6px;align-items:center";
   box.innerHTML = `<span class="small muted" id="ovl">不同意？改判 · Disagree with ${esc(name)}?</span>` + [[3, "对了"], [2, "意思对"], [0, "不对"]].map(([v, l]) => `<button class="tagc" data-ov="${v}">${l}</button>`).join("");
   ($(".fb", fbEl) || fbEl).append(box);
-  if (!HOSTED && name !== "Claude") box.append(askClaudeButton(item.id, raw, name, sc));
+  if (name !== "Claude") box.append(askClaudeButton(item.id, raw, name, sc));
   $$("[data-ov]", box).forEach(b => b.onclick = () => {
     const v = +b.dataset.ov; if (!overrideLast(item.id, v, { raw, by: name, was: sc })) return;
     $$("[data-ov]", box).forEach(x => x.classList.toggle("on", x === b));
@@ -2258,26 +2258,6 @@ function overrideLast(id, v, info) {
   S.ovr = [{ id, raw: info.raw, by: info.by, was: info.was, you: v, t: now() }].concat((S.ovr || []).filter(x => !(x.id === id && x.raw === info.raw))).slice(0, 50);
   save(); return true;
 }
-/* ---------- grading queue: answers written while Claude was unreachable ---------- */
-function queueGrade(item, rung, raw, placement) {
-  const entry = { k: item.id + ":" + now(), id: item.id, rung, raw, t: now(), self: null, pl: !!placement };
-  (S.pending = S.pending || []).push(entry);
-  if (S.pending.length > 30) S.pending = S.pending.slice(-30);
-  save();
-  return entry;
-}
-function settleGrade(entry, g) {
-  const item = LADDER.get(entry.id);
-  S.pending = (S.pending || []).filter(x => x.k !== entry.k);
-  if (!item) { save(); return; }
-  const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
-  (S.graded = S.graded || []).unshift({ k: entry.k, id: entry.id, en: item.en, raw: entry.raw, score, self: entry.self, fixed: String(g.fixed || ""), good: String(g.good || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), model: ladParts(item).model, t: now(), seen: false });
-  S.graded = S.graded.slice(0, 20);
-  // Claude's grade replaces the self-grade in the answer log; the schedule is recomputed from the log (v23)
-  if (!entry.pl) regradeLog(entry.id, entry.t, gradeValue(g));
-  save();
-  if (VIEW === "home") render();
-}
 /* ---------- written offline → checked by Claude later ---------- */
 // The offline copy has no Claude, so it keeps your typed answers (last 50). The copy code carries them to the
 // online version, which offers to have Claude check some. Only answers with a problem become feedback cards.
@@ -2287,56 +2267,8 @@ function keepOffline(item, rung, raw, self) {
   if (S.offw.length > OFFW_MAX) S.offw = S.offw.slice(-OFFW_MAX);
   save();
 }
-let OFFW_RUN = null;
 // 对了 first (a wrong 对了 is the mistake you'd never notice), then 意思对, then 不对; newest first in each group
 function offwPriority() { const rank = x => x >= 3 ? 0 : x === 2 ? 1 : 2; return (S.offw || []).slice().sort((a, b) => rank(a.self) - rank(b.self) || b.t - a.t); }
-function offwCard() {
-  const left = (S.offw || []).length, sum = S.offwSummary;
-  if (!HOSTED) return autoCard();
-  if (!left && !sum && !OFFW_RUN) return "";
-  let h = `<div class="card"><span class="label">离线写的句子 · Answers you wrote offline</span>`;
-  if (sum && !OFFW_RUN) h += `<div class="stack" style="gap:6px"><b>检查了 ${sum.n} 句 · Checked ${sum.n}</b>
-    <span class="small">✓ <b>${sum.fine}</b> 句没问题 · natural as written</span>
-    ${sum.cards ? `<span class="small">✎ <b>${sum.cards}</b> 张反馈卡 · feedback card${sum.cards > 1 ? "s" : ""}<br><span class="muted">会穿插在练习里 · they'll turn up in practice</span></span>` : ""}
-    ${sum.raised ? `<span class="small">↑ <b>${sum.raised}</b> 句你判了"不对"，其实意思对 · you marked ${sum.raised > 1 ? "these" : "this"} wrong but the meaning was right; level raised</span>` : ""}
-    ${sum.failed ? `<span class="small muted">中途连不上 Claude，剩下的还在等。Lost Claude partway; the rest are still waiting.</span>` : ""}</div>
-    <button class="btn ghost" id="offw-ok">知道了 Got it</button>`;
-  if (OFFW_RUN) h += `<p class="small"><span class="spin"></span> Claude 正在检查… ${OFFW_RUN.done}/${OFFW_RUN.n}</p>`;
-  else if (left) {
-    const ns = [5, 15].filter(x => x < left);
-    h += `<p class="small">${left} 句等着检查 · ${left} waiting. Claude looks at the ones you marked 对了 first. Only answers with a problem become cards; the rest just fix your levels.</p>
-    ${AI && ONLINE ? `<div class="row">${ns.map(x => `<button class="btn soft" data-offw="${x}">检查 ${x} 句</button>`).join("")}<button class="btn soft" data-offw="${left}">全部 ${left} 句 All</button></div>` : `<p class="small muted">需要 Claude，联网后再查。Needs Claude; available once you're online.</p>`}
-    <button class="btn ghost" id="offw-skip">跳过这些 Skip these</button>`;
-  }
-  return h + `</div>`;
-}
-function skipOffline() {
-  const saved = (S.offw || []).slice();
-  S.offwDone = (S.offwDone || []).concat(saved.map(x => x.k)).slice(-400); S.offw = []; save(); render();
-  toastAction(`已跳过 ${saved.length} 句`, "撤销 Undo", () => { const ks = new Set(saved.map(x => x.k)); S.offwDone = S.offwDone.filter(k => !ks.has(k)); S.offw = saved.concat(S.offw || []); save(); render(); });
-}
-async function checkOffline(n) {
-  if (OFFW_RUN || !AI) return;
-  const list = offwPriority().slice(0, n);
-  OFFW_RUN = { n: list.length, done: 0 }; S.offwSummary = null;
-  let fine = 0, cards = 0, failed = false, raised = 0;
-  if (VIEW === "home") render();
-  for (let i = 0; i < list.length; i += 5) {
-    const batch = list.slice(i, i + 5);
-    const known = batch.filter(e => LADDER.has(e.id));
-    try {
-      const res = known.length ? await gradeBatch(known) : [];
-      batch.filter(e => !LADDER.has(e.id)).forEach(e => settleOffline(e, null));
-      known.forEach((e, j) => { if (!res[j]) return; if (e.self != null && e.self < 2 && (+res[j].score || 0) >= 2) raised++; if (settleOffline(e, res[j])) fine++; else cards++; });
-    } catch (e) { failed = true; if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
-    OFFW_RUN.done = Math.min(list.length, i + 5);
-    if (VIEW === "home") render();
-  }
-  OFFW_RUN = null;
-  S.offwSummary = { n: fine + cards, fine, cards, failed, raised };
-  save();
-  if (VIEW === "home") render(); else toast(`检查完了 · ${fine} 句没问题${cards ? `，${cards} 张反馈卡` : ""}`);
-}
 // returns true when Claude found nothing to fix
 function settleOffline(e, g, by) {
   S.offw = (S.offw || []).filter(x => x.k !== e.k);
@@ -2345,7 +2277,7 @@ function settleOffline(e, g, by) {
   const score = Math.max(0, Math.min(3, Math.round(+g.score || 0)));
   regradeLog(e.id, e.t, gradeValue(g));
   if (score >= 3 && chunkVerdict(g) === "ok") return true;
-  (S.offfb = S.offfb || []).unshift({ k: e.k, id: e.id, raw: e.raw, score, self: e.self, by: by || (HOSTED ? "Claude" : ""), fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), t: e.t, seen: false });
+  (S.offfb = S.offfb || []).unshift({ k: e.k, id: e.id, raw: e.raw, score, self: e.self, by: by || "", fixed: String(g.fixed || ""), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(String), t: e.t, seen: false });
   S.offfb = S.offfb.slice(0, 60);
   return false;
 }
@@ -2358,7 +2290,7 @@ function settleOffline(e, g, by) {
    the schedule is corrected, and only answers with a problem become feedback cards. */
 let AUTO = null;
 async function autoCheck() {
-  if (HOSTED || AUTO || !ONLINE || !provReady()) return;
+  if (AUTO || !ONLINE || !provReady()) return;
   // answers queued by older versions as "graded later" join the same route
   if ((S.pending || []).length) {
     const old = S.pending.filter(x => !x.pl && (x.self != null || now() - x.t > 5 * MIN));
@@ -2374,7 +2306,7 @@ async function autoCheck() {
       (S.offw || []).filter(e => !LADDER.has(e.id)).forEach(e => settleOffline(e, null));
       const batch = offwPriority().slice(0, 5); if (!batch.length) break;
       let res;
-      try { res = await gradeBatch(batch, chainJson); } catch (e) { sum.failed = true; break; }
+      try { res = await gradeBatch(batch, chainJson); } catch (e) { noteErr("grading later", e && e.cause ? Object.assign({}, e, { code: e.cause }) : e); sum.failed = true; break; }
       let got = 0;
       batch.forEach((e, j) => {
         if (!res[j]) return; got++;
@@ -2424,7 +2356,7 @@ ${list}
 Score each: ${GRADE_RUBRIC}
 Also judge the practiced chunk separately: "ok" if the learner used it (or a form of it) correctly, "wrong" if they used it incorrectly, "missing" if it isn't in the answer (even if the sentence is otherwise fine).
 Reply with only a JSON array, one object per answer in the same order: {"i": answer number, "score": 0-3, "chunk": "ok" | "wrong" | "missing", "fixed": "the most natural correction that stays close to the learner's own wording (simplified Chinese)", "notes": ["up to 3 short English notes, each naming the specific problem and the better Chinese chunk"]}`;
-  const arr = json ? await json(prompt) : await AI.json(prompt, { modelTier: "default", effort: "low" });
+  const arr = await json(prompt);
   if (!Array.isArray(arr)) throw { code: "invalid_json" };
   if (arr._by) entries.by = arr._by; if (arr._model) entries.real = arr._model;
   return entries.map((e, j) => arr.find(x => x && +x.i === j + 1) || null);
@@ -2457,26 +2389,10 @@ function renderOfflineFb(k, el, done) {
       ${f.notes.length ? `<ul>${f.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
       <span>参考：<span class="zh" style="font-size:18px">${esc(p.model)}</span></span></div>
       <div class="row"><button class="btn ghost" id="again">再写一次 Write it again</button><button class="btn" id="ok">知道了 Next</button></div>`;
-    if (!HOSTED && f.by && f.by !== "Claude") { const row = document.createElement("div"); row.className = "row"; row.append(askClaudeButton(f.id, f.raw, f.by, f.score, Math.round(f.t / 1000))); $("#ofb", el).append(row); }
+    if (f.by && f.by !== "Claude") { const row = document.createElement("div"); row.className = "row"; row.append(askClaudeButton(f.id, f.raw, f.by, f.score, Math.round(f.t / 1000))); $("#ofb", el).append(row); }
     $("#again", el).onclick = () => done({ t: "lad", id: f.id, r: Math.min(5, Math.max(4, (S.items[f.id] || {}).r || 4)) });
     $("#ok", el).onclick = () => done();
   };
-}
-let GRADING = false;
-async function processPending() {
-  if (!HOSTED) return autoCheck(); // offline copy: one route for everything graded later (step 3)
-  const G = grader();
-  if (GRADING || !G || !(S.pending || []).length) return;
-  GRADING = true;
-  try {
-    for (const entry of S.pending.slice(0, 10)) {
-      if (entry.self == null && now() - entry.t < 5 * MIN) continue; // still on screen, not yet self-graded
-      const item = LADDER.get(entry.id);
-      if (!item) { S.pending = S.pending.filter(x => x.k !== entry.k); continue; }
-      try { settleGrade(entry, await gradeAI(item, entry.raw, G)); }
-      catch (e) { if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; if (e && e.code === "model_gone") provGone(e); break; }
-    }
-  } finally { GRADING = false; }
 }
 async function gradeAI(item, answer, G = grader()) { return G.json(gradePrompt(item, answer), { modelTier: "default", effort: "low" }); }
 function gradePrompt(item, answer) {
@@ -2972,15 +2888,11 @@ function renderRead(main) {
     return `<button class="pitem ${r ? "done" : ""}" data-p="${esc(p.id)}"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span>${!r ? `<span class="chip new">新 New</span>` : ""}${p.gen ? `<span class="chip">AI</span>` : ""}<span class="small muted">已知词 ${pct(coverage(p))}</span>${r ? `<span class="small muted">· ✓ ${r.cpm} 字/分 · ${r.score}/3${r.re ? " · 重读 " + r.re : ""}</span>` : ""}</div><h3>${esc(p.title)}</h3></button>`;
   };
   main.innerHTML = `<div class="top"><div><h1>阅读</h1><p class="date">Tap any word for meaning. Turn on 分词 to see chunk boundaries.</p></div></div>
-    ${AI ? `<div class="card"><span class="label">生成新短文 · New passage for you</span>
-      <p class="small muted">Claude writes a short piece that weaves in words you keep forgetting. You can leave this tab while it works; it'll appear below as 新.</p>
-      <div class="row">${Object.entries({ xhs: "小红书帖子", news: "新闻短讯", book: "小说片段", travel: "旅行对话" }).map(([k, v]) => `<button class="btn soft" data-gen="${k}" data-genkey="passage" ${GEN.passageBusy ? "disabled" : ""}>${v}</button>`).join("")}</div><div id="st-passage" class="small muted">${GEN.passage || ""}</div></div>` : ""}
     ${mineSection()}
     ${fresh.length ? `<span class="label">没读过 · New (${fresh.length})</span><div class="plist">${fresh.map(item).join("")}</div>` : ""}
     ${ready.length ? `<span class="label">可以重读 · Ready to re-read (${ready.length})</span><p class="small muted" style="margin-top:-8px">读过两天以上了。再读一遍练速度，不答题。 It's been 2+ days: read it again for speed, no questions.</p><div class="plist">${ready.map(rItem).join("")}</div>` : ""}
     ${done.length ? `<span class="label">最近读过 · Read recently (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
   $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[b.dataset.p] }; render(); window.scrollTo(0, 0); });
-  $$("[data-gen]", main).forEach(b => b.onclick = () => genPassage(b.dataset.gen));
   bindMineSection(main);
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
@@ -3301,7 +3213,7 @@ function renderMineAdd(main) {
       <input class="inp" id="mtitle" placeholder="标题 Title (optional)">
       ${tagInput("mtags", "")}
       <button class="btn" id="msave">保存 Save</button><div id="merr"></div>
-      <p class="small muted">Long texts are read in parts of about ${MINE_PART} characters, up to ${MINE_PARTS} parts per text; anything longer becomes further texts. ${AI ? "You can add comprehension questions afterwards (加问题)." : HOSTED ? "Comprehension questions can be added in the online version." : "Afterwards you can ask Claude for comprehension questions (请 Claude 出题); they come with its next daily run."}</p></div>`;
+      <p class="small muted">Long texts are read in parts of about ${MINE_PART} characters, up to ${MINE_PARTS} parts per text; anything longer becomes further texts. ${"Afterwards you can ask Claude for comprehension questions (请 Claude 出题); they come with its next daily run."}</p></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
   const t = $("#mtext");
@@ -3318,7 +3230,6 @@ function renderMineAdd(main) {
     READ = { grp: r.added[0] }; render(); window.scrollTo(0, 0);
   };
 }
-let MINE_Q = null; // {grp, done, n}
 function renderMineText(main) {
   const g = mineGroups().find(x => x[0].grp === READ.grp);
   if (!g) { READ = null; return render(); }
@@ -3329,8 +3240,7 @@ function renderMineText(main) {
       ${tagInput("ttags", (p0.tags || []).join(" "))}
       <button class="btn" id="go">${next ? (S.reads[g[0].id] ? `继续读 Continue: 第${next.part + 1}部分` : g.length > 1 ? "开始读 Start: 第1部分" : "开始读 Start") : "全部读过 ✓ Read again from part 1"}</button>
       ${g.length > 1 ? `<div class="stack" style="gap:6px">${g.map(p => { const r = S.reads[p.id]; return `<button class="pitem ${r ? "done" : ""}" data-part="${esc(p.id)}" style="padding:10px 14px"><div class="row"><b>第${p.part + 1}部分</b><span class="small muted">${charCount(p.paras.join("").replace(/[|\/]/g, ""))} 字${r ? ` · ✓ ${r.cpm} 字/分` : ""}${p.qs && p.qs.length ? " · 有问题" : ""}</span></div><span class="small muted zh">${esc(p.paras.join("").replace(/[|\/]/g, "").slice(0, 24))}…</span></button>`; }).join("")}</div>` : ""}
-      ${AI ? `<div class="stack" style="gap:6px"><button class="btn soft" id="addq" ${MINE_Q || !needQ.length ? "disabled" : ""}>${needQ.length ? `加问题和注释 Add questions & notes (${needQ.length} part${needQ.length > 1 ? "s" : ""} = ${needQ.length} Claude request${needQ.length > 1 ? "s" : ""})` : "问题和注释都有了 ✓ Questions added"}</button><div id="qst" class="small muted">${MINE_Q && MINE_Q.grp === p0.grp ? `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…` : ""}</div>
-        <p class="small muted">Claude writes 3 comprehension questions, a translation, and the right reading of words used in an unusual way. Without it the text still works: tap words for the dictionary.</p></div>` : !HOSTED && needQ.length ? (needQ.every(p => reqWaiting("q:mine:" + p.id)) ? `<p class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude for questions; they arrive with its next daily run.</p>` : `<div class="stack" style="gap:6px"><button class="btn soft" id="askq">请 Claude 出题 · Ask Claude for questions (${needQ.length} part${needQ.length > 1 ? "s" : ""})</button><p class="small muted">Claude's next daily run writes 3 questions, a translation and readings in context for each part. The text works meanwhile.</p></div>`) : ""}
+      ${needQ.length ? (needQ.every(p => reqWaiting("q:mine:" + p.id)) ? `<p class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude for questions; they arrive with its next daily run.</p>` : `<div class="stack" style="gap:6px"><button class="btn soft" id="askq">请 Claude 出题 · Ask Claude for questions (${needQ.length} part${needQ.length > 1 ? "s" : ""})</button><p class="small muted">Claude's next daily run writes 3 questions, a translation and readings in context for each part. The text works meanwhile.</p></div>`) : ""}
       <button class="btn ghost" id="del">删除这篇 Delete this text</button></div>`;
   $("#back").onclick = () => { READ = null; render(); };
   bindTagInput(main);
@@ -3339,7 +3249,6 @@ function renderMineText(main) {
   const open = (p, re) => { READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!re }; render(); window.scrollTo(0, 0); };
   $("#go").onclick = () => next ? open(next) : open(g[0], true);
   $$("[data-part]", main).forEach(b => b.onclick = () => { const p = PSG.get(b.dataset.part); open(p, !!S.reads[p.id]); });
-  const aq = $("#addq"); if (aq) aq.onclick = () => mineQuestions(g);
   const ak = $("#askq"); if (ak) ak.onclick = () => { needQ.forEach(p => addReq({ rid: "q:mine:" + p.id, kind: "questions", target: "mine", id: p.id })); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
   $("#del").onclick = () => {
     const e = trashMine(g.slice());
@@ -3368,41 +3277,10 @@ function mineNextButton(main, p) {
   b.onclick = () => { READ = { pid: nx.id, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[nx.id] }; render(); window.scrollTo(0, 0); };
   const card = $(".card", main); card.insertBefore(b, $("#list", card));
 }
-async function mineQuestions(g) {
-  if (MINE_Q || !AI) return;
-  const todo = g.filter(p => !(p.qs && p.qs.length));
-  MINE_Q = { grp: g[0].grp, done: 0, n: todo.length }; render();
-  let failed = null;
-  for (const p of todo) {
-    const plain = p.paras.map(x => x.replace(/[|\/]/g, ""));
-    const prompt = `Here is part of a Chinese text an advanced learner (knows HSK 1–6 well; reads slowly) wants to read. Do NOT change the text.
-${plain.map((x, i) => `Paragraph ${i + 1}: ${x}`).join("\n")}
-Reply with only JSON:
-{"paras":["the same paragraphs, split into words/chunks with | between EVERY token (punctuation is its own token)"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}
-Rules: keep every character exactly as given; gl covers slang, names, HSK7+ words, and every word whose pronunciation or meaning here differs from its most common one (pinyin and meaning used in THIS context).
-Questions: ${QS_RULES}`;
-    try {
-      const j = await AI.json(prompt, { modelTier: "default", cache: false });
-      if (!j || !Array.isArray(j.qs)) throw { code: "invalid_json" };
-      const same = Array.isArray(j.paras) && j.paras.length === plain.length && j.paras.every((x, i) => String(x).replace(/[|\/\s]/g, "") === plain[i].replace(/\s/g, ""));
-      if (same) p.paras = j.paras.map(String); // Claude's word splitting, only if the text is unchanged
-      p.gl = j.gl && typeof j.gl === "object" ? j.gl : {};
-      p.en = String(j.en || "");
-      p.qs = toQs(j.qs); touch(p, "text");
-      save();
-    } catch (e) { failed = e; break; }
-    MINE_Q.done++; if (VIEW === "read" && READ && READ.grp === g[0].grp) { const q = $("#qst"); if (q) q.innerHTML = `<span class="spin"></span> ${MINE_Q.done}/${MINE_Q.n}…`; }
-  }
-  MINE_Q = null;
-  toast(failed ? aiErr(failed) : "问题和注释加好了 · Questions added");
-  if (VIEW === "read") render();
-}
 
 /* ============ adding words yourself (加生词) ============
    Words with a sentence need no Claude: the card is your word highlighted in your sentence, pinyin and meanings
-   from the dictionary on the device. Words without one get an example sentence from Claude automatically when
-   online (20 words per request, at most 100 a day; the rest wait on the home screen). */
-const SENT_DAY_MAX = 100, SENT_BATCH = 20;
+   from the dictionary on the device. Words without one get an example sentence from Claude's daily run. */
 let BANK_ADD = null; // {step:"form"|"pick", rows, sentence, tags}
 function splitWords(str) { return [...new Set(String(str || "").split(/[\s,，、;；\/]+/).map(w => w.trim()).filter(w => w && !Array.from(w).every(isPunct)))].slice(0, 100); }
 // The sentence box may hold several sentences: split at 。！？!?… (keeping closing quotes/brackets) and line breaks.
@@ -3419,7 +3297,7 @@ function bankAddHtml() {
   return `<div class="stack" style="gap:8px;border-top:1px solid var(--line);padding-top:12px">
     ${rows.map((r, i) => `<div class="stack" style="gap:4px;padding:8px 10px;border:1px solid var(--line);border-radius:10px">
       <div class="row" style="gap:8px"><span class="zh" style="font-size:20px">${esc(r.w)}</span>${r.dup ? `<span class="small muted">已经在复习里 · already saved (will be updated)</span>` : ""}</div>
-      ${r.rds.length > 1 ? `<select class="inp" data-ri="${i}" style="padding:6px 8px">${r.rds.map((x, k) => `<option value="${k}" ${k === r.pick ? "selected" : ""}>${esc(x.py)} · ${esc(x.gl.slice(0, 60))}</option>`).join("")}</select>` : r.rds.length ? `<span class="small">${esc(r.rds[0].py)} · ${esc(r.rds[0].gl.slice(0, 80))}</span>` : `<span class="small muted">词典里没有 · Not in the dictionary${AI ? "; Claude will add pinyin and a meaning" : "; Claude can add pinyin and a meaning once you're online"}</span>`}
+      ${r.rds.length > 1 ? `<select class="inp" data-ri="${i}" style="padding:6px 8px">${r.rds.map((x, k) => `<option value="${k}" ${k === r.pick ? "selected" : ""}>${esc(x.py)} · ${esc(x.gl.slice(0, 60))}</option>`).join("")}</select>` : r.rds.length ? `<span class="small">${esc(r.rds[0].py)} · ${esc(r.rds[0].gl.slice(0, 80))}</span>` : `<span class="small muted">词典里没有 · Not in the dictionary; Claude can add pinyin and a meaning once you're online</span>`}
       ${r.s ? `<span class="small">例句 · Your sentence: <span class="zh sent" style="font-size:15px;line-height:1.6">${markWord(r.s, r.w)}</span></span>` : `<span class="small muted">${BANK_ADD.sentence ? "你的句子里没有这个词 · not in your sentences: Claude will write one" : "Claude 会写一个例句 · Claude will write an example sentence"}${!AI ? " (when you're online)" : ""}</span>`}</div>`).join("")}
     <div class="row"><button class="btn" id="aok">加入 Add ${rows.length} 个</button><button class="btn ghost" id="aback">← 改一改 Edit</button></div></div>`;
 }
@@ -3454,56 +3332,9 @@ function bindBankAdd(card, redraw) {
     }
     const n = BANK_ADD.rows.length; BANK_ADD = null; save(); redraw();
     toast(`已加入 ${n} 个 · Added ${n}`);
-    processSentences();
   };
 }
-let SENT_RUN = null, SENT_FAIL = null;
 const wordsNeedingSentence = () => Object.values(S.bank).filter(b => b.needS || !b.s);
-function sentLeftToday() { const d = S.sentDay && S.sentDay.d === dayKey() ? S.sentDay.n : 0; return Math.max(0, SENT_DAY_MAX - d); }
-async function processSentences(force) {
-  if (SENT_RUN || !AI || !ONLINE) return;
-  let list = wordsNeedingSentence().sort((a, b) => b.t - a.t);
-  if (!list.length) return;
-  if (!force) list = list.slice(0, sentLeftToday());
-  if (!list.length) return;
-  SENT_RUN = { n: list.length, done: 0 }; SENT_FAIL = null;
-  let wrote = 0, reqs = 0;
-  if (VIEW === "home") render();
-  for (let i = 0; i < list.length; i += SENT_BATCH) {
-    const batch = list.slice(i, i + SENT_BATCH);
-    const prompt = `For each Chinese word below, write ONE natural example sentence (simplified Chinese, 10–25 characters) that uses the word exactly as written, in the given meaning if one is given, in the register the word normally belongs to (everyday for colloquial words, formal for written-register words). The learner is advanced (HSK 6 recognition), so the rest of the sentence can use normal vocabulary. If pinyin or meaning is missing, supply them.
-${batch.map((b, k) => `${k + 1}. ${b.zh}${b.py ? ` (${b.py})` : ""}${b.gl ? ` — ${b.gl.slice(0, 80)}` : ""}`).join("\n")}
-Reply with only a JSON array: [{"i": number, "s": "sentence", "py": "pinyin with tone marks", "gl": "short English meaning"}]`;
-    try {
-      reqs++;
-      const arr = await AI.json(prompt, { modelTier: "default", effort: "low" });
-      if (!Array.isArray(arr)) throw { code: "invalid_json" };
-      batch.forEach((b, k) => {
-        const x = arr.find(y => y && +y.i === k + 1); const cur = S.bank[b.zh];
-        if (!x || !cur || typeof x.s !== "string" || !x.s.includes(b.zh)) return;
-        cur.s = x.s; cur.needS = false; cur.sAI = true; wrote++;
-        if (!cur.py && x.py) cur.py = String(x.py);
-        if (!cur.gl && x.gl) cur.gl = String(x.gl);
-      });
-      const d = dayKey(); S.sentDay = { d, n: (S.sentDay && S.sentDay.d === d ? S.sentDay.n : 0) + batch.length };
-      save();
-    } catch (e) { SENT_FAIL = e && e.code === "rate_limited" ? "limit" : "other"; if (e && (e.code === "not_granted" || e.code === "sampling_disabled")) AI = null; break; }
-    SENT_RUN.done = Math.min(list.length, i + SENT_BATCH);
-    if (VIEW === "home") render();
-  }
-  SENT_RUN = null;
-  if (wrote) toast(`已为 ${wrote} 个生词写好例句（用了 ${reqs} 次请求）· Example sentences for ${wrote} word${wrote > 1 ? "s" : ""} (${reqs} request${reqs > 1 ? "s" : ""})`, 4000);
-  else if (SENT_FAIL) toast(SENT_FAIL === "limit" ? "Claude 暂时用不了，例句以后再写 · Claude isn't available right now (maybe your usage limit); sentences will be written later" : "例句没写成，以后再试 · Couldn't write example sentences; will try again later", 4000);
-  if (VIEW === "home" || VIEW === "me") render();
-}
-function sentWaitHtml() {
-  const left = wordsNeedingSentence().filter(b => !isAutoWord(b)).length;
-  if (!HOSTED || (!left && !SENT_RUN)) return "";
-  if (SENT_RUN) return `<p class="small"><span class="spin"></span> 🔤 Claude 在写例句… Writing example sentences ${SENT_RUN.done}/${SENT_RUN.n}</p>`;
-  const req = Math.ceil(left / SENT_BATCH);
-  return `<div class="stack" style="gap:6px"><span class="small">🔤 <b>${left}</b> 个生词还没有例句 · word${left > 1 ? "s" : ""} without an example sentence</span>
-    ${!AI || !ONLINE ? `<span class="small muted">需要 Claude，联网后会自动写 · Needs Claude; written automatically once you're online.</span>` : `<span class="small muted">${SENT_FAIL === "limit" ? "Claude 暂时用不了（可能到了用量上限），以后会再试 · Claude isn't available right now (maybe your usage limit); it'll try again later." : SENT_FAIL ? "上次没写成，以后会再试 · The last try didn't work; it'll try again later." : `今天自动写的已经到 ${SENT_DAY_MAX} 个 · Today's automatic ${SENT_DAY_MAX} are done.`} They still work as plain word cards meanwhile.</span><button class="btn soft" id="sentnow">现在写 Write them now (about ${req} request${req > 1 ? "s" : ""})</button>`}</div>`;
-}
 
 /* ============ listening (听力): native audio, from a file on this device or a link ============
    An item is audio (a file kept on this device, or a link that plays in its own app) plus an optional transcript.
@@ -3527,7 +3358,7 @@ function idb() {
 }
 async function audioPut(id, blob) { MEM_AUDIO.set(id, blob); try { const db = await idb(); await new Promise((res, rej) => { const t = db.transaction("a", "readwrite"); t.objectStore("a").put(blob, id); t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); return true; } catch (e) { return false; } }
 async function audioGet(id) { if (MEM_AUDIO.has(id)) return MEM_AUDIO.get(id); try { const db = await idb(); return await new Promise(res => { const r = db.transaction("a").objectStore("a").get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
-async function audioDel(id) { MEM_AUDIO.delete(id); try { const db = await idb(); db.transaction("a", "readwrite").objectStore("a").delete(id); } catch (e) {} }
+async function audioDel(id) { MEM_AUDIO.delete(id); try { const db = await idb(); db.transaction("a", "readwrite").objectStore("a").delete(id); } catch (e) { noteErr("audio delete", e); } }
 function stopAudio() { if (AUD) { AUD.pause(); AUD.removeAttribute("src"); AUD.load(); } if (AUD_URL) URL.revokeObjectURL(AUD_URL); AUD_URL = null; AUD_ID = null; }
 /* ---- transcripts: .lrc, .srt/.vtt, or plain text ---- */
 function parseCues(text) {
@@ -3793,7 +3624,7 @@ function renderListen(main) {
     ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${itemType(it) === "song" ? "🎵" : "🎙"} ${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
       : `<div class="card"><p class="small muted">还没有音频 · Nothing yet. Add a podcast episode you've downloaded (with its transcript if it has one), or a link to a video. Transcripts with timings (.srt, .vtt or .lrc files) unlock line-by-line follow and replay.</p></div>`}`;
   $("#ladd", main).onclick = () => { LST = { add: true, kind: "file" }; render(); };
-  if (!HOSTED && list.some(it => it.kind === "file")) audioKeys().then(have => {
+  if (list.some(it => it.kind === "file")) audioKeys().then(have => {
     const box = $("#r2list"); if (!box || VIEW !== "listen" || LST) return;
     box.innerHTML = r2ListHtml(list, have); r2Draw();
     const dl = $("#r2dl"); if (dl) dl.onclick = r2DownloadAll;
@@ -3801,8 +3632,6 @@ function renderListen(main) {
   });
   $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
   const pa = $("#plall", main); if (pa) pa.onclick = () => plStart();
-  const la = $("#lyrall", main); if (la) la.onclick = () => { S.lyrAll = { on: true, t: now() }; save(); outboxSoon(true); toast("好的：下次运行把所有歌的拼音都检查完 · The next run will check all of them", 3500); render(); };
-  const lu = $("#lyrundo", main); if (lu) lu.onclick = () => { S.lyrAll = { on: false, t: now() }; save(); outboxSoon(true); toast(`撤销了：还是每晚 ${PYFIX_PER_RUN} 首 · Undone: ${PYFIX_PER_RUN} a night`, 3000); render(); };
   const ps = $("#plshuf0", main); if (ps) ps.onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} render(); };
   // songs with timings open in Follow; everything else starts with the text hidden (as before)
   $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); if (PL) { const j = PL.ids.indexOf(b.dataset.l); if (j >= 0) PL.i = j; else PL = null; } LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
@@ -3860,7 +3689,7 @@ function bindTrEditor(main, f, keep, redraw) {
           if (k < 6) { const st = $("#lrgo", main); if (st) st.innerHTML = `<span class="spin"></span> LRCLIB 忙，重试中 Busy, retrying (${k + 1}/6)…`; await new Promise(z => setTimeout(z, (+r.headers.get("Retry-After") || 1) * 1000 * (1 + k * 0.6) + Math.random() * 400)); }
         }
         else { err = "LRCLIB 出错了 · LRCLIB error " + r.status; break; }
-      } catch (e) { err = "这里连不上 LRCLIB · Can't reach LRCLIB from here" + (HOSTED ? " (Claude's page may block it; the offline copy can usually reach it)." : " (offline, or the site is blocked)."); break; }
+      } catch (e) { err = "这里连不上 LRCLIB · Can't reach LRCLIB from here (offline, or the site is blocked)."; break; }
     }
     Object.assign(f.lr, { busy: false, err: res ? "" : err, res: res ? res.slice(0, 20) : null }); // all kept; the 8 closest are shown
     redraw();
@@ -3906,7 +3735,7 @@ function renderListenAdd(main) {
     it.type = guessType({ src: f.src, fmt: trFormat(f.tr), dur: f.dur });
     if ((it.cues || []).length) it.trLabel = f.srcLabel || "粘贴的 Pasted";
     if (f.kind === "file") { const kept = await audioPut(id, f.file); if (!kept) toast("这个页面不能长期保存音频，这次可以听 · This page can't keep the file; it plays this time only. The offline copy keeps it.", 4500); }
-    if (f.kind === "file" && !HOSTED) it.r2want = true; // goes to the cloud (if set up), with a progress bar
+    if (f.kind === "file") it.r2want = true; // goes to the cloud (if set up), with a progress bar
     S.gen.listen.push(it); save();
     LST = { id, mode: isTimed(it) && it.type === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); outboxSoon(true);
     if (it.r2want) setTimeout(r2Kick, 300);
@@ -4044,7 +3873,7 @@ function renderListenItem(main, it) {
   if (!(timed && file)) LST.fix = false;
   if (!(file && hasTr && !timed)) LST.tap = false;
   const secs = listenSections(it), pref = cuePref();
-  const qBtn = hasTr && !(it.qs && it.qs.length) && !HOSTED && !AI && !reqWaiting("q:listen:" + it.id);
+  const qBtn = hasTr && !(it.qs && it.qs.length) && !reqWaiting("q:listen:" + it.id);
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="lback">← 返回</button><div class="row" style="gap:6px"><button class="tagc" id="ltype" title="点一下改 · tap to change">${song ? "🎵 歌 Song" : "🎙 谈 Talk"}</button><span class="chip">${it.kind === "link" ? "🔗 链接" : "🎧 文件"}</span></div></div>
     <div class="card stack"><div class="spread" style="align-items:flex-start;gap:8px"><h2 class="zh">${esc(it.title)}</h2><div class="row" style="gap:6px;flex:none">${hasTr ? `<button class="tagc" id="laa" aria-label="显示 Display">Aa</button>` : ""}${timed && file ? `<button class="tagc ${LST.fix ? "on" : ""}" id="lfix">⏱ 对时间</button>` : ""}</div></div>
       <div id="lplay"></div>
@@ -4054,7 +3883,7 @@ function renderListenItem(main, it) {
         <div class="cues ${LST.fix ? "fixing" : ""} ${pref.py ? "py" : ""}" id="lcues" style="--cuefs:${CUE_FS[pref.fs] || 25}px" ${LST.mode === "hide" ? "hidden" : ""}>${cuesHtml(it)}</div>` : ""}
       <button class="btn wide" id="ldone" style="margin-top:18px">听完了 Done${it.qs && it.qs.length ? " → 问题 questions" : ""}</button></div>
     <div class="card stack"><span class="label">这一条 · This item</span>
-      ${hasTr && !(it.qs && it.qs.length) ? (AI ? `<button class="btn soft" id="lq">加问题 Add questions (Claude reads the transcript)</button>` : HOSTED ? `<span class="small muted">联网后可以让 Claude 根据文字出题 · Online, Claude can write questions from the transcript.</span>` : reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : "") : ""}
+      ${hasTr && !(it.qs && it.qs.length) ? (reqWaiting("q:listen:" + it.id) ? `<span class="small muted">已请 Claude 出题，下次运行时送到 · Asked Claude; questions arrive with its next daily run.</span>` : "") : ""}
       ${qBtn ? `<button class="btn ${song ? "ghost" : "soft"}" id="lqask">${song ? "也请 Claude 出题 · Questions anyway (songs usually skip them)" : "请 Claude 出题 · Ask Claude for questions"}</button>` : ""}
       ${hasTr && secs.length > 1 && !song ? `<span class="small muted">文字很长：分成 ${secs.length} 段（每段大约 20 分钟），每段 3 个问题。播放还是一整段；听完以后问你听过的那几段。<br>Long transcript: ${secs.length} sections of about 20 minutes, 3 questions each. It still plays as one piece; afterwards you get the questions for the sections you heard.</span>` : ""}
       ${file && hasTr && !timed && !LST.tap ? `<button class="btn soft" id="ltapgo">${it.tap && it.tap.length ? `继续打拍子 Continue tapping along (${it.tap.length}/${it.cues.length})` : "打拍子对时间 · Tap along to time the lines"}</button><span class="small muted" style="margin-top:-6px">No timings? Play it once and tap as each line starts; then the text can follow along.</span>` : ""}
@@ -4114,7 +3943,6 @@ function renderListenItem(main, it) {
     const qlist = listenQuizList(it);
     Object.assign(LST, { review: true, quiz: qlist.length > 0, qlist, qi: 0, score: 0, looked: new Set(), tap: false, fix: false, sel: null }); render(); window.scrollTo(0, 0);
   };
-  const lq = $("#lq", main); if (lq) lq.onclick = () => listenQuestions(it);
   const lqa = $("#lqask", main); if (lqa) lqa.onclick = () => { addReq({ rid: "q:listen:" + it.id, kind: "questions", target: "listen", id: it.id }); toast("请 Claude 出题了 · Asked; questions arrive with the next run", 3500); render(); };
   const te = $("#ltredit", main); if (te) te.onclick = () => {
     LST.edit = { title: it.title, tr: "", dur: it.dur || (AUD && AUD_ID === it.id && isFinite(AUD.duration) ? AUD.duration : null), lr: { q: it.title } };
@@ -4186,7 +4014,7 @@ async function plOpen(it) {
 async function plLoad(it) {
   if (AUD_ID !== it.id) {
     let blob = await audioGet(it.id);
-    if (!blob && it.r2 && r2Cfg() && navigator.onLine) { try { await r2Fetch1(it); blob = await audioGet(it.id); } catch (e) {} }
+    if (!blob && it.r2 && r2Cfg() && navigator.onLine) { try { await r2Fetch1(it); blob = await audioGet(it.id); } catch (e) { noteErr("cloud audio download", e); } }
     if (!blob) return;
     stopAudio(); if (!AUD) { AUD = document.createElement("audio"); AUD.preload = "metadata"; AUD.hidden = true; document.body.append(AUD); }
     AUD_URL = URL.createObjectURL(blob); AUD.src = AUD_URL; AUD_ID = it.id; AUD.playbackRate = (LST && LST.rate) || 1;
@@ -4362,7 +4190,7 @@ function renderListenReview(main, it) {
         <div class="reading ${cuePref().py ? "py" : ""}" id="lrd" style="gap:4px">${ltoks.map((toks, li) => `<p class="${marks.has(li) ? "cue lost" : "cue"}" data-li="${li}" style="margin:0">${canMark ? `<button class="tagc ${marks.has(li) ? "on" : ""}" data-mk="${li}" style="margin-right:6px" aria-label="Lost it here">⚑</button>` : ""}${exact ? `<button class="tagc" data-rl="${li}" style="margin-right:6px">▶</button>` : ""}${lineHtml(it, li, toks, li, LST.looked)}</p>`).join("")}</div>`
       : `<p class="small muted">没有文字，没法对 · No transcript to check against. You lost the thread ${LST.lost.length} time${LST.lost.length === 1 ? "" : "s"}${LST.lost.some(x => x != null) ? " at " + LST.lost.filter(x => x != null).map(fmtT).join(", ") : ""}.</p>`}
       <button class="btn wide" id="lagain">再听一遍 Listen again</button><button class="btn ghost wide" id="llist">回到列表 Back to list</button></div>
-    ${!HOSTED && it.r2 && r2Cfg() ? `<div class="card stack" id="r2done"><p class="small">这一条听完了吗？可以从云端删除，省空间（这台设备上还留着）。<br>Finished with this one? You can remove it from the cloud to save space (it stays on this device).</p><button class="btn ghost" id="r2rmdone">从云端删除 · Remove from cloud</button></div>` : ""}`;
+    ${it.r2 && r2Cfg() ? `<div class="card stack" id="r2done"><p class="small">这一条听完了吗？可以从云端删除，省空间（这台设备上还留着）。<br>Finished with this one? You can remove it from the cloud to save space (it stays on this device).</p><button class="btn ghost" id="r2rmdone">从云端删除 · Remove from cloud</button></div>` : ""}`;
   $("#lback", main).onclick = $("#llist", main).onclick = () => { stopAudio(); closeSheet(); LST = null; render(); };
   const rmd = $("#r2rmdone", main); if (rmd) rmd.onclick = async () => { rmd.disabled = true; if (await r2RemoveCloud(it)) { const c = $("#r2done", main); if (c) c.remove(); } else rmd.disabled = false; };
   $("#lagain", main).onclick = () => { closeSheet(); LST = { id: it.id, mode: LST.mode, lost: [], rate: LST.rate, looked: new Set() }; if (AUD) AUD.currentTime = 0; render(); window.scrollTo(0, 0); };
@@ -4377,18 +4205,6 @@ function renderListenReview(main, it) {
     AUD.ontimeupdate = () => { if (end != null && AUD.currentTime >= end) AUD.pause(); };
     AUD.play().catch(() => {});
   });
-}
-async function listenQuestions(it) {
-  if (!AI) return;
-  const st = $("#lqs"), btn = $("#lq"); if (btn) btn.disabled = true;
-  if (st) st.innerHTML = `<span class="spin"></span> Claude 在出题… Writing questions`;
-  let text = (it.cues || []).map(c => c[1]).join("\n"); const cut = text.length > 6000; if (cut) text = text.slice(0, 6000);
-  try {
-    const j = await AI.json(`This is the transcript of a Chinese audio clip (podcast, video or conversation) that an advanced learner (knows HSK 1–6 well) will LISTEN to without reading.${cut ? " Only the first part is given; ask only about it." : ""}\n${text}\nReply with only JSON: {"qs":[{"q":"English question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}],"gl":{"word":["pinyin","short English gloss"]}}\nQuestions: ${QS_RULES} Ask about what a listener should take away (main points, who did what, reasons, contrasts), not tiny details you'd only catch by reading. In "why", quote the transcript words that decide it.\ngl: slang, names and HSK7+ words in the transcript, and words whose reading or meaning here differs from the most common one.`, { modelTier: "default", cache: false });
-    const qs = toQs(j && j.qs); if (qs.length < 2) throw { code: "invalid_json" };
-    it.qs = qs; if (j.gl && typeof j.gl === "object") it.gl = j.gl; if (cut) it.qcut = true; touch(it, "text"); save();
-    toast("问题加好了 · Questions added"); if (VIEW === "listen" && LST && LST.id === it.id && !LST.review) render();
-  } catch (e) { if (st) st.textContent = aiErr(e); if (btn) btn.disabled = false; }
 }
 
 
@@ -4422,7 +4238,7 @@ async function sigv4({ method, url, headers = {}, payloadHash = "UNSIGNED-PAYLOA
    each device that has played it (IndexedDB), so it works offline. it.r2want = waiting to upload (retried on open,
    reconnect and return); it.r2gone = removed from the cloud on purpose (never re-uploaded). S.r2del = keys to delete
    (an item deleted while offline). Keys: provGet().r2 = {account, bucket, akid, secret}, synced in settings/keys.json. */
-const r2Cfg = () => { if (HOSTED) return null; const r = provGet().r2; return r && r.account && r.bucket && r.akid && r.secret ? r : null; };
+const r2Cfg = () => { const r = provGet().r2; return r && r.account && r.bucket && r.akid && r.secret ? r : null; };
 const r2Url = (c, key, qs) => `https://${c.account}.r2.cloudflarestorage.com/${encodeURIComponent(c.bucket)}${key ? "/" + key.split("/").map(encodeURIComponent).join("/") : ""}${qs || ""}`;
 const R2_FREE = 10e9; // Cloudflare's free tier: 10 GB (decimal, to be safe) of storage
 const r2Err = (status, text) => status === 403 || status === 401 ? { code: "auth", message: "R2 不接受这把钥匙（或它不能用这个桶）· R2 refused the key (or it isn't allowed for this bucket)." } : status === 404 ? { code: "missing", message: "云端没有这个文件 · Not in the cloud (removed?)" } : { code: "http", message: "R2 出错 · R2 error " + status + (text ? ": " + String(text).replace(/<[^>]+>/g, " ").trim().slice(0, 120) : "") };
@@ -4485,7 +4301,7 @@ const agoShort = t => { const m = Math.round((now() - t) / 60000); return m < 1 
 // which items' audio is on this device (IndexedDB keys + this session's memory copies)
 async function audioKeys() {
   const ks = new Set(MEM_AUDIO.keys());
-  try { const db = await idb(); (await new Promise(res => { const r = db.transaction("a").objectStore("a").getAllKeys(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); })).forEach(k => ks.add(k)); } catch (e) {}
+  try { const db = await idb(); (await new Promise(res => { const r = db.transaction("a").objectStore("a").getAllKeys(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); })).forEach(k => ks.add(k)); } catch (e) { noteErr("audio list", e); }
   R2.local = ks; return ks;
 }
 // progress bars: any element with data-r2p="<item id>" shows that item's upload/download progress
@@ -4500,7 +4316,7 @@ function r2Draw() {
 const r2Ext = it => { const m = String(it.fname || "").match(/\.([a-z0-9]{1,5})$/i); return m ? m[1].toLowerCase() : "audio"; };
 // upload everything that's waiting and whose audio is on this device; delete what's waiting to be deleted
 async function r2Kick() {
-  if (HOSTED || R2.busy || !ONLINE || !r2Cfg()) return;
+  if (R2.busy || !ONLINE || !r2Cfg()) return;
   R2.busy = true;
   try {
     for (const key of (S.r2del || []).slice()) { try { await r2Del(key); } catch (e) { if (e.code !== "missing") break; } S.r2del = (S.r2del || []).filter(k => k !== key); save(); }
@@ -4509,7 +4325,7 @@ async function r2Kick() {
       const blob = await audioGet(it.id); if (!blob) continue; // only the device that has the file can upload it
       const key = `audio/${it.id}.${r2Ext(it)}`;
       if (!it.r2force) {
-        let use = null; try { use = await r2UsageFresh(); } catch (e) {}
+        let use = null; try { use = await r2UsageFresh(); } catch (e) { noteErr("cloud usage", e); }
         if (use && use.bytes + blob.size > R2_FREE) {
           delete it.r2want; it.r2big = { size: blob.size, used: use.bytes, t: now() }; touch(it, "cloud"); save();
           toast(`没上传到云端：会超过 10 GB 免费额度（现在 ${fmtMB(use.bytes)} + 这个 ${fmtMB(blob.size)}）。文件还在这台设备上。· Not uploaded: it would go over the free 10 GB. It's still on this device.`, 7000);
@@ -4553,7 +4369,6 @@ async function r2DownloadAll() {
 }
 // the 听 tab: cloud status line + Upload all / Download all
 function r2ListHtml(list, have) {
-  if (HOSTED) return "";
   const files = list.filter(it => it.kind === "file");
   if (!files.length) return "";
   if (!r2Cfg()) return `<p class="small muted">☁ 云端音频还没设置：其他设备听不到这里的文件 · Cloud audio isn't set up, so your other devices can't play these files. Progress → 云端音频.</p>`;
@@ -4568,7 +4383,7 @@ function r2ListHtml(list, have) {
 }
 // item page: where this item's audio is, with the matching button
 function r2ItemHtml(it, here) {
-  if (HOSTED || it.kind !== "file") return "";
+  if (it.kind !== "file") return "";
   const bar = `<div data-r2p="${esc(it.id)}" hidden></div>`;
   if (!r2Cfg()) return bar;
   if (it.r2) return `${bar}<span class="small">☁ 在云端 · In the cloud (${fmtMB(it.r2.size || 0)})${here ? "" : " · 这台设备上还没有 not on this device yet"}</span>${here ? `<button class="btn ghost" id="r2rm">从云端删除 · Remove from cloud (keeps it on this device)</button>` : ""}`;
@@ -4604,7 +4419,7 @@ function bindR2Card() {
 }
 addEventListener("online", () => setTimeout(r2Kick, 2500));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(r2Kick, 1500); });
-if (!HOSTED) setTimeout(r2Kick, 4000);
+setTimeout(r2Kick, 4000);
 
 /* ============ other AI providers (test, offline copy only; 2026-11-02) ============
    Any OpenAI-compatible chat API (Groq, OpenRouter, Gemini's compatible endpoint…). The key is in this browser's
@@ -4612,7 +4427,7 @@ if (!HOSTED) setTimeout(r2Kick, 4000);
    test against answers Claude already graded; nothing in practice uses it yet. */
 const PROV_KEY = "zwlgf:prov";
 function provGet() { try { return Object.assign({ base: "https://api.groq.com/openai/v1", key: "", model: "" }, JSON.parse(localStorage.getItem(PROV_KEY) || "{}")); } catch (e) { return { base: "https://api.groq.com/openai/v1", key: "", model: "" }; } }
-function provSet(p) { try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) {} if (!HOSTED) ghKeysTouched(); }
+function provSet(p) { try { localStorage.setItem(PROV_KEY, JSON.stringify(p)); } catch (e) { noteErr("save: AI settings", e); } ghKeysTouched(); }
 const PROV_PRESETS = [["Groq", "https://api.groq.com/openai/v1"], ["Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"], ["OpenRouter", "https://openrouter.ai/api/v1"]];
 function provSwitch(base) {
   const p = provGet(); p.keys = p.keys || {}; p.models = p.models || {};
@@ -4812,12 +4627,6 @@ function exportWords(format, scope) {
 }
 async function saveTextFile(name, text) {
   try {
-    if (HOSTED) {
-      const dl = await claude.use("downloads");
-      if (!dl) { toast("这里不能保存文件 · Saving files isn't available here"); return false; }
-      await dl.save({ filename: name, data: text });
-      return true;
-    }
     const file = new File([text], name, { type: "text/plain" });
     if (navigator.canShare && navigator.canShare({ files: [file] }) && /iP(hone|ad|od)|Android/.test(navigator.userAgent)) { await navigator.share({ files: [file] }); return true; }
     const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -4828,7 +4637,6 @@ async function saveTextFile(name, text) {
   }
 }
 // Rules for comprehension questions Claude writes (generated passages and your own texts).
-const QS_RULES = `exactly 3 questions in English about the content; each has 4 options in English with the correct one FIRST, plus "why": 4 one-line reasons in the same order (for the correct option quote the Chinese words that decide it; for each wrong option say exactly what it gets wrong, quoting the text where useful). Make the questions hard to answer by elimination: every wrong option must be built from details that really are in the text (a detail from a different sentence, the wrong person or place, cause and effect reversed, a missed 不/没/并非/未必 or contrast like 但/却/反而/而是, an overstatement such as all vs some or already vs expected, or a true statement that doesn't answer the question), so it sounds right to someone who only skimmed; never use options that general knowledge alone rules out. At least one question must hinge on a structure word or phrase (negation, contrast, condition, degree, time). Options roughly the same length.`;
 const toQs = qs => (Array.isArray(qs) ? qs : []).slice(0, 3).filter(q => q && Array.isArray(q.opts) && q.opts.length >= 2).map(q => { const o = { q: String(q.q), opts: q.opts.slice(0, 4).map(String) }; if (Array.isArray(q.why) && q.why.length === o.opts.length) o.ex = q.why.map(String); return o; });
 // What generated readings and drills aim at (2026-11-16, learner agreed): follows progress instead of the frozen
 // Anki list alone. Anki is retired, so its Oct 2026 snapshot is only a starting pool that the app's own cards correct.
@@ -4903,32 +4711,6 @@ function autoTopUp() {
   if (added) save();
   return added;
 }
-function targetWords(n) { // for the in-app Generate buttons: words to practise (struggling first, then fading)
-  const v = vocabTargets(); return [...new Set(v.reviewWords.concat(v.fadingWords))].slice(0, n);
-}
-async function genPassage(kind, quiet) {
-  const genStatus = quiet ? () => {} : window.genStatus;
-  const targets = targetWords(10);
-  const genre = { xhs: "a Xiaohongshu-style post (casual, internet slang, emoji allowed) about everyday life or travel in China", news: "a short news brief in formal written register (据…显示, 随着…, 有望 etc.), clearly fictional figures", book: "a short literary narrative excerpt, past tense, descriptive", travel: "a realistic dialogue between a traveller and a local in China (ordering, directions, tickets, hotels), each line prefixed 甲：or 乙：" }[kind];
-  const prompt = `Write a short Chinese reading passage for an advanced learner (knows HSK 1–6 well; struggles to parse running text quickly). Genre: ${genre}. 140–220 characters, simplified Chinese.
-Naturally include at least 4 of these words the learner is reviewing or forgetting: ${targets.join("、")}.
-Also use 2–4 words the learner hasn't learned yet, chosen from this list because they fit this text naturally and are worth knowing (common in this kind of writing): ${vocabTargets().newWords.slice(0, 25).join("、")}.
-Reply with only JSON:
-{"title":"Chinese title","paras":["token|token|token|…"],"gl":{"token":["pinyin","short English gloss"]},"en":"full English translation","qs":[{"q":"English comprehension question","opts":["correct answer","wrong","wrong","wrong"],"why":["reason","reason","reason","reason"]}]}
-Questions: ${QS_RULES}
-Rules: 2–4 paragraphs; every paragraph is segmented into words/chunks with | between EVERY token (punctuation is its own token, e.g. 我|今天|去|了|上海|。); gl must cover every slang word, name, HSK7+ word, each target word you used, and every word whose pronunciation or meaning here differs from its most common one (give the pinyin and meaning used in THIS context).`;
-  genStatus("passage", `<span class="spin"></span> 生成中…（通常 20–60 秒）`, true);
-  try {
-    const j = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("passage", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
-    const p = makePassage(j, kind, "G" + now().toString(36) + uid4());
-    if (!p) throw { code: "invalid_json" };
-    S.gen.passages.push(p); PSG.set(p.id, p); save(); loadCedict();
-    if (quiet) return 1;
-    genStatus("passage", `✓ 新短文已生成：<b>${esc(p.title)}</b>（在下面“没读过”里）`, false);
-    toast("新短文已生成 · New passage ready");
-    if (VIEW === "read" && !(READ && READ.pid)) render();
-  } catch (e) { if (quiet) throw e; genStatus("passage", esc(aiErr(e)), false); }
-}
 
 /* ---------- progress ---------- */
 function renderMe(main) {
@@ -4953,36 +4735,31 @@ function renderMe(main) {
     <label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="onetap" style="margin-top:3px;flex:none" ${S.settings && S.settings.oneTap ? "checked" : ""}> 一键作答 · Answer on first tap (skip the confirm tap)</label></div>
   ${trashCardHtml()}
   <div class="card"><span class="label">词典 · Dictionary</span><p class="small muted">Word status (熟, 顽固…) comes from your Anki history. Meanings and pinyin come from <a href="https://www.mdbg.net/chinese/dictionary?page=cc-cedict" target="_blank" rel="noopener">CC-CEDICT</a> (CC BY-SA 4.0, community-maintained, published by MDBG), which lists every reading of a word separately. Traditional characters (听 tab, 繁體) come from <a href="https://github.com/BYVoid/OpenCC" target="_blank" rel="noopener">OpenCC</a> (Apache-2.0).</p></div>
-  <p class="small muted" style="text-align:center">版本 Version ${APP_VERSION.startsWith("__") ? "hosted" : esc(APP_VERSION)}</p>
+  ${errCard()}
+  <p class="small muted" style="text-align:center">版本 Version ${APP_VERSION.startsWith("__") ? "dev (not built)" : esc(APP_VERSION)}</p>
   <div class="card"><span class="label">Anki 底子 · Your Anki baseline</span>
     <p>${ANKI.s.toLocaleString()} 熟 · ${ANKI.f} 在忘 · ${ANKI.k} 不稳 · ${ANKI.l} 顽固 · ${ANKI.u.toLocaleString()} 没学过</p>
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
-  ${HOSTED ? `<div class="card"><span class="label">账号同步 · Account sync</span><div id="syncinfo">${syncInfo()}</div></div>` : ""}
-  ${HOSTED ? "" : `<div class="card" id="ghcard">${ghCard()}</div>`}
-  ${HOSTED ? "" : `<div class="card" id="provcard">${provCard()}</div>`}
-  ${HOSTED ? "" : `<div class="card" id="r2card">${r2Card()}</div>`}
-  ${HOSTED ? stockCard() : packCard()}
-  ${AI ? `<div class="card"><span class="label">更多短句 · More sentence parsing</span><p class="small muted">Claude writes 10 new dense sentences (news, notices, formal writing) with tricky-but-plausible options.</p><button class="btn soft" id="gensen" data-genkey="sen" ${GEN.senBusy ? "disabled" : ""}>生成 10 句 Generate</button><div id="st-sen" class="small muted">${GEN.sen || ""}</div></div>` : ""}
-  ${AI ? `<div class="card"><span class="label">更多造句题 · More production drills</span><p class="small muted">Claude writes 8 new drills aimed at the patterns you've missed and words you keep forgetting.</p><button class="btn soft" id="genlad" data-genkey="lad" ${GEN.ladBusy ? "disabled" : ""}>生成 8 道新题 Generate</button><div id="st-lad" class="small muted">${GEN.lad || ""}</div></div>` : ""}
+  <div class="card" id="ghcard">${ghCard()}</div>
+  <div class="card" id="provcard">${provCard()}</div>
+  <div class="card" id="r2card">${r2Card()}</div>
+  ${packCard()}
   <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
-    <p class="small muted">${HOSTED
-      ? `这是 Claude 上的备用版本。要和主版本（GitHub 网页版）互通进度：在用过的那边点<b>导出</b>，在另一边点<b>导入合并</b>。<br>This is the backup version on Claude. To move progress between it and the main app (the GitHub Pages version), tap <b>Copy code</b> on the one you used last and <b>Paste & merge</b> on the other.`
-      : `你的设备已经通过 GitHub 自动同步，平时用不到这里。代码只在两种情况下有用：和 Claude 上的备用版本互通进度，或者手动留一份备份。在一边点<b>导出</b>，在另一边点<b>导入合并</b>。<br>Your devices already sync through GitHub, so you won't normally need this. A code is for moving progress to or from the backup version on Claude, or for keeping a backup by hand: <b>Copy code</b> on one side, <b>Paste & merge</b> on the other.`}
+    <p class="small muted">你的设备已经通过 GitHub 自动同步，平时用不到这里。代码只在两种情况下有用：和 Claude 上的备用版本互通进度，或者手动留一份备份。在一边点<b>导出</b>，在另一边点<b>导入合并</b>。<br>Your devices already sync through GitHub, so you won't normally need this. A code is for moving progress to or from the backup version on Claude, or for keeping a backup by hand: <b>Copy code</b> on one side, <b>Paste & merge</b> on the other.
 <br><br>合并只会添加，不会删除任何东西；代码不包括音频和钥匙。<br>Merging only adds, never deletes; a code carries no audio or keys.</p>
     <p class="small">上次导出 Last copied: <b>${ago(S.lastExport)}</b> · 上次合并 Last merged in: <b>${ago(S.lastImport)}</b></p>
     <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste & merge</button></div><div id="xio"></div>
-    ${!HOSTED ? `<p class="small muted">iPhone：请总是从主屏幕图标打开，Safari 标签页的数据是分开的。· On iPhone, always open it from the home-screen icon: a Safari tab keeps separate data.${PERSISTED !== true && !(COL && COL.gh) ? "<br>还没连 GitHub，浏览器也没答应保留数据：偶尔导出一份代码当备份。· Not synced to GitHub and this browser hasn't promised to keep the data: copy a code now and then as a backup." : ""}</p>` : ""}</div>`;
+    <p class="small muted">iPhone：请总是从主屏幕图标打开，Safari 标签页的数据是分开的。· On iPhone, always open it from the home-screen icon: a Safari tab keeps separate data.${PERSISTED !== true && !COL ? "<br>还没连 GitHub，浏览器也没答应保留数据：偶尔导出一份代码当备份。· Not synced to GitHub and this browser hasn't promised to keep the data: copy a code now and then as a backup." : ""}</p></div>`;
   $("#replace").onclick = startPlacement;
   bindBank(); if ($("#provcard")) bindProv(); if ($("#ghcard")) bindGh(); bindR2Card();
   $("#onetap").onchange = e => { S.settings = setSettings({ oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
-  const gl = $("#genlad"); if (gl) gl.onclick = () => genLadder();
-  const gs = $("#gensen"); if (gs) gs.onclick = () => genSen();
-  if (HOSTED) bindStock(); else bindPackCard();
+  bindPackCard();
   bindRefit();
   bindTrashCard(main);
   bindTimeCard(main);
+  bindErrCard(main);
 }
 /* ---------- saved words: newest 20, the rest behind "show all" (with search); add words; tags; export ---------- */
 const BANK_SHOW = 20;
@@ -5083,7 +4860,7 @@ const CLIP_FAIL_KEY = "zwlgf:clipfail";
 const clipFails = n => { try { if (n == null) return +(localStorage.getItem(CLIP_FAIL_KEY) || 0); localStorage.setItem(CLIP_FAIL_KEY, String(n)); } catch (e) {} return 0; };
 function importUI() {
   const box = $("#xio");
-  const canTry = !HOSTED && !!(navigator.clipboard && navigator.clipboard.readText); // the Claude page never allows reads
+  const canTry = !!(navigator.clipboard && navigator.clipboard.readText);
   box.innerHTML = `<div class="stack" style="gap:10px"><div id="impst" class="small"></div>
     <textarea class="code" id="codein" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="把另一个版本导出的代码粘贴到这里 Paste the code from the other version here"></textarea>
     <div class="row"><button class="btn" id="doimp">合并进度 Merge</button>${canTry ? `<button class="btn ghost" id="readclip">读取剪贴板 Read clipboard</button>` : ""}</div>
@@ -5139,7 +4916,7 @@ async function mergeCode(raw, fail) {
   let data;
   try { data = JSON.parse(json); } catch (e) { return fail(cut); }
   if (!data || data.v !== 1) return fail("版本不对 · This code is from a different app or version.");
-  S = mergeStates(S, data); S.lastImport = now(); indexGen(); migrateFsrs(); housekeep(); save(); toast("已合并 Merged — nothing was overwritten"); render(); processSentences();
+  S = mergeStates(S, data); S.lastImport = now(); indexGen(); migrateFsrs(); housekeep(); save(); toast("已合并 Merged — nothing was overwritten"); render();
 }
 /* ---------- shared checks for generated content: the Generate buttons and packs use the same ones ---------- */
 function makeLadder(x, id) {
@@ -5159,68 +4936,11 @@ function makePassage(j, kind, id) {
   const qs = toQs(j.qs); if (qs.length < 2) return null;
   return { id, title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : PSG_KINDS.includes(kind) ? kind : "xhs", paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" && !Array.isArray(j.gl) ? j.gl : {}, en: String(j.en || ""), qs, gen: true };
 }
-async function genSen(quiet) {
-  const genStatus = quiet ? () => {} : window.genStatus;
-
-  // structures the learner misread (fragments), so new sentences give them another sentence to be reviewed in
-  const missed = Object.values(S.items).filter(it => it.t === "frag" && it.p).sort((a, b) => (a.due || 0) - (b.due || 0)).map(it => it.p).slice(0, 12);
-  const prompt = `Create 10 sentence-parsing drills for an advanced Mandarin reader (HSK 6+ vocabulary) who understands formal written Chinese only slowly. Each item is ONE dense sentence in the style of news, official notices, reports or formal writing (simplified Chinese, 20–40 characters), with ONE English multiple-choice question about its precise meaning.
-The 4 options must all fit the topic, so elimination doesn't work; the wrong ones differ only in what the structure decides (time frames like 截至/自…起, amounts like 余/近/成, direction like 下降/下降到, negation frames like 并非…而是, modality like 或将/有望/不得, cause vs result).
-Structures the learner recently misread: ${missed.join("、") || "none yet"}.
-Reply with only a JSON array of 10 objects:
-{"s":"the sentence split into chunks with | (chunk breaks) and / (word breaks inside a chunk), punctuation as its own chunk, e.g. 据|海关/总署|统计|，|出口|增长|6%|。","q":"What does it say?","opts":["correct","wrong","wrong","wrong"],"frames":[["key structure","short English gloss"]],"ft":[null, 0, 1, 0]}
-"ft": for each option, the index in "frames" of the structure that option gets wrong (null for the correct first option, null if none). Use some of the misread structures above in some sentences, written exactly as listed.`;
-  genStatus("sen", `<span class="spin"></span> 生成中…（通常 30–90 秒）`, true);
-  try {
-    const arr = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("sen", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
-    if (!Array.isArray(arr)) throw { code: "invalid_json" };
-    let added = 0;
-    S.gen.sen = S.gen.sen || [];
-    arr.forEach((x, i) => {
-      const item = makeSen(x, "GS" + now().toString(36) + uid4() + i); if (!item) return;
-      S.gen.sen.push(item); SEN.set(item.id, item); added++;
-    });
-    save();
-    if (quiet) return added;
-    genStatus("sen", `✓ 加了 ${added} 句 — they'll show up in your next sessions.`, false); toast("新短句已生成 · New sentences ready");
-  } catch (e) { if (quiet) throw e; genStatus("sen", esc(aiErr(e)), false); }
-}
-async function genLadder(quiet) {
-  const genStatus = quiet ? () => {} : window.genStatus;
-
-  const missed = [...LADDER.values()].filter(x => { const it = S.items[x.id]; return it && it.n > it.ok; }).slice(0, 10).map(x => ladParts(x).key + " (" + x.en + ")");
-  const targets = targetWords(10);
-  const prompt = `Create 8 English→Chinese production drills for an advanced Mandarin learner (HSK 6+ recognition) whose weakness is producing natural Chinese: they use English word order, long modifiers before nouns, literal word choices, and miss natural chunks (结果, 下起…来, 说得通, V得 complements, 把, 连…都).
-Patterns/words they recently got wrong: ${missed.join("; ") || "none yet"}.
-Words they keep forgetting (use some as the key chunk): ${targets.join("、")}.
-Mix everyday speech, travel in China, and expressing opinions; written-register words (news, notices, reports) go in written-register sentences. Each drill is one sentence.
-Rules: write NEW sentences — never reuse or paraphrase the English examples above. The Chinese must be exactly what a native speaker would write. Choose a context where the key chunk is clearly the most natural choice, in the register it belongs to (a formal word like 当前/从事/便利 in a formal sentence, not in casual talk); avoid contexts where a common everyday synonym would fit just as well. Every "alt" answer must also contain the key chunk.
-Reply with only a JSON array of 8 objects:
-{"en":"natural English sentence","zh":"natural Chinese split into chunks with |, with exactly ONE key chunk in square brackets, e.g. 我|本来|打算|去|，|[结果]|下雨了|。","alt":["2–4 other natural full Chinese answers"],"cx":["3 wrong but tempting fillers for the key slot"],"bad":["2 full Chinese sentences that are English-shaped or wrong, the kind this learner would write"],"near":["common equally-natural substitutes for the key chunk in this sentence, if any (often none)"],"why":"one or two English sentences explaining the key chunk and the trap","tag":"pattern|chunk|word|travel|express|leech"}`;
-  genStatus("lad", `<span class="spin"></span> 生成中…（通常 30–90 秒）`, true);
-  try {
-    const arr = await AI.json(prompt, { modelTier: "default", cache: false, onText: ({ text }) => genStatus("lad", `<span class="spin"></span> 生成中… ${text.length} 字符`, true) });
-    if (!Array.isArray(arr)) throw { code: "invalid_json" };
-    let added = 0;
-    arr.forEach((x, i) => {
-      const item = makeLadder(x, "G" + now().toString(36) + uid4() + i); if (!item) return;
-      S.gen.ladder.push(item); LADDER.set(item.id, item); added++;
-    });
-    save();
-    if (quiet) return added;
-    genStatus("lad", `✓ 加了 ${added} 道新题 — they'll show up in your next sessions.`, false); toast("新造句题已生成 · New drills ready");
-  } catch (e) { if (quiet) throw e; genStatus("lad", esc(aiErr(e)), false); }
-}
 
 /* ---------- stock up for offline (China) ----------
-   The offline copy can't ask Claude for new material. forecast() runs the app's real scheduler forward on a copy
-   of your progress (so it follows whatever scheduling and exercise types the app has) and counts how many days of
-   practice are left before nothing is due or new. Stocking up generates content until that covers the trip.
-   To add a new kind of generated content, add an entry to STOCKERS. */
-const STOCKERS = [
-  { key: "lad", name: "造句", cap: "ladder", run: () => genLadder(true) },
-  { key: "sen", name: "短句", cap: "sen", run: () => genSen(true) },
-];
+   forecast() runs the app's real scheduler forward on a copy of your progress (so it follows whatever scheduling
+   and exercise types the app has) and counts how many days of practice are left before nothing is due or new.
+   The note to Claude asks the daily run for what's short (stock card in Progress). */
 const PSG_KINDS = ["xhs", "news", "travel", "book"];
 const PSG_GENRES = [["xhs", "小红书"], ["news", "新闻"], ["book", "书面"], ["travel", "对话"]];
 // minutes/day × days, or trip dates (from/to, "YYYY-MM-DD"): with both dates set they decide the number of days
@@ -5231,7 +4951,7 @@ function autoMins() {
 }
 const stockCfg = () => {
   const c = Object.assign({ mins: 60, days: 21 }, (S.settings || {}).stock);
-  if (!HOSTED) { // offline copy: keep N weeks ahead (default 2) at your real practice time, unless trip dates are set
+  { // keep N weeks ahead (default 2) at your real practice time, unless trip dates are set
     const st = (S.settings || {}).stock || {};
     c.ahead = st.ahead || 2; c.days = c.ahead * 7; c.autoM = !st.minsSet; c.mins = c.autoM ? autoMins() : (st.mins || 30);
   }
@@ -5239,10 +4959,6 @@ const stockCfg = () => {
   if (c.trip) c.days = Math.round((new Date(c.to + "T00:00") - new Date(c.from + "T00:00")) / DAY) + 1;
   return c;
 };
-function secPerCard() {
-  let n = 0, sec = 0; for (const d in S.log) { n += S.log[d].n; sec += S.log[d].sec; }
-  return n >= 20 ? Math.max(20, Math.min(60, sec / n)) : 35;
-}
 const unreadPassages = () => [...PSG.keys()].filter(id => !S.reads[id]).length;
 let FORECAST = null;
 function forecast(days, mins) {
@@ -5279,77 +4995,11 @@ function forecast(days, mins) {
     return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days * readPerDay()), t: keepS.updatedAt, perDay };
   } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; BUDGET_MINS = null; }
 }
-let STOCK = null;
-function stockStatus() {
-  const cfg = stockCfg(), f = FORECAST;
-  if (!f) return `<p class="small muted"><span class="spin"></span> 估算中… Estimating…</p>`;
-  const okCards = f.days >= f.target, okPsg = f.unread >= f.needPsg;
-  let h = `<p class="small">练习卡够用 Practice cards last: <b>${okCards ? `≥ ${f.target}` : f.days} 天 days</b> ${okCards ? "✓" : ""}<br>
-    没读过的短文 Unread passages: <b>${f.unread}</b> / ${f.needPsg} 篇 needed (one every 2 days) ${okPsg ? "✓" : ""}</p>
-    <p class="small muted">Runs the real scheduler forward: about 90 s per typed card and 25 s per other card, 85–90% right, new drills and words paced by the daily budget, new parsing sentences filling the rest. Old sentences being reused don't count.</p>`;
-  if (STOCK) {
-    const a = STOCK.added;
-    h += `<p class="small">${STOCK.running ? `<span class="spin"></span> 备货中 Stocking up…` : "这次 This run:"} +${a.lad} 造句 · +${a.sen} 短句 · +${a.psg} 短文${STOCK.msg ? `<br><span class="muted">${esc(STOCK.msg)}</span>` : ""}</p>`;
-    if (!STOCK.running && (a.lad || a.sen || a.psg)) h += `<p class="small"><b>下一步 Next:</b> 导出 Copy code below, then 合并 Merge in the offline copy on your phone.</p>`;
-  }
-  return h;
-}
-function stockCard() {
-  const cfg = stockCfg();
-  const sel = (id, opts, v, unit) => `<select id="${id}" style="font:inherit;font-size:16px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)">${opts.map(o => `<option value="${o}" ${o === v ? "selected" : ""}>${o} ${unit}</option>`).join("")}</select>`;
-  return `<div class="card"><span class="label">离线备货 · Stock up for offline</span>
-    <p class="small muted">${AI ? "The offline copy can't make new material. Stock up here before you go, then carry it over with a copy code." : "How long this copy's material lasts. New material can only be made in the online version."}</p>
-    <div class="row small">每天 Daily ${sel("st-mins", [15, 30, 60, 90], cfg.mins, "分钟")} × ${cfg.trip ? `<b>${cfg.days} 天 days</b>` : sel("st-days", [7, 14, 21, 28], cfg.days, "天")}</div>
-    <div class="row small" style="gap:6px">或者按行程日期 Or trip dates:
-      <input type="date" id="st-from" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.from || "")}"> → <input type="date" id="st-to" class="inp" style="width:auto;padding:5px 8px" value="${esc(cfg.to || "")}">
-      ${cfg.from || cfg.to ? `<button class="btn ghost" id="st-clr" style="min-height:34px;padding:6px 10px">清除 Clear</button>` : ""}</div>
-    ${cfg.trip ? `<p class="small muted">During the trip, new drills and words are spread over the days left, so the stock lasts to the end.</p>` : ""}
-    <div id="st-body">${stockStatus()}</div>
-    ${AI ? `<div class="row"><button class="btn soft" id="st-go" ${STOCK && STOCK.running ? "hidden" : ""}>开始备货 Stock up</button><button class="btn ghost" id="st-stop" ${STOCK && STOCK.running ? "" : "hidden"}>停止 Stop</button></div>` : ""}</div>`;
-}
-function refreshStock() { if (!HOSTED) { const c = $("#packcard"); if (c) { c.outerHTML = packCard(); bindPackCard(); } return; } const b = $("#st-body"); if (b) b.innerHTML = stockStatus(); const g = $("#st-go"), x = $("#st-stop"); if (g) g.hidden = !!(STOCK && STOCK.running); if (x) x.hidden = !(STOCK && STOCK.running); }
+function refreshStock() { const c = $("#packcard"); if (c) { c.outerHTML = packCard(); bindPackCard(); } }
 function updateForecast() {
   const cfg = stockCfg();
   FORECAST = null; refreshStock();
   setTimeout(() => { FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30);
-}
-function bindStock() {
-  const m = $("#st-mins"), d = $("#st-days"), f = $("#st-from"), t = $("#st-to"); if (!m) return;
-  const set = (redraw) => {
-    const prev = (S.settings || {}).stock || {};
-    S.settings = setSettings({ stock: { mins: +m.value, days: d ? +d.value : prev.days || 21, from: f.value || undefined, to: t.value || undefined } });
-    save();
-    if (redraw) render(); else updateForecast();
-  };
-  m.onchange = () => set(false); if (d) d.onchange = () => set(false);
-  f.onchange = () => set(true);
-  t.onchange = f.onchange;
-  const clr = $("#st-clr"); if (clr) clr.onclick = () => { f.value = ""; t.value = ""; set(true); };
-  const go = $("#st-go"); if (go) go.onclick = stockUp;
-  const st = $("#st-stop"); if (st) st.onclick = () => { if (STOCK) { STOCK.stop = true; STOCK.msg = "停下来了 · Stopping after the current batch…"; refreshStock(); } };
-  const cfg = stockCfg();
-  if (!FORECAST || FORECAST.t !== S.updatedAt || FORECAST.target !== cfg.days) updateForecast();
-}
-async function stockUp() {
-  if (!AI || (STOCK && STOCK.running)) return;
-  const cfg = stockCfg();
-  STOCK = { running: true, stop: false, added: { lad: 0, sen: 0, psg: 0 }, msg: "" }; refreshStock();
-  for (let round = 0; round < 60 && !STOCK.stop; round++) {
-    FORECAST = forecast(cfg.days, cfg.mins); refreshStock();
-    const needCards = FORECAST.days < cfg.days, needPsg = FORECAST.unread < FORECAST.needPsg;
-    if (!needCards && !needPsg) { STOCK.msg = "够了 ✓ Enough for the whole trip."; break; }
-    const jobs = [];
-    if (needCards) for (const g of STOCKERS) if ((S.gen[g.cap] || []).length < GEN_CAP[g.cap]) jobs.push(g.run().then(n => { STOCK.added[g.key] += n || 0; refreshStock(); }));
-    if (needPsg && S.gen.passages.length < GEN_CAP.passages) jobs.push(genPassage(PSG_KINDS[round % PSG_KINDS.length], true).then(n => { STOCK.added.psg += n || 0; refreshStock(); }));
-    if (!jobs.length) { STOCK.msg = "生成的内容到上限了 · Reached the limit for generated content."; break; }
-    const res = await Promise.allSettled(jobs);
-    const bad = res.filter(r => r.status === "rejected");
-    if (bad.length === res.length) { STOCK.msg = aiErr(bad[0].reason) + " 可以稍后继续 · You can continue later; nothing made so far is lost."; break; }
-  }
-  if (STOCK.stop) STOCK.msg = "已停止 · Stopped. Everything made so far is kept.";
-  STOCK.running = false;
-  FORECAST = forecast(cfg.days, cfg.mins);
-  if (VIEW === "me") render(); else toast("备货完成 · Stock-up finished");
 }
 
 /* ============ packs + the note to Claude (step 4a, offline copy) ============
@@ -5384,11 +5034,10 @@ function outboxRequests() {
     }
     else if (q.kind === "passage") out.push({ rid: q.rid, kind: "passage", genre: q.genre || null, topic: q.topic || "" });
   }
-  // songs whose current lyrics have no analysis yet, newest first (the run does LYR_PER_RUN a night, or all of
-  // them when the note's lyricsAll is set); the run reads the lines from the progress files by id
+  // songs whose current lyrics have no analysis yet, newest first (the run does LYR_PER_RUN a night); the run reads the lines from the progress files by id
   for (const it of lyrBacklog()) out.push({ rid: "y:" + it.id, kind: "lyrics", id: it.id, h: lyrHash(it) });
   const pb = pyfBacklog();
-  if (pb.length && (!CED || !ZHC)) { if (!CED) loadCedict().then(m => { if (m) outboxSoon(true); }); if (!ZHC) loadZhc().then(() => outboxSoon(true)).catch(() => {}); } // ask once the full dictionary and 简/繁 table are here (many lyrics are traditional)
+  if (pb.length && (!CED || !ZHC)) { if (!CED) loadCedict().then(m => { if (m) outboxSoon(true); }); if (!ZHC) loadZhc().then(() => outboxSoon(true)).catch(e => noteErr("简/繁 table", e)); } // ask once the full dictionary and 简/繁 table are here (many lyrics are traditional)
   else for (const it of pb.slice(0, PYFIX_PER_RUN)) out.push({ rid: "f:" + it.id, kind: "pyfix", id: it.id, h: lyrHash(it), auto: autoLines(it) });
   return out;
 }
@@ -5396,7 +5045,6 @@ function outboxRequests() {
 const AUTO_PY = new Map();
 function autoLines(it) { const k = it.id + ":" + lyrHash(it) + ":" + (CED ? 1 : 0) + (ZHC ? 1 : 0) + ":" + Object.keys(it.gl || {}).length; const hit = AUTO_PY.get(it.id); if (hit && hit.k === k) return hit.v; const v = it.cues.map((c, i) => autoLine(it, i)); AUTO_PY.set(it.id, { k, v }); return v; }
 const pyfBacklog = () => (S.gen.listen || []).filter(pyfWanted).sort((a, b) => (b.t || 0) - (a.t || 0));
-const lyrAllOn = () => !!(S.lyrAll && (S.lyrAll === true || typeof S.lyrAll === "number" || S.lyrAll.on));
 const lyrBacklog = () => (S.gen.listen || []).filter(lyrWanted).sort((a, b) => (b.t || 0) - (a.t || 0));
 // answers in a pack: sentences {word: "…" | {s, py, gl}}, questions [{rid, qs, gl, en, paras}], regrades [{rid, score, chunk, fixed, notes}]
 function applyAnswers(pk, r) {
@@ -5473,7 +5121,7 @@ function applyAnswers(pk, r) {
 }
 // home card (offline copy): what's waiting for Claude's next daily run
 function reqWaitCard() {
-  if (HOSTED || !COL || !COL.gh) return "";
+  if (!COL) return "";
   const ws = wordsNeedingSentence().filter(b => !isAutoWord(b)).length, rq = S.req || []; // picked new words wait in the background
   const n = { questions: rq.filter(x => x.kind === "questions").length, regrade: rq.filter(x => x.kind === "regrade").length, passage: rq.filter(x => x.kind === "passage").length };
   if (!ws && !n.questions && !n.regrade && !n.passage) return "";
@@ -5495,7 +5143,7 @@ function reqWaitCard() {
 const MG_MAX = 100;
 function mgFb(g) { if (!g) return undefined; const fb = { fixed: String(g.fixed || "").slice(0, 300), good: String(g.good || "").slice(0, 300), notes: (Array.isArray(g.notes) ? g.notes : []).slice(0, 3).map(n => String(n).slice(0, 300)) }; return fb.fixed || fb.good || fb.notes.length ? fb : undefined; }
 function recordMG(id, raw, by, real, score, chunk, at, g) {
-  if (HOSTED || !by || by === "Claude") return;
+  if (!by || by === "Claude") return;
   if (!at) { const it = S.items[id]; at = it && it.h && it.h.length ? it.h[it.h.length - 1][0] : Math.round(now() / 1000); }
   const k = id + ":" + at;
   const prev = (S.mg || []).filter(x => x.by === by && x.real).slice(-1)[0];
@@ -5549,7 +5197,6 @@ function agreeLine(key) {
   return `<span class="small">Claude 抽查 · Claude's checks${real && real !== key.replace(/^Gemini /, "gemini-") ? ` <span class="muted">(${esc(real)})</span>` : ""}: 分数一样 same score <b>${same}/${n}</b> · 对/不对一致 same pass/fail <b>${pf}/${n}</b> · 比 Claude 严 stricter ${strict} · 松 more lenient ${len}</span>`;
 }
 function checkHomeCards() {
-  if (HOSTED) return "";
   let h = "";
   const nd = S.nudge;
   if (nd && !nd.seen) h += `<div class="card stack"><span class="label">该重新比较了 · Time to re-compare models</span>
@@ -5611,7 +5258,7 @@ function applyRepoPacks() {
   const tot = { lad: 0, sen: 0, psg: 0, bad: 0, ws: 0, qs: 0, rg: 0, ck: 0 }; let n = 0;
   for (const pk of COL.packs()) {
     if ((S.packsDone || []).includes(pk.id)) continue;
-    try { const r = applyPack(pk, "repo"); n++; for (const k in tot) tot[k] += r[k] || 0; } catch (e) {}
+    try { const r = applyPack(pk, "repo"); n++; for (const k in tot) tot[k] += r[k] || 0; } catch (e) { noteErr("pack " + ((pk && pk.id) || "?"), e); }
   }
   if (n) { toast("新内容到了 · New material: " + packSummary(tot), 5000); if (VIEW === "me" || VIEW === "home" || (VIEW === "read" && !(READ && READ.pid))) render(); }
 }
@@ -5651,15 +5298,13 @@ function computeOutbox() {
     room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
     reading: { perDay: readPerDay(), genres: readGenres() || "auto" },
     hints: genHints(), requests: outboxRequests().concat(checkRequests()), packsDone: (S.packsDone || []).slice(-60) };
-  if (lyrAllOn() && (lyrBacklog().length || pyfBacklog().length)) OUTBOX.lyricsAll = true; // "do all songs in the next run"
-  else if (lyrAllOn()) S.lyrAll = { on: false, t: now() };
   OUTBOX_AT = now(); OUTBOX_DIRTY = true;
   return OUTBOX;
 }
 function outboxSoon(force) {
-  if (HOSTED || !COL || !COL.gh) return;
+  if (!COL) return;
   if (!force && OUTBOX && now() - OUTBOX_AT < 20 * MIN && OUTBOX.day === dayKey()) return;
-  setTimeout(() => { if (busyView() && !force) return; try { computeOutbox(); remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 3000); refreshStock(); } catch (e) {} }, 400);
+  setTimeout(() => { if (busyView() && !force) return; try { computeOutbox(); remoteDirty = true; clearTimeout(remoteTimer); remoteTimer = setTimeout(pushRemote, 3000); refreshStock(); } catch (e) { noteErr("note to Claude", e); } }, 400);
 }
 
 /* ---------- the offline copy's stock card: target + what's short + deliveries + paste a pack ---------- */
@@ -5712,7 +5357,7 @@ function bindPackCard() {
   const setStock = (patch, redraw) => {
     S.settings = setSettings({ stock: Object.assign({}, (S.settings || {}).stock, patch) }); save();
     FORECAST = null; if (redraw) render(); else refreshStock();
-    setTimeout(() => { if (COL && COL.gh) outboxSoon(true); else { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); } }, 30);
+    setTimeout(() => { if (COL) outboxSoon(true); else { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); } }, 30);
   };
   const a = $("#pk-ahead"); if (a) a.onchange = () => setStock({ ahead: +a.value }, false);
   const setReading = patch => { S.settings = setSettings({ reading: Object.assign({}, (S.settings || {}).reading, patch) }); save(); FORECAST = null; refreshStock(); setTimeout(() => outboxSoon(true), 30); };
@@ -5727,7 +5372,7 @@ function bindPackCard() {
     try {
       const pk = parsePack($("#pk-text").value), r = applyPack(pk, "paste");
       msg.innerHTML = r.dup ? "这个内容包已经加过了 · This pack was already added." : `✓ ${esc(packSummary(r))}${r.bad ? ` · ${r.bad} 个格式不对，没用 · ${r.bad} malformed, skipped` : ""}`;
-      if (!r.dup) { $("#pk-text").value = ""; FORECAST = null; outboxSoon(true); if (!(COL && COL.gh)) setTimeout(() => { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30); }
+      if (!r.dup) { $("#pk-text").value = ""; FORECAST = null; outboxSoon(true); if (!COL) setTimeout(() => { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30); }
     } catch (e) { msg.innerHTML = `<span style="color:var(--bad)">${esc(e.message || String(e))}</span>`; }
   };
   if (!FORECAST || FORECAST.t !== S.updatedAt) setTimeout(() => { const cfg = stockCfg(); FORECAST = forecast(cfg.days, cfg.mins); refreshStock(); }, 30);
@@ -5790,11 +5435,10 @@ function drawUpdate() {
   migrateFsrs();
   housekeep();
   render();
-  drawOffline();
   connectRemote();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(v => { PERSISTED = v; if (VIEW === "me") render(); }).catch(() => {}); } catch (e) {}
-  if ("serviceWorker" in navigator && !window.claude && location.protocol === "https:") {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(e => noteErr("offline copy: register", e));
     navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "page-saved") checkUpdate(); });
     navigator.serviceWorker.addEventListener("controllerchange", () => checkUpdate());
     document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });

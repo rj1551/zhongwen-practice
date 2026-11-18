@@ -30,10 +30,6 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
     // old copies without stamps: whole item from the one changed last (as before)
     const P = { id: "Ao", title: "p", u: 5, x: 1 }, Q = { id: "Ao", title: "q", u: 9 };
     out.old = mergeGenItem(P, Q).title;
-    // do all lyrics: on, then undo on the other device → off everywhere
-    const F = JSON.parse(JSON.stringify(m)), G = JSON.parse(JSON.stringify(m));
-    F.lyrAll = { on: true, t: now() }; G.lyrAll = { on: false, t: now() + 1000 };
-    out.lyr = [mergeStates(F, G).lyrAll.on, mergeStates(G, F).lyrAll.on];
     // answers still a union: same card answered differently on both
     const H = JSON.parse(JSON.stringify(m)), I = JSON.parse(JSON.stringify(m)), t0 = Math.round(now() / 1000);
     H.items.X = { t: "lad", n: 1, ok: 1, h: [[t0, 5, [3, "ok"]]] }; I.items.X = { t: "lad", n: 1, ok: 0, h: [[t0 + 1800, 5, [0, "missing"]]] };
@@ -46,7 +42,6 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
   ok(r.same[0] === "D 名" && r.same[1] === "D 名", "the same thing changed on both: the later change wins");
   ok(r.reset, "resetting the timing on one device carries over");
   ok(r.old === "q", "copies from before the change: whole item from the one changed last, as before");
-  ok(!r.lyr[0] && !r.lyr[1], "'do all lyrics' undone on the other device: undone everywhere");
   ok(r.ans === 2, "the same card answered on both devices: both answers kept");
   await b.close(); console.log(fails ? fails + " FAILED" : "ALL PASSED"); process.exit(fails ? 1 : 0);
 })();

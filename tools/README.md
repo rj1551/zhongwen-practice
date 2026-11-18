@@ -4,7 +4,7 @@ Run from this folder (`cd tools`). Each script reads/writes paths given on the c
 
 | Script | Makes | Command |
 |---|---|---|
-| `content.py` (+ `v3content.py`, `sen.py`, which it `exec`s) | `data/content.json`: production drills, chunking, words in context, sentence parsing, passages, placement banks | `python3 content.py ../data/content.json` |
+| `content.py` (+ `v3content.py`, `sen.py`, which it `exec`s) | `data/content.json`: production drills, chunking (`seg`: retired from practice in v23; still written to the file), words in context, sentence parsing, passages, placement banks | `python3 content.py ../data/content.json` |
 | `mkwords.py` | `data/words.json` from the learner's Anki history (`anki_words_all.json`: one row per Anki card with status tier) | `python3 mkwords.py anki_words_all.json ../data/words.json` |
 | `mkcedict.py` | `data/cedict.txt` from CC-CEDICT (`cedict_ts.u8` from mdbg.net, not stored here) | `python3 mkcedict.py cedict_ts.u8 ../data/cedict.txt` |
 | `mkzhconv.py` | `data/zhconv.txt` (simplified ⇄ traditional for 简体 / 繁體 in 听) from OpenCC's `data/dictionary` (github.com/BYVoid/OpenCC, Apache-2.0; not stored here) | `python3 tools/mkzhconv.py <OpenCC>/data/dictionary data/zhconv.txt` |

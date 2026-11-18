@@ -21,7 +21,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
     const allFadingLong = v.fadingWords.every(w => { const d = DICT.get(w); return d && d.ivl > 30 && "lfk".includes(d.tier); });
     const v2 = (() => { S.gen.passages = []; return vocabTargets(); })();
     return { v, v2, h: Object.keys(h), allFadingLong, weakShort, unseen, missedW, okW, newSaved, weakLong2,
-      tw: targetWords(10), newHasBoth: v2.newWords.some(w => DICT.get(w).tier === "u") && v2.newWords.some(w => DICT.get(w).tier !== "u"),
+      newHasBoth: v2.newWords.some(w => DICT.get(w).tier === "u") && v2.newWords.some(w => DICT.get(w).tier !== "u"),
       shortInNew: v2.newWords.every(w => { const d = DICT.get(w); return d.tier === "u" || d.ivl <= 30; }) };
   });
   ok(r.v.reviewWords[0] === r.missedW, "reviewWords: a missed saved word comes first");
@@ -32,7 +32,6 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
   ok(r.shortInNew && r.newHasBoth, "newWords: unseen HSK 7–9 and weak words that never passed 30 days, alternating");
   ok(!r.v.newWords.includes(r.unseen) , "newWords: a word already offered in 3 passages isn't offered again");
   ok(["reviewWords", "fadingWords", "newWords"].every(k => r.h.includes(k)) && !r.h.includes("forgottenWords"), "note hints carry the three lists (no forgottenWords)");
-  ok(r.tw[0] === r.missedW, "in-app Generate: targets start with the struggling words");
   await br.close();
   // the daily run's input filter keeps the new lists, and old notes' forgottenWords
   const { execFileSync } = require("child_process"), fs = require("fs"), os = require("os"), path = require("path");

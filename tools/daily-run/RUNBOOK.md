@@ -140,8 +140,7 @@ Each: `{"kind": "xhs|news|travel|book", "title": "Chinese title", "paras": ["tok
   rules out. At least one question hinges on a structure word or phrase (negation, contrast, condition, degree,
   time). Options roughly the same length.
 
-(These rules mirror the in-app Generate prompts in `index.html` — `genLadder`, `genSen`, `genPassage`, `QS_RULES`.
-If you change one, change the other.)
+(The app's own Generate prompts were removed with the hosted version in v68; these rules are now the only copy.)
 
 ## Requests (`outbox.requests`)
 Each has a `rid` (copy it exactly into the answer) and a `kind`:
@@ -163,7 +162,7 @@ Each has a `rid` (copy it exactly into the answer) and a `kind`:
   the whole transcript. The learner listens straight through and gets the questions for the sections heard. Answer in
   `"questions": [{"rid": …, "qs": [3 questions], "gl": {"token": ["pinyin", "gloss"]}, "en": "translation (own
   texts only)", "paras": ["the same paragraphs re-split with | between every token (own texts only; keep every
-  character exactly; omit if unsure)"]}]`. Questions follow the passage question rules below (`QS_RULES`); for
+  character exactly; omit if unsure)"]}]`. Questions follow the passage question rules above; for
   listening, ask about what a listener should take away (main points, who did what, reasons, contrasts), not tiny
   details you'd only catch by reading, and quote the transcript words that decide each answer in "why". `gl`: slang,
   names, HSK7+ words, words whose reading or meaning here differs from the most common one.

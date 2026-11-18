@@ -1,8 +1,8 @@
 # Browser tests (Playwright + Chromium), written 2026-11-06 in the build chat
 
 These drive the built app (`docs/`) in Chromium with fakes in place of the outside services:
-a fake GitHub (in-memory git with fast-forward checks), fake Gemini/Groq, a fake Cloudflare R2 that checks every
-request's Signature V4, and a fake `window.claude` for the hosted version.
+a fake GitHub (in-memory git with fast-forward checks), fake Gemini/Groq, and a fake Cloudflare R2 that checks every
+request's Signature V4. (The hosted-version tests were removed with the hosted code in v68.)
 
 How they were run (paths are hard-coded for the cloud sandbox; adjust if yours differ):
 1. `./build.sh`, then copy `docs/` to `/home/claude/tests/site` and serve it:
@@ -11,7 +11,7 @@ How they were run (paths are hard-coded for the cloud sandbox; adjust if yours d
    `http://localhost:8766/repos/`, served on 8767.)
 2. Run from the folder holding these files: `node gh.test.js` (sync, 37 checks), `pack.test.js` (packs/outbox),
    `grade.test.js` (grading chain), `req.test.js` (requests), `check.test.js` (sample re-check), `r2.test.js`
-   (audio), `hosted.test.js` + `hostedgrade.js` (hosted version), `sigv4.test.js` (signing vs AWS examples).
+   (audio), `sigv4.test.js` (signing vs AWS examples).
    `listen.test.js` (2026-11-07, 72 checks incl. the pinned player bar, Aa menu, line-by-line timing, songs vs talk; word popup outside tap; transcript size, 简/繁 both ways, pinyin, lookups from lyrics, no sideways scroll; LRCLIB match + order; fix timing; tap along; 20-minute sections; deleting that sticks + Recently deleted). `r2.test.js` now expects cloud audio to go only when a bin entry is deleted for good.
    Playwright is loaded from `/home/claude/.npm-global/lib/node_modules/playwright`.
 Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as in index.html.
@@ -28,7 +28,7 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
 - `nosignal.test.js` + `hangsrv.js` (2026-11-14): opening the app with no signal. `hangsrv.js` serves a copy of `docs/` and can be told to
   hang (accept requests, never answer, like a phone with no signal), be slow (5 s) or answer normally. Serve `docs/` copied to
   `/home/claude/tests/site` with the service-worker line's `location.protocol === "https:"` check removed (it only registers on https):
-  `sed -i 's/!window.claude \&\& location.protocol === "https:") {/!window.claude) {/' site/index.html` (since v64; before that the line ended in `navigator.serviceWorker.register`),
+  `sed -i 's/ \&\& location.protocol === "https:") {/) {/' site/index.html` (since v68; v64–v67: `s/!window.claude \&\& location.protocol === "https:") {/!window.claude) {/`),
   then `setsid node hangsrv.js site 8790 &` and `node nosignal.test.js`. Checks: no signal → opens from the saved copy in ~3 s (before the
   fix it never opened); offline → at once; online → a new version straight away; slow → saved copy, and the late answer is saved for next time.
 - `nudge.test.js` (2026-11-15, same server/site as `nosignal.test.js`): the 备份 Backup reminder never shows when GitHub sync is set up on the
@@ -44,3 +44,12 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   sentence, sentence requests flagged `new`, alternation with saved words (both directions), 新词 first card without
   记得/忘了, 知道了 starts reviews, later label 词汇, 我认识 drops it for good, saving it from a reading keeps one card and
   its sentence, merge keeps `saved`. (`req.test.js` ignores `new` sentence requests since v67.)
+- `cache.test.js` (2026-11-18, v68; own server on 8791, run `./build.sh` first): the two offline stores. A v67 device
+  (one store with the dictionary) upgrades without downloading the dictionary or the 简/繁 table again (copied into
+  `zwlgf-data-N`); an ordinary release renews only the app store; offline the dictionary still loads; bumping `DATA`
+  in `sw.js` downloads it once and removes the old store. Checked against a deliberately broken copy step: it fails.
+- `store.test.js` (2026-11-18, v68, 8765 server): saving on this device. Damaged saved progress is copied aside
+  (`zwlgf:state:unreadable`) before anything is saved, home card, 复制 / 删掉 (two taps); with an older copy still kept
+  nothing is written over until it's removed; storage full → toast once + home card, gone after a save that works;
+  the error log (Progress → 出错记录): repeats counted, uncaught errors and promise rejections caught, last 30, copy,
+  clear, a damaged log never breaks it.

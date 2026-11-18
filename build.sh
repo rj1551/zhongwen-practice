@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the standalone GitHub Pages copy in docs/ (full HTML skeleton; the Claude artifact adds its own).
+# Builds the GitHub Pages copy in docs/ (index.html wrapped in a full HTML skeleton).
 set -e
 cd "$(dirname "$0")"
 mkdir -p docs/data

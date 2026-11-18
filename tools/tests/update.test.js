@@ -34,7 +34,7 @@ const ready = pg => pg.waitForFunction(() => { const t = document.querySelector(
     ok(await pg.evaluate(() => APP_VERSION) === NEW, "切换 Switch: the new version is running");
     await pg.waitForTimeout(2500); ok(!(await line(pg)), "after switching: no notice");
     // an older saved page never offers a 'switch' backwards
-    await pg.evaluate(async (old) => { const c = await caches.open((await caches.keys())[0]); const r = await c.match(location.href);
+    await pg.evaluate(async (old) => { const c = await caches.open((await caches.keys()).find(k => /^zwlgf-v\d+$/.test(k))); const r = await c.match(location.href);
       await c.put(location.href, new Response((await r.text()).replace(/const APP_VERSION = "[^"]+"/, `const APP_VERSION = "${old}"`), { headers: { "Content-Type": "text/html" } })); }, cur.replace(/v(\d+)/, (m, n) => "v" + (n - 1)));
     await pg.evaluate(() => checkUpdate()); await pg.waitForTimeout(300);
     ok(!(await line(pg)), "older saved copy: no notice");
