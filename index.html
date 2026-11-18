@@ -1204,22 +1204,25 @@ function logDay(sec, ok, kind = "due") {
   if (kind !== "read") { v.n++; v.ok += ok ? 1 : 0; }
   logTotals(d);
 }
-function logDone() { const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; if (!d.by) { d.old = { n: d.n || 0, ok: d.ok || 0, sec: d.sec || 0 }; d.by = {}; } (d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 }).done = 1; logTotals(d); }
+// per-device flags on today's log (synced, merged by OR): done = today's set is done (✓); cd = today's cards are done
+// but something scheduled after them isn't yet (v72: the day's passage); nr = "今天不读 · No reading today" tapped
+function markDay(flag) { const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 }; if (!d.by) { d.old = { n: d.n || 0, ok: d.ok || 0, sec: d.sec || 0 }; d.by = {}; } (d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 })[flag] = 1; logTotals(d); }
+function logDone() { markDay("done"); }
 function mergeLogDay(x, y) {
   if (!x) return y; if (!y) return x;
   if (!x.by && !y.by) return { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   const m = { by: {} };
-  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), done: (w.done || v.done) ? 1 : undefined }; }
+  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
   // the part from before the split: a day from older code (no by) is its totals minus what's already split
   const b = byTotal(m), legacy = z => z.by ? (z.old || { n: 0, ok: 0, sec: 0 }) : { n: Math.max(0, z.n - b.n), ok: Math.max(0, z.ok - b.ok), sec: Math.max(0, z.sec - b.sec) };
   const lx = legacy(x), ly = legacy(y); m.old = { n: Math.max(lx.n, ly.n), ok: Math.max(lx.ok, ly.ok), sec: Math.max(lx.sec, ly.sec) };
   return logTotals(m);
 }
 function daySplit(d) {
-  const r = { due: 0, extra: 0, rd: 0, old: 0, done: false };
+  const r = { due: 0, extra: 0, rd: 0, old: 0, done: false, cd: false, nr: false };
   if (!d) return r;
   if (!d.by) { r.old = d.sec || 0; return r; }
-  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; if (v.done) r.done = true; }
+  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
   r.old = (d.old || {}).sec || 0; return r;
 }
 const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时 ${m % 60 ? (m % 60) + " 分" : ""}`.trim(); };
@@ -1681,7 +1684,7 @@ function renderHome(main) {
   ${!S.placed ? `<div class="card"><span class="label">第一步 · First step</span><h2>先做水平测试（约 10 分钟）</h2>
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
-  ${storeCard()}${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
+  ${storeCard()}${schedHomeCard()}${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
   ${autoCard()}
   ${reqWaitCard()}
   ${backupNudge()}
@@ -1708,6 +1711,8 @@ function renderHome(main) {
   const ck = $("#ck-ok", main); if (ck) ck.onclick = () => { S.ckSum.seen = true; save(); render(); };
   const gf = $("#gh-fix", main); if (gf) gf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#ghcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   bindStoreCard(main);
+  const hr = $("#sr-home", main); if (hr) hr.onclick = () => startSession();
+  const hs = $("#sr-homeskip", main); if (hs) hs.onclick = () => { markDay("nr"); maybeDayDone(); save(); render(); };
   const pf = $("#prov-fix", main); if (pf) pf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
   const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
@@ -1916,6 +1921,7 @@ function buildBlock(n, used, rnd = Math.random) {
         const sc = next(false, ["sen"]); if (sc) { take(sc); continue; }
         if (takeNew()) continue;
       }
+      { const sr = schedNext(used); if (sr) { out.push(sr); continue; } } // today's passage, after the cards (v72)
       used.add("div"); // today's set is done: the note goes in front of the next card
     }
     // 3. after today's set (endless): parsing sentences, re-reads, and now and then one more new drill/word
@@ -1966,7 +1972,7 @@ function renderSession(main) {
     <div class="cells">${s.goalN && !s.goalShown ? `<div class="mix" style="flex:1;background:var(--line)"><i style="width:${Math.min(100, n / s.goalN * 100)}%;background:var(--accent)"></i></div><span class="small muted" style="margin-left:8px">${n}/${s.goalN}</span>` : `<span class="small muted">第 ${n + 1} 张${s.goalShown ? " · 目标已达成 ✓" : ""} · 点 ■ 结束</span>`}</div>
     <span class="combo" id="combo">${s.combo >= 2 ? "连对 ×" + s.combo : ""}</span></div>${s.noteUntil > now() ? `<div class="dnote" id="dnote">今天该做的都做完了 ✓ · Everything for today is done</div>` : ""}<div id="slot"></div>`;
   const dn = $("#dnote"); if (dn) setTimeout(() => { dn.classList.add("gone"); setTimeout(() => dn.remove(), 600); }, Math.max(0, s.noteUntil - now()));
-  $("#quit").onclick = () => { s.ended = true; render(); };
+  $("#quit").onclick = () => { if (READ && READ.sched) { if (READ.timer) READ.timer.stop(); closeSheet(); READ = null; } s.ended = true; render(); };
   if (card.t === "ofb") return renderOfflineFb(card.k, $("#slot"), again => {
     if (again) { s.used.add("lad" + again.id); s.q.splice(s.i + 1, 0, again); }
     s.i++; render(); window.scrollTo(0, 0);
@@ -1980,6 +1986,7 @@ function renderSession(main) {
   const t0 = now();
   renderCard(card, $("#slot"), (r) => {
     if (r.rr) { logDay(Math.min((now() - t0) / 1000, 900), true, "read"); return; } // re-read: time only
+    if (r.sr) return; // today's passage: the reader logs its own reading time
     logDay((now() - t0) / 1000, r.ok, s.pastDiv ? "extra" : "due");
     s.res[s.i] = r.ok;
     if (r.ok) { s.combo++; s.best = Math.max(s.best, s.combo); const c = $("#combo"); if (c && s.combo >= 2) { c.textContent = "连对 ×" + s.combo; c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); } }
@@ -2037,6 +2044,7 @@ function renderCard(card, el, onResult, onNext) {
   if (card.t === "sen") return renderSen(SEN.get(card.id), el, onResult, onNext);
   if (card.t === "frag") return renderFrag(card.id, el, onResult, onNext);
   if (card.t === "rr") return renderReread(card.id, el, onResult, onNext);
+  if (card.t === "sr") return renderSched(card, el, onResult, onNext);
 }
 // Tap once to select, tap the same option again to confirm (or 1–4 then Enter on a keyboard).
 function bindOpts(scope, onPick) {
@@ -2655,6 +2663,63 @@ function rereadable(used) {
   return [...PSG.values()].filter(p => { const r = S.reads[p.id]; return r && !r.fluent && !used.has("rr" + p.id) && t - (r.lastT || r.t) >= rereadGap(r); })
     .sort((a, b) => (S.reads[a.id].lastT || S.reads[a.id].t) - (S.reads[b.id].lastT || S.reads[b.id].t));
 }
+/* Scheduled reading (v72, learner 2026-11-18). On a day a passage is due, today's set = cards, then the passage
+   (first read with its questions); the ✓ and "今天该做的都做完了" come only after it is read, or after
+   "今天不读 · No reading today". How often follows the 阅读量 setting (readPerDay): 0.5 → due unless a passage was
+   first-read yesterday or today; 1 / 2 → that many first reads today. A first read in 阅读 counts. Own texts and
+   (later) books don't. No unread passage → nothing due. Not in the stock forecast's simulated days (SIM). */
+const prevDayKey = () => dayKey(midnight(now()) - 1);
+function firstReadsOn(day) { let n = 0; for (const id in S.reads) { const r = S.reads[id], p = PSG.get(id); if (r && r.t && !r.mine && !(p && p.mine) && dayKey(r.t) === day) n++; } return n; }
+function schedPassage(skip = new Set()) {
+  const all = [...PSG.values()].filter(p => !p.mine && !S.reads[p.id] && !skip.has(p.id));
+  const order = [...all.filter(p => p.gen).reverse(), ...all.filter(p => !p.gen)]; // newest from the nightly packs first
+  const g = readGenres(), want = g ? new Set(g.map(x => x === "travel" ? "xhs" : x)) : null;
+  return (want && order.find(p => want.has(p.reg))) || order[0] || null;
+}
+function schedReadLeft() {
+  if (daySplit(S.log[dayKey()]).nr || !schedPassage()) return 0;
+  const per = readPerDay(), today = firstReadsOn(dayKey());
+  if (per < 1) return today + firstReadsOn(prevDayKey()) ? 0 : 1;
+  return Math.max(0, Math.round(per) - today);
+}
+// what's still scheduled after today's cards (v72: passages; free writing joins it)
+const extrasLeft = () => schedReadLeft();
+// the next passage card for a session's queue, if one is due and not already queued
+function schedNext(used) {
+  if (SIM) return null;
+  used.srq = (used.srq || []).filter(id => !S.reads[id]);
+  if (used.srq.length >= schedReadLeft()) return null;
+  const p = schedPassage(new Set(used.srq)); if (!p) return null;
+  used.srq.push(p.id); return { t: "sr", id: p.id };
+}
+// after a first read, a skip or a free-writing answer outside the session: the day's ✓ if nothing is left
+// home: today's cards are done but the passage isn't yet (so no ✓ yet) — says why, offers both ways
+function schedHomeCard() {
+  const sp = daySplit(S.log[dayKey()]); if (sp.done || !sp.cd || !schedReadLeft()) return "";
+  const p = schedPassage();
+  return `<div class="card stack"><span class="label">今天的阅读 · Today's reading</span>
+    <p class="small">卡片做完了，还有一篇短文${p ? `：<span class="zh">${esc(p.title)}</span>` : ""} · Cards done; one passage left for today.</p>
+    <div class="row"><button class="btn" id="sr-home">读 Read</button><button class="btn ghost" id="sr-homeskip">今天不读 · No reading today</button></div></div>`;
+}
+function maybeDayDone() { const sp = daySplit(S.log[dayKey()]); if (!sp.done && sp.cd && !extrasLeft()) { logDone(); save(); } }
+const SR_OPEN = "zwlgf:sropen"; // this device: a scheduled passage started and not finished (a resumed read doesn't count toward speed)
+function renderSched(card, el, onResult, onNext) {
+  const p = PSG.get(card.id);
+  if (!p || S.reads[p.id]) return onNext();
+  if (!daySplit(S.log[dayKey()]).cd) { markDay("cd"); save(); }
+  const n = psgChars(p);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">今天的阅读 · Today's reading</span><span class="chip ${p.reg || ""}">${REG_NAME[p.reg] || ""}</span></div>
+    <h2 class="zh" style="font-size:20px">${esc(p.title)}</h2>
+    <p class="small muted">约 ${n} 字，读完有 ${(p.qs || []).length} 个问题。读完今天的就做完了 · About ${n} characters, then ${(p.qs || []).length} questions. After this, today's set is done.</p>
+    <button class="btn wide" id="sr-go">开始读 Start reading</button>
+    <button class="btn ghost wide" id="sr-skip">今天不读 · No reading today</button></div>`;
+  $("#sr-go", el).onclick = () => {
+    let half = false; try { half = localStorage.getItem(SR_OPEN) === p.id; localStorage.setItem(SR_OPEN, p.id); } catch (e) {}
+    READ = { pid: p.id, timer: makeTimer(), looked: new Set(), spaced: false, re: false, sched: { half, done: () => { onResult({ ok: true, sr: true }); onNext(); } } };
+    renderPassage(el); window.scrollTo(0, 0);
+  };
+  $("#sr-skip", el).onclick = () => { markDay("nr"); save(); onResult({ ok: true, sr: true }); onNext(); };
+}
 const psgChars = p => Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
 function recordReread(pid, cpm) {
   const r = S.reads[pid]; if (!r) return;
@@ -2922,7 +2987,7 @@ function renderPassage(main) {
       <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
       ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
     ${READ.re || (p.mine && !(p.qs && p.qs.length)) ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
-  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = p.mine ? { grp: p.grp } : null; render(); };
+  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = p.mine ? { grp: p.grp } : null; render(); }; // in practice: back to the passage card
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
   const pr = $("#pren"); if (pr) pr.onclick = () => {
     if (READ.timer && READ.timer.hold) READ.timer.hold();
@@ -3044,11 +3109,23 @@ function passageQuiz(main, p) {
   let qi = 0, score = 0;
   const ask = () => {
     if (qi >= p.qs.length) {
+      const sched = READ.sched, half = !!(sched && sched.half);
       if (first) {
         S.reads[p.id] = { cpm, score, t: now(), looked: READ.looked.size };
-        if (sec < 20 * 60 && !p.mine) pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
+        if (half) S.reads[p.id].half = true; // resumed after leaving it halfway: not a clean timing
+        if (sec < 20 * 60 && !p.mine && !half) pushRecent("speed", Math.min(1, cpm / 320) * (0.4 + 0.6 * score / p.qs.length));
       } else { const r = S.reads[p.id]; r.re = (r.re || 0) + 1; r.lastCpm = cpm; }
       logDay(Math.min(sec, 900), score >= 2, "read"); save();
+      if (sched) try { localStorage.removeItem(SR_OPEN); } catch (e) {}
+      if (first && !p.mine && !sched) maybeDayDone(); // read in 阅读 after today's cards: that completes the day
+      if (sched) {
+        main.innerHTML = `<div class="card"><span class="label">读完 · Finished</span>
+          <div class="stats3"><div class="stat"><b>${half ? "—" : cpm}</b><span>字/分钟${half ? "（接着读的，不算）" : ""}</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
+          <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>
+          <button class="btn wide" id="sr-next">继续 Continue</button></div>`;
+        $("#sr-next").onclick = () => { READ = null; sched.done(); };
+        return;
+      }
       main.innerHTML = `<div class="card"><span class="label">${p.mine ? "读完 · Finished (your own texts don't count toward reading speed)" : first ? "读完 · Finished" : "重读 · Re-read (doesn't count toward reading speed)"}</span>
         <div class="stats3"><div class="stat"><b>${cpm}</b><span>字/分钟</span></div><div class="stat"><b>${score}/${p.qs.length}</b><span>理解</span></div><div class="stat"><b>${READ.looked.size}</b><span>查了几个词</span></div></div>
         <details><summary>英文翻译 English translation</summary><p style="white-space:pre-line;margin-top:8px">${esc(p.en)}</p></details>

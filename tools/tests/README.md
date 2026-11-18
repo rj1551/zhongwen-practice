@@ -65,3 +65,10 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   `javascript:` links, `<script>` elements, scripts from other sites, frames and objects are refused (checked: the
   same injections all run on a copy without the lock); the policy allows only the fingerprint (no eval, no inline);
   a stale fingerprint stops the app and `csp.py` fixes it; `csp.py` refuses markup with inline handlers.
+- `sched.test.js` (2026-11-18, v72, 8765 server): scheduled reading. Due per the 阅读量 setting (1 every 2 days: not
+  the day after a first read, again the day after that; 1 or 2 a day); the passage comes after the cards and the ✓ and
+  the note wait for it; the full reader (word popup) inside practice; 今天不读 · No reading today gives the ✓ and
+  doesn't carry over; 2 a day → two passages; newest pack passage first, genre setting decides; own texts never;
+  ■ halfway → home card, a resumed read is marked `half` and doesn't count toward speed; a first read in 阅读 after the
+  cards gives the ✓; nothing unread → ✓ as before; forecast unaffected; `cd`/`nr` flags merge. `divider.test.js` now
+  starts with every passage read.
