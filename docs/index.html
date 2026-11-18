@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-CW/g56LmtgyiorGpRgPtPqbzYDAE2egdlu7eUQGXFs8='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-rID2hLbeg8CAX4fNll3Zpgen8BdmTOAPnNI82mJ5Wx8='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -311,7 +311,7 @@ const pct = x => Math.round((x || 0) * 100) + "%";
 const LS_KEY = "zwlgf:state:v1";
 const OFFW_MAX = 300; // answers waiting to be graded later (offline copy: graded automatically; was 50 before step 3)
 function freshState() {
-  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [], listen: [] }, best: { combo: 0 } };
+  return { v: 1, updatedAt: 0, placed: false, skills: null, items: {}, recent: {}, log: {}, bank: {}, reads: {}, gen: { ladder: [], passages: [], sen: [], mine: [], listen: [], fw: [] }, best: { combo: 0 } };
 }
 let S = freshState();
 /* Saving on this device (v68). Progress is one localStorage entry (browsers allow ~5 MB; real progress was ~320 KB
@@ -372,7 +372,7 @@ function bindStoreCard(main) {
 
 let remoteBusy = false, remoteDirty = false, remoteTimer = null;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
-const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 320 }; // trash: TRASH_MAX purges properly first; this is only a backstop // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 320, fw: 240 }; // trash: TRASH_MAX purges properly first; this is only a backstop // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
   if (SIM) return;
   S.updatedAt = now();
@@ -814,7 +814,7 @@ function mergeSettings(m, o) {
    an edit stamps its group in it.uf[group] (touch), so a rename on one device and a timing fix on the other both
    survive. Groups not stamped on either side come from the copy changed last (it.u), as before. */
 const FIELD_GROUPS = { title: ["title"], tags: ["tags"], type: ["type", "typeMan"], timing: ["fix", "tm", "tap"],
-  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"] };
+  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
 function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1); const uf = x.uf = Object.assign({}, x.uf); for (const g of groups) uf[g] = x.u; return x; }
 function mergeGenItem(a, b) {
   const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
@@ -855,7 +855,7 @@ function mergeStates(a, b) {
   const byId = (p, q, key) => { const seen = new Set(p.map(z => z[key])); return p.concat(q.filter(z => !seen.has(z[key]))); };
   // per item, the version changed last (it.u) wins, so a field set on one device (questions, cloud audio…) isn't lost
   const genMerge = (p, q) => { const at = new Map(p.map((z, i) => [z.id, i])), out = p.slice(); for (const z of q) { const i = at.get(z.id); if (i == null) out.push(z); else out[i] = mergeGenItem(out[i], z); } return out; };
-  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = genMerge(gm[k] || [], o.gen[k] || []); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [] }, gm);
+  const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = genMerge(gm[k] || [], o.gen[k] || []); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [], fw: [] }, gm);
   // listening history: union of sessions from both sides
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
   m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
@@ -1194,15 +1194,16 @@ function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
    have only totals: shown as "earlier, not split". Listening isn't counted (yet). Kept ~2 years. */
 const LOG_DAYS = 800;
 function devId() { try { let d = localStorage.getItem("zwlgf:dev"); if (!d) { d = "d" + Math.random().toString(36).slice(2, 8); localStorage.setItem("zwlgf:dev", d); } return d; } catch (e) { return "d0"; } }
-const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0); } return { n, ok, sec }; };
+const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0); } return { n, ok, sec }; };
 function logTotals(d) { const b = byTotal(d), o = d.old || { n: 0, ok: 0, sec: 0 }; d.n = o.n + b.n; d.ok = o.ok + b.ok; d.sec = o.sec + b.sec; return d; }
 function logDay(sec, ok, kind = "due") {
   const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 };
   if (!d.by) { d.old = { n: d.n || 0, ok: d.ok || 0, sec: d.sec || 0 }; d.by = {}; } // a day begun by older code
   const v = d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 };
-  const f = kind === "read" ? "rd" : kind === "extra" ? "extra" : "due";
-  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" ? 900 : 240));
-  if (kind !== "read") { v.n++; v.ok += ok ? 1 : 0; }
+  // fw = free writing (v73): on top of today's set, so it isn't card time and doesn't move the new-item allowance
+  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "extra" ? "extra" : "due";
+  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" || kind === "fw" ? 900 : 240));
+  if (kind !== "read" && kind !== "fw") { v.n++; v.ok += ok ? 1 : 0; }
   logTotals(d);
 }
 // per-device flags on today's log (synced, merged by OR): done = today's set is done (✓); cd = today's cards are done
@@ -1213,7 +1214,7 @@ function mergeLogDay(x, y) {
   if (!x) return y; if (!y) return x;
   if (!x.by && !y.by) return { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   const m = { by: {} };
-  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
+  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
   // the part from before the split: a day from older code (no by) is its totals minus what's already split
   const b = byTotal(m), legacy = z => z.by ? (z.old || { n: 0, ok: 0, sec: 0 }) : { n: Math.max(0, z.n - b.n), ok: Math.max(0, z.ok - b.ok), sec: Math.max(0, z.sec - b.sec) };
   const lx = legacy(x), ly = legacy(y); m.old = { n: Math.max(lx.n, ly.n), ok: Math.max(lx.ok, ly.ok), sec: Math.max(lx.sec, ly.sec) };
@@ -1922,6 +1923,7 @@ function buildBlock(n, used, rnd = Math.random) {
         const sc = next(false, ["sen"]); if (sc) { take(sc); continue; }
         if (takeNew()) continue;
       }
+      { const fw = fwNext(used); if (fw) { out.push(fw); continue; } } // today's free writing, after the cards (v73)
       { const sr = schedNext(used); if (sr) { out.push(sr); continue; } } // today's passage, after the cards (v72)
       used.add("div"); // today's set is done: the note goes in front of the next card
     }
@@ -1988,6 +1990,7 @@ function renderSession(main) {
   renderCard(card, $("#slot"), (r) => {
     if (r.rr) { logDay(Math.min((now() - t0) / 1000, 900), true, "read"); return; } // re-read: time only
     if (r.sr) return; // today's passage: the reader logs its own reading time
+    if (r.fw) { logDay((now() - t0) / 1000, r.ok, "fw"); return; } // free writing: its own time, outside card time
     logDay((now() - t0) / 1000, r.ok, s.pastDiv ? "extra" : "due");
     s.res[s.i] = r.ok;
     if (r.ok) { s.combo++; s.best = Math.max(s.best, s.combo); const c = $("#combo"); if (c && s.combo >= 2) { c.textContent = "连对 ×" + s.combo; c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); } }
@@ -2046,6 +2049,8 @@ function renderCard(card, el, onResult, onNext) {
   if (card.t === "frag") return renderFrag(card.id, el, onResult, onNext);
   if (card.t === "rr") return renderReread(card.id, el, onResult, onNext);
   if (card.t === "sr") return renderSched(card, el, onResult, onNext);
+  if (card.t === "fw") return renderFw(card, el, onResult, onNext);
+  if (card.t === "fwfb") return renderFwFb(card, el, onResult, onNext);
 }
 // Tap once to select, tap the same option again to confirm (or 1–4 then Enter on a keyboard).
 function bindOpts(scope, onPick) {
@@ -2301,6 +2306,7 @@ function settleOffline(e, g, by) {
    the schedule is corrected, and only answers with a problem become feedback cards. */
 let AUTO = null;
 async function autoCheck() {
+  fwAutoGrade(); // free-writing answers waiting for a grade (v73)
   if (AUTO || !ONLINE || !provReady()) return;
   // answers queued by older versions as "graded later" join the same route
   if ((S.pending || []).length) {
@@ -2378,6 +2384,7 @@ Reply with only a JSON array, one object per answer in the same order: {"i": ans
 // 再写一次 still adds the drill on purpose, right after its feedback.
 function addFeedback(block, s) {
   const f = (S.offfb || []).filter(x => !x.seen && !s.fbUsed.has(x.k) && LADDER.has(x.id)).sort((a, b) => b.t - a.t)[0];
+  if (!f && block.length >= 3) { const w = fwUnseen().find(x => !s.fbUsed.has("fw:" + x.it.id + x.part)); if (w) { s.fbUsed.add("fw:" + w.it.id + w.part); block.splice(3, 0, { t: "fwfb", id: w.it.id, part: w.part }); } return block; }
   if (!f || block.length < 3) return block;
   s.fbUsed.add(f.k); s.used.add("lad" + f.id);
   block.splice(3, 0, { t: "ofb", k: f.k });
@@ -2664,6 +2671,195 @@ function rereadable(used) {
   return [...PSG.values()].filter(p => { const r = S.reads[p.id]; return r && !r.fluent && !used.has("rr" + p.id) && t - (r.lastT || r.t) >= rereadGap(r); })
     .sort((a, b) => (S.reads[a.id].lastT || S.reads[a.id].t) - (S.reads[b.id].lastT || S.reads[b.id].t));
 }
+/* Free writing (v73, learner 2026-11-18). One prompt a day, on top of everything else (outside the new-item
+   allowance and card time), part of today's set: the ✓ waits for it, then today's passage. A short question in
+   Chinese, answered freely in (about) one sentence. No reference answer, so no self-grading: the grading chain
+   grades it right away (or later when online), Claude's nightly run checks every answer and wins.
+   A final score ≤ 2 brings the same prompt back once, ~3 days later, with nothing shown; after that answer, the old
+   answer and its correction are shown and the prompt retires. Prompts: the nightly run (enough for the stock
+   target, ~1 in 4 aimed at structures you get wrong, topics you ask for first) + FW_BUILTIN for day one / offline.
+   Stored in S.gen.fw: {id, q, en?, steer?, topic?, rid?, t, a: answer, b: comeback, done}; answer/comeback =
+   {t, raw, g: model grade, cl: Claude's, seen}; grade = {score, fixed, nat, notes, chunk, by}. Built-in prompts are
+   copied into S.gen.fw when first answered. Not in the stock forecast (SIM). */
+const FW_BUILTIN = ["你周末一般怎么过？", "你最近在学什么新东西？学得怎么样？", "你住的地方，最方便的是什么？最不方便的呢？",
+  "如果有一整天的空闲时间，你会怎么安排？", "你觉得在家做饭和在外面吃，哪个更好？为什么？", "说说你最近看过的一部电影或者一本书。",
+  "你早上起床以后一般先做什么？", "你喜欢什么样的天气？为什么？", "你去过的地方里，哪里最想再去一次？", "你觉得手机让生活更方便了，还是更累了？",
+  "你平时怎么去上班或者上学？路上做什么？", "买东西的时候，你更看重价格还是质量？", "最近有什么让你觉得很有意思的事？", "你觉得学中文最难的是什么？",
+  "你喜欢一个人旅行，还是跟朋友一起？为什么？", "如果可以马上学会一种新技能，你想学什么？", "你理想中的周末早餐是什么样的？",
+  "你觉得住在大城市和小城市，各有什么好处？", "你上次因为一件小事很开心，是什么时候？", "有朋友第一次来你住的城市，你会怎么介绍它？"].map((q, i) => ({ id: "FWB" + String(i + 1).padStart(2, "0"), q, builtin: true }));
+const FW_BACK_DAYS = 3, FW_CHECK_DAYS = 14, FW_CHECK_MAX = 10;
+function makeFw(x, id) {
+  if (!x || typeof x.q !== "string") return null;
+  const q = x.q.trim(); if (Array.from(q).length < 4 || Array.from(q).length > 60 || !/[一-鿿]/.test(q)) return null;
+  const it = { id, q, t: Date.now(), gen: true };
+  if (typeof x.en === "string" && x.en.trim()) it.en = x.en.trim().slice(0, 200);
+  if (typeof x.steer === "string" && x.steer.trim()) it.steer = x.steer.trim().slice(0, 40);
+  if (typeof x.topic === "string" && x.topic.trim()) it.topic = x.topic.trim().slice(0, 40);
+  if (typeof x.rid === "string") it.rid = x.rid.slice(0, 40);
+  return it;
+}
+function fwList() { const have = new Map((S.gen.fw || []).map(x => [x.id, x])); return [...(S.gen.fw || []), ...FW_BUILTIN.filter(b => !have.has(b.id))]; }
+const fwFinal = part => part && (part.cl ? part.cl.score : part.g ? part.g.score : null);
+const fwOn = (it, day) => (it.a && dayKey(it.a.t) === day) || (it.b && it.b.t && dayKey(it.b.t) === day);
+const fwFresh = () => { const L = fwList().filter(x => !x.a && !x.done); return [...L.filter(x => x.topic && !x.builtin).sort((a, b) => a.t - b.t), ...L.filter(x => !x.topic && !x.builtin).sort((a, b) => a.t - b.t), ...L.filter(x => x.builtin)]; };
+// today's prompt: a comeback that's due, else the next fresh one; null once one was answered today (any device)
+function fwToday() {
+  const day = dayKey(), L = fwList();
+  if (L.some(x => fwOn(x, day))) return null;
+  const back = L.filter(x => x.b && !x.b.t && !x.done && midnight(x.b.due) <= now()).sort((a, b) => a.b.due - b.b.due)[0];
+  if (back) return { it: back, back: true };
+  const f = fwFresh()[0]; return f ? { it: f, back: false } : null;
+}
+const fwLeft = () => SIM ? 0 : fwToday() ? 1 : 0;
+function fwNext(used) { if (SIM || used.has("fwq")) return null; const x = fwToday(); if (!x) return null; used.add("fwq"); return { t: "fw", id: x.it.id }; }
+function fwOwn(it) { // a built-in prompt becomes a stored one (synced) when answered
+  if ((S.gen.fw || []).includes(it)) return it;
+  const have = (S.gen.fw || []).find(x => x.id === it.id); if (have) return have;
+  const c = { id: it.id, q: it.q, t: now(), builtin: true }; (S.gen.fw = S.gen.fw || []).push(c); return c;
+}
+// after a grade arrives (model or Claude): plan the comeback for a first answer
+function fwPlan(it) {
+  if (!it.a || it.done) return;
+  const f = fwFinal(it.a); if (f == null) return;
+  if (f <= 2 && !it.b) { it.b = { due: it.a.t + FW_BACK_DAYS * DAY }; touch(it, "fwb"); }
+  else if (f >= 3 && it.b && !it.b.t) { delete it.b; touch(it, "fwb"); }
+}
+function fwPrompt(q, raw) {
+  return `You are a precise, encouraging Mandarin tutor. An advanced learner (HSK 6+ recognition) whose weak spot is production (English word order, long modifiers before nouns, literal word choices, missing natural chunks) answered a question in Chinese, freely, in their own words. There is no reference answer: judge only how it is said, never the opinion or content.
+
+Question: ${q}
+Learner's answer: ${raw}
+
+Score: 3 = natural and correct (a native speaker would say it this way); 2 = correct meaning and grammar but unnatural, awkward, or wrong register; 1 = understandable but has grammar or word-choice errors; 0 = can't be understood or is mostly ungrammatical.
+A wrong word or a wrong collocation is a word-choice error, so score it 1 even when the meaning is still clear: a verb–object or adjective–noun pair a native speaker wouldn't use, a word whose meaning doesn't fit, or a word-for-word rendering of an English expression. Give 3 to anything a native speaker would naturally say, even if other phrasings exist.
+Reply with only JSON: {"score": 0-3, "fixed": "the answer corrected, staying as close to the learner's own words and meaning as possible (simplified Chinese; same as the answer if nothing is wrong)", "natural": "how a native speaker would most naturally say the same thing (simplified Chinese; may restructure)", "notes": ["up to 3 short English notes, each naming one problem and its fix"], "chunk": "one natural chunk from the corrected or natural version worth practising (e.g. 说得通, 起…作用), or empty string"}`;
+}
+function fwGrade(res, by) {
+  const score = Math.round(+res.score); if (!(score >= 0 && score <= 3)) return null;
+  const str = (x, n) => typeof x === "string" ? x.trim().slice(0, n) : "";
+  return { score, fixed: str(res.fixed, 300), nat: str(res.natural || res.nat, 300), notes: (Array.isArray(res.notes) ? res.notes : []).slice(0, 3).map(n => String(n).slice(0, 200)), chunk: str(res.chunk, 20), by: by || "", t: now() };
+}
+const fwLab = sc => sc >= 3 ? "很自然 ✓ · Natural" : sc === 2 ? "意思对，可以更地道 · Right, could be more natural" : sc === 1 ? "看得懂，有错 · Understandable, with mistakes" : "不太通 · Hard to follow";
+function fwFbHtml(it, part, g) {
+  const raw = part.raw;
+  return `<div class="fb ${g.score >= 3 ? "ok" : g.score === 2 ? "mid" : "no"}"><span class="verdict">${fwLab(g.score)}</span>
+    ${g.fixed && norm(g.fixed) !== norm(raw) ? `<span>改一改 Fixed：<span class="zh" style="font-size:18px">${esc(g.fixed)}</span></span>` : ""}
+    ${g.nat && norm(g.nat) !== norm(raw) && norm(g.nat) !== norm(g.fixed) ? `<span>更自然 More natural：<span class="zh" style="font-size:18px">${esc(g.nat)}</span></span>` : ""}
+    ${g.notes.length ? `<ul>${g.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+    ${g.by ? `<span class="small muted">${esc(g.by)}</span>` : ""}</div>
+    ${g.chunk && g.score <= 2 ? `<div class="row" style="align-items:center;gap:8px"><span class="small">值得练 Worth practising: <b class="zh">${esc(g.chunk)}</b></span><button class="btn soft" data-fwdrill="${esc(it.id)}|${part === it.b ? "b" : "a"}">加入练习 · Add as drill</button></div>` : ""}`;
+}
+// 加入练习: the nightly run writes a proper drill for that chunk (the instant grader doesn't write drills)
+function bindFwDrill(scope) {
+  $$("[data-fwdrill]", scope).forEach(b => b.onclick = () => {
+    const [id, pt] = b.dataset.fwdrill.split("|"), it = (S.gen.fw || []).find(x => x.id === id), part = it && it[pt], g = part && (part.cl || part.g);
+    if (!g || !g.chunk) return;
+    const ok = addReq({ rid: `wd:${id}:${pt}`, kind: "fwdrill", chunk: g.chunk, ctx: g.nat || g.fixed || part.raw, q: it.q });
+    b.disabled = true; b.textContent = ok ? "下次运行时写好 · Claude writes it in the next run" : "已经请求了 · Already asked";
+  });
+}
+function fwTokens(q) { return segmentText(q, {}); }
+function renderFw(card, el, onResult, onNext) {
+  const x = fwToday(); if (!x || x.it.id !== card.id) return onNext(); // answered on another device meanwhile
+  if (!daySplit(S.log[dayKey()]).cd) { markDay("cd"); save(); }
+  const it = x.it, toks = fwTokens(it.q), pseudo = { id: "fw:" + it.id, gl: {} };
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">自由写 · Free writing</span>${x.back ? `<span class="chip">再写一次 · Again</span>` : ""}</div>
+    <div class="reading"><h2 class="zh" id="fwq" style="font-size:21px;line-height:1.7">${toks.map((t, ti) => tokHtml(t, "0:" + ti, false)).join("")}</h2></div>
+    ${it.en ? `<details><summary class="small muted">英文 English</summary><p class="small">${esc(it.en)}</p></details>` : ""}
+    <p class="small muted">${x.back ? "上次写过这题，这次不看，再写一遍 · You answered this before: write it again without looking." : "用一句话回答，多写也可以 · Answer in a sentence (more is fine). Tap a word to look it up."}</p>
+    <textarea class="inp zh" id="fwans" rows="3" lang="zh" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-size:18px"></textarea>
+    <button class="btn wide" id="fwgo">提交 Submit</button><div id="fb"></div></div>`;
+  const cc = $("#cc", el), paras = [toks];
+  $$("#fwq .tk", el).forEach(s => s.onclick = () => { const [pi, ti] = s.dataset.k.split(":").map(Number); s.classList.add("looked"); openSheet(pseudo, paras, pi, ti, s); });
+  $("#fwgo", el).onclick = async () => {
+    const raw = $("#fwans", el).value.trim();
+    if (!/[一-鿿]/.test(raw)) { toast("用中文写一句 · Write a sentence in Chinese"); return; }
+    closeSheet();
+    const own = fwOwn(it), part = { t: now(), raw: raw.slice(0, 600) };
+    if (x.back) { own.b = Object.assign({}, own.b, part); own.done = true; touch(own, "fwb", "fwd"); } else { own.a = part; touch(own, "fwa"); }
+    save();
+    $("#fwgo", el).remove(); $("#fwans", el).disabled = true;
+    const mine = x.back ? own.b : own.a, fb = $("#fb", el);
+    const before = x.back && own.a ? `<div class="stack" style="gap:4px;margin-top:8px"><span class="small muted">上次写的 · Last time (${new Date(own.a.t).getMonth() + 1}月${new Date(own.a.t).getDate()}日)</span><p class="zh">${esc(own.a.raw)}</p>${(own.a.cl || own.a.g) ? `<span class="small">当时的改法 Then corrected to：<span class="zh">${esc((own.a.cl || own.a.g).nat || (own.a.cl || own.a.g).fixed)}</span></span>` : ""}</div>` : "";
+    const G = grader();
+    let g = null;
+    if (G) {
+      fb.innerHTML = `<p class="small muted"><span class="spin"></span> 批改中… Grading…</p>`;
+      try { const res = await G.json(fwPrompt(it.q, mine.raw)); g = res && fwGrade(res, res._by || G.name); if (!g) throw { code: "invalid_json" }; }
+      catch (e) { noteErr("free writing: grading", e && e.cause ? Object.assign({}, e, { code: e.cause }) : e); g = null; }
+    }
+    if (g) { mine.g = g; mine.seen = 1; touch(own, x.back ? "fwb" : "fwa"); if (!x.back) fwPlan(own); save(); }
+    fb.innerHTML = (g ? fwFbHtml(own, mine, g) : `<div class="fb mid"><span>${G ? "现在批改不了" : "离线"}，之后会自动批改，有反馈会出卡片 · ${G ? "Couldn't grade it right now" : "Offline"}: it'll be graded automatically later, and the feedback comes as a card.</span></div>`) + before
+      + `<p class="small muted">Claude 今晚会再看一遍 · Claude checks it again tonight.</p>`;
+    bindFwDrill(fb);
+    onResult({ ok: g ? g.score >= 3 : true, fw: true });
+    nextButton(cc, onNext);
+  };
+}
+// answers graded after the moment (offline, or Claude's grade on one the model never graded) that you haven't seen
+function fwUnseen() {
+  const out = [];
+  for (const it of S.gen.fw || []) for (const pt of ["a", "b"]) { const part = it[pt]; if (part && part.raw && (part.cl || part.g) && !part.seen) out.push({ it, part: pt }); }
+  return out.sort((x, y) => x.it[x.part].t - y.it[y.part].t);
+}
+function renderFwFb(card, el, onResult, onNext) {
+  const it = (S.gen.fw || []).find(x => x.id === card.id), part = it && it[card.part], g = part && (part.cl || part.g);
+  if (!g) return onNext();
+  const d = new Date(part.t);
+  el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">自由写的批改 · Free-writing feedback</span><span class="chip">${d.getMonth() + 1}月${d.getDate()}日</span></div>
+    <p class="zh" style="font-size:19px">${esc(it.q)}</p>
+    <div class="stack" style="gap:4px"><span class="small muted">你写的 · What you wrote</span><p class="sent" style="font-size:20px">${esc(part.raw)}</p></div>
+    ${fwFbHtml(it, part, g)}<button class="btn wide" id="fwok">知道了 Next</button></div>`;
+  bindFwDrill(el);
+  $("#fwok", el).onclick = () => { part.seen = 1; touch(it, card.part === "b" ? "fwb" : "fwa"); save(); onNext(); };
+}
+// answers written offline / when grading failed: graded by the chain when it's back
+let FW_AUTO = false;
+async function fwAutoGrade() {
+  if (FW_AUTO || !ONLINE || !provReady()) return;
+  const todo = []; for (const it of S.gen.fw || []) for (const pt of ["a", "b"]) { const p = it[pt]; if (p && p.raw && !p.g && !p.cl && now() - p.t < FW_CHECK_DAYS * DAY) todo.push([it, pt]); }
+  if (!todo.length) return;
+  FW_AUTO = true;
+  try {
+    for (const [it, pt] of todo.slice(0, 5)) {
+      let res; try { res = await chainJson(fwPrompt(it.q, it[pt].raw)); } catch (e) { noteErr("free writing: grading later", e && e.cause ? Object.assign({}, e, { code: e.cause }) : e); break; }
+      const g = res && fwGrade(res, res._by); if (!g) continue;
+      it[pt].g = g; it[pt].seen = 0; touch(it, pt === "b" ? "fwb" : "fwa"); if (pt === "a") fwPlan(it); save();
+    }
+  } finally { FW_AUTO = false; }
+}
+// the note to Claude: every answer from the last 2 weeks without Claude's check (Claude's grade wins)
+function fwCheckRequests() {
+  const out = [];
+  for (const it of S.gen.fw || []) for (const pt of ["a", "b"]) {
+    const p = it[pt]; if (!p || !p.raw || p.cl || p.held || now() - p.t > FW_CHECK_DAYS * DAY) continue;
+    out.push({ rid: `x:${it.id}:${pt}`, kind: "fwcheck", q: it.q, answer: p.raw, model: p.g ? p.g.by : "", modelScore: p.g ? p.g.score : null, modelFixed: p.g ? p.g.fixed : "", t: p.t });
+  }
+  return out.sort((a, b) => a.t - b.t).slice(0, FW_CHECK_MAX).map(r => { delete r.t; return r; });
+}
+// a pack's fwchecks [{rid, score, fixed, natural, notes, chunk}] and prompts fw [{q, en?, steer?, topic?, rid?}]
+function applyFw(pk, pre, r) {
+  r.fw = 0; r.fwc = 0;
+  (Array.isArray(pk.fw) ? pk.fw.slice(0, 40) : []).forEach((x, i) => {
+    const id = pre + "W" + i; if ((S.gen.fw || []).some(y => y.id === id)) return;
+    const it = makeFw(x, id); if (!it) { r.bad++; return; }
+    if (fwList().some(y => norm(y.q) === norm(it.q))) return; // same question as one you already have
+    (S.gen.fw = S.gen.fw || []).push(it); r.fw++;
+    if (it.rid) doneReq(it.rid);
+  });
+  for (const a of Array.isArray(pk.fwchecks) ? pk.fwchecks.slice(0, 40) : []) {
+    const m = String(a && a.rid || "").match(/^x:([\w.-]+):([ab])$/), it = m && (S.gen.fw || []).find(y => y.id === m[1]), part = it && it[m[2]];
+    if (!part || !part.raw) { r.bad++; continue; }
+    if (part.cl) continue; // checked already (another device, or an earlier pack)
+    const g = fwGrade(a, "Claude"); if (!g) { r.bad++; continue; }
+    const was = part.g; part.cl = g; touch(it, m[2] === "b" ? "fwb" : "fwa");
+    if (!was) part.seen = 0; // never graded by the model: Claude's grade is the feedback
+    else if (was.score !== g.score) (S.graded = S.graded || []).unshift({ k: a.rid, id: "fw:" + it.id, en: it.q, raw: part.raw, score: g.score, self: null, fixed: g.fixed, good: "", notes: g.notes, model: g.nat || g.fixed, t: now(), seen: false, by: "Claude", was: was.score, wasBy: was.by });
+    S.graded = (S.graded || []).slice(0, 20);
+    if (m[2] === "a") fwPlan(it);
+    r.fwc++;
+  }
+}
 /* Scheduled reading (v72, learner 2026-11-18). On a day a passage is due, today's set = cards, then the passage
    (first read with its questions); the ✓ and "今天该做的都做完了" come only after it is read, or after
    "今天不读 · No reading today". How often follows the 阅读量 setting (readPerDay): 0.5 → due unless a passage was
@@ -2684,7 +2880,7 @@ function schedReadLeft() {
   return Math.max(0, Math.round(per) - today);
 }
 // what's still scheduled after today's cards (v72: passages; free writing joins it)
-const extrasLeft = () => schedReadLeft();
+const extrasLeft = () => fwLeft() + schedReadLeft();
 // the next passage card for a session's queue, if one is due and not already queued
 function schedNext(used) {
   if (SIM) return null;
@@ -2696,11 +2892,12 @@ function schedNext(used) {
 // after a first read, a skip or a free-writing answer outside the session: the day's ✓ if nothing is left
 // home: today's cards are done but the passage isn't yet (so no ✓ yet) — says why, offers both ways
 function schedHomeCard() {
-  const sp = daySplit(S.log[dayKey()]); if (sp.done || !sp.cd || !schedReadLeft()) return "";
-  const p = schedPassage();
-  return `<div class="card stack"><span class="label">今天的阅读 · Today's reading</span>
-    <p class="small">卡片做完了，还有一篇短文${p ? `：<span class="zh">${esc(p.title)}</span>` : ""} · Cards done; one passage left for today.</p>
-    <div class="row"><button class="btn" id="sr-home">读 Read</button><button class="btn ghost" id="sr-homeskip">今天不读 · No reading today</button></div></div>`;
+  const sp = daySplit(S.log[dayKey()]); if (sp.done || !sp.cd || !extrasLeft()) return "";
+  const p = schedReadLeft() ? schedPassage() : null, w = fwLeft();
+  const zh = [w ? "一题自由写" : "", p ? `一篇短文：<span class="zh">${esc(p.title)}</span>` : ""].filter(Boolean).join("，"), en = [w ? "one free-writing prompt" : "", p ? "one passage" : ""].filter(Boolean).join(" and ");
+  return `<div class="card stack"><span class="label">今天还有 · Still to do today</span>
+    <p class="small">卡片做完了，还有${zh} · Cards done; ${en} left for today.</p>
+    <div class="row"><button class="btn" id="sr-home">${w ? "写 Write" : "读 Read"}</button>${p ? `<button class="btn ghost" id="sr-homeskip">今天不读 · No reading today</button>` : ""}</div></div>`;
 }
 function maybeDayDone() { const sp = daySplit(S.log[dayKey()]); if (!sp.done && sp.cd && !extrasLeft()) { logDone(); save(); } }
 const SR_OPEN = "zwlgf:sropen"; // this device: a scheduled passage started and not finished (a resumed read doesn't count toward speed)
@@ -3031,7 +3228,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v72 · 11/18 16:30"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v73 · 11/18 16:46"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5086,7 +5283,7 @@ function refreshStock() {
   const n = $("#packcard"); if (!n) return;
   $$("details", n).forEach((d, i) => { if (open[i]) d.open = true; });
   // only what you're filling in is put back (paste box, passage request); settings fields show what's saved
-  for (const id of ["pk-text", "pk-topic", "pk-g1"]) { const x = n.querySelector("#" + id); if (x && id in vals) x.value = vals[id]; }
+  for (const id of ["pk-text", "pk-topic", "pk-g1", "fw-topic"]) { const x = n.querySelector("#" + id); if (x && id in vals) x.value = vals[id]; }
   if (msg !== null && $("#pk-msg", n) && !$("#pk-msg", n).innerHTML) $("#pk-msg", n).innerHTML = msg;
   if (focus) { const f = n.querySelector("#" + focus); if (f) f.focus({ preventScroll: true }); }
 }
@@ -5127,6 +5324,8 @@ function outboxRequests() {
       out.push(r);
     }
     else if (q.kind === "passage") out.push({ rid: q.rid, kind: "passage", genre: q.genre || null, topic: q.topic || "" });
+    else if (q.kind === "fwtopic") out.push({ rid: q.rid, kind: "fwtopic", topic: q.topic || "" });
+    else if (q.kind === "fwdrill") out.push({ rid: q.rid, kind: "fwdrill", chunk: q.chunk || "", ctx: q.ctx || "", q: q.q || "" });
   }
   // songs whose current lyrics have no analysis yet, newest first (the run does LYR_PER_RUN a night); the run reads the lines from the progress files by id
   for (const it of lyrBacklog()) out.push({ rid: "y:" + it.id, kind: "lyrics", id: it.id, h: lyrHash(it) });
@@ -5318,6 +5517,7 @@ function applyPack(pk, src) {
     const id = pre + "L" + i; if (LADDER.has(id)) return;
     const it = makeLadder(x, id); if (!it) { r.bad++; return; }
     S.gen.ladder.push(it); LADDER.set(id, it); r.lad++;
+    if (x.rid) doneReq(String(x.rid)); // a drill asked for from free writing (加入练习)
   });
   (Array.isArray(pk.sen) ? pk.sen : []).forEach((x, i) => {
     const id = pre + "S" + i; if (SEN.has(id)) return;
@@ -5331,21 +5531,23 @@ function applyPack(pk, src) {
     if (x.rid) doneReq(String(x.rid));
   });
   applyAnswers(pk, r);
+  applyFw(pk, pre, r);
   // requests the daily run held back because their text read like instructions to an AI (tools/daily-run/inputs.js):
   // closed, so they don't wait forever, and kept in S.heldLog for the learner to see (Progress → 其他 AI)
   r.held = 0;
   for (const h of Array.isArray(pk.held) ? pk.held.slice(0, 50) : []) {
     if (!h || typeof h.rid !== "string") continue;
     if ((S.req || []).some(x => x.rid === h.rid)) doneReq(h.rid);
+    { const m = h.rid.match(/^x:([\w.-]+):([ab])$/), it = m && (S.gen.fw || []).find(y => y.id === m[1]); if (it && it[m[2]]) { it[m[2]].held = 1; touch(it, m[2] === "b" ? "fwb" : "fwa"); } } // a free-writing check held back: not asked again
     if (!/^hints\./.test(h.rid)) r.held++;
     S.heldLog = [{ rid: h.rid.slice(0, 90), why: String(h.why || "").slice(0, 200), t: now(), pack: pk.id }].concat(S.heldLog || []).slice(0, 60);
   }
   S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
-  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, pf: r.pf, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
+  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, pf: r.pf, fw: r.fw, fwc: r.fwc, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.pf ? `🎵 ${r.pf} 首歌的拼音检查好了 · pinyin checked for ${r.pf} song${r.pf > 1 ? "s" : ""}` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.fw ? `+${r.fw} 自由写题目 free-writing prompts` : "", r.fwc ? `Claude 看了 ${r.fwc} 篇自由写 · checked ${r.fwc} free-writing answer${r.fwc > 1 ? "s" : ""}` : "", r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.pf ? `🎵 ${r.pf} 首歌的拼音检查好了 · pinyin checked for ${r.pf} song${r.pf > 1 ? "s" : ""}` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
@@ -5372,7 +5574,8 @@ function genHints() {
 // (forecast = the real scheduler run forward, no AI), at most every 20 min, and kept until the next compute.
 let OUTBOX = null, OUTBOX_AT = 0, OUTBOX_DIRTY = false; // dirty = recomputed here and not yet written (so two devices never overwrite each other's note in a loop)
 function shortage(f, cfg) {
-  const out = { ladder: 0, sen: 0, passages: Math.max(0, f.needPsg - f.unread) };
+  // free writing: one prompt a day for the whole target (prompts not yet answered, built-ins included, cover it)
+  const out = { ladder: 0, sen: 0, passages: Math.max(0, f.needPsg - f.unread), fw: Math.max(0, Math.min(GEN_CAP.fw - (S.gen.fw || []).length, cfg.days - fwFresh().length)) };
   if (f.days < cfg.days) {
     const gap = cfg.days - f.days;
     out.ladder = Math.max(8, Math.ceil((f.perDay.lad || 3) * gap * 1.2));
@@ -5389,9 +5592,9 @@ function computeOutbox() {
   FORECAST = f;
   OUTBOX = { v: 1, day: dayKey(), target: cfg.trip ? { mode: "trip", from: cfg.from, to: cfg.to, days: cfg.days, mins: cfg.mins } : { mode: "ahead", days: cfg.days, mins: cfg.mins },
     covered: f.days, unreadPassages: f.unread, perDay: f.perDay, short: shortage(f, cfg),
-    room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length },
+    room: { ladder: GEN_CAP.ladder - S.gen.ladder.length, sen: GEN_CAP.sen - (S.gen.sen || []).length, passages: GEN_CAP.passages - S.gen.passages.length, fw: GEN_CAP.fw - (S.gen.fw || []).length },
     reading: { perDay: readPerDay(), genres: readGenres() || "auto" },
-    hints: genHints(), requests: outboxRequests().concat(checkRequests()), packsDone: (S.packsDone || []).slice(-60) };
+    hints: genHints(), requests: outboxRequests().concat(checkRequests(), fwCheckRequests()), packsDone: (S.packsDone || []).slice(-60) };
   OUTBOX_AT = now(); OUTBOX_DIRTY = true;
   return OUTBOX;
 }
@@ -5410,7 +5613,7 @@ function packCard() {
   if (f) {
     const okC = f.days >= cfg.days, okP = f.unread >= f.needPsg;
     status = `<p class="small">练习卡够用 Practice cards last: <b>${okC ? `≥ ${cfg.days}` : f.days} 天 days</b> ${okC ? "✓" : `/ ${cfg.days}`}<br>没读过的短文 Unread passages: <b>${f.unread}</b> / ${f.needPsg} ${okP ? "✓" : ""}</p>
-      ${sh.ladder || sh.sen || sh.passages ? `<p class="small">还缺 Short: ${[sh.ladder ? `${sh.ladder} 造句 drills` : "", sh.sen ? `${sh.sen} 短句 sentences` : "", sh.passages ? `${sh.passages} 短文 passages` : ""].filter(Boolean).join(" · ")}<br><span class="muted">${COL && COL.gh ? "Claude 每天的任务会补上（大的缺口分几天）· Claude's daily run fills this (big gaps over a few days)." : "连上 GitHub 同步后，Claude 每天的任务会补上；也可以把内容包贴在下面 · With GitHub sync on, Claude's daily run fills this; or paste a pack below."}</span></p>` : `<p class="small">✓ 够了 · Nothing short.</p>`}`;
+      ${sh.ladder || sh.sen || sh.passages || sh.fw ? `<p class="small">还缺 Short: ${[sh.ladder ? `${sh.ladder} 造句 drills` : "", sh.sen ? `${sh.sen} 短句 sentences` : "", sh.passages ? `${sh.passages} 短文 passages` : "", sh.fw ? `${sh.fw} 自由写题目 free-writing prompts` : ""].filter(Boolean).join(" · ")}<br><span class="muted">${COL && COL.gh ? "Claude 每天的任务会补上（大的缺口分几天）· Claude's daily run fills this (big gaps over a few days)." : "连上 GitHub 同步后，Claude 每天的任务会补上；也可以把内容包贴在下面 · With GitHub sync on, Claude's daily run fills this; or paste a pack below."}</span></p>` : `<p class="small">✓ 够了 · Nothing short.</p>`}`;
   }
   return `<div class="card" id="packcard"><span class="label">备货 · Stock</span>
     <p class="small muted">算法在这台设备上算：把真实的复习安排往后跑，看材料够几天（不用 AI）。Worked out on this device by running the real scheduler forward (no AI).</p>
@@ -5426,6 +5629,10 @@ function packCard() {
       <div class="row small" style="gap:6px;margin-top:6px">${sel("pk-g1", [["", "任何体裁 Any genre"], ...PSG_GENRES], "")}</div>
       <input class="inp" id="pk-topic" placeholder="话题（可以不填）Topic (optional), e.g. 坐高铁" style="width:100%">
       <button class="btn soft" id="pk-more">请 Claude 写 · Ask Claude</button><span class="small muted"> 下次运行时送到 · arrives with the next daily run${(S.req || []).filter(x => x.kind === "passage").length ? ` (${(S.req || []).filter(x => x.kind === "passage").length} waiting)` : ""}</span></details>
+    <details><summary class="small" style="cursor:pointer">想写的话题 · Topics to write about</summary>
+      <p class="small muted">自由写的题目会先出这些话题 · Free-writing prompts on these come first.</p>
+      <input class="inp" id="fw-topic" placeholder="话题 Topic, e.g. 做饭、换工作" style="width:100%">
+      <button class="btn soft" id="fw-ask">请 Claude 出题 · Ask Claude</button><span class="small muted"> 下次运行时送到 · arrives with the next daily run${(S.req || []).filter(x => x.kind === "fwtopic").length ? ` (${(S.req || []).filter(x => x.kind === "fwtopic").map(x => esc(x.topic)).join("、")})` : ""}</span></details>
     ${heldHtml()}
     ${log.length ? `<p class="small">上次到货 Last delivery: <b>${new Date(log[0].t).getMonth() + 1}月${new Date(log[0].t).getDate()}日</b> · ${esc(packSummary(log[0]))}${log[0].bad ? ` <span class="muted">(${log[0].bad} 个格式不对，没用 · ${log[0].bad} malformed, skipped)</span>` : ""}</p>` : ""}
     <details><summary class="small" style="cursor:pointer">粘贴内容包 · Paste a pack</summary>
@@ -5457,6 +5664,7 @@ function bindPackCard() {
   const setReading = patch => { S.settings = setSettings({ reading: Object.assign({}, (S.settings || {}).reading, patch) }); save(); FORECAST = null; refreshStock(); setTimeout(() => outboxSoon(true), 30); };
   $("#pk-read").onchange = e => setReading({ perDay: +e.target.value });
   $$("[data-genre]", c).forEach(b => b.onchange = () => { const on = $$("[data-genre]", c).filter(x => x.checked).map(x => x.dataset.genre); setReading({ genres: on.length && on.length < PSG_GENRES.length ? on : null }); });
+  const fa = $("#fw-ask"); if (fa) fa.onclick = () => { const v = $("#fw-topic").value.trim().slice(0, 40); if (!v) { toast("写一个话题 · Type a topic"); return; } addReq({ rid: "wt:" + now().toString(36), kind: "fwtopic", topic: v }); $("#fw-topic").value = ""; toast("下次运行时出题 · Prompts come with the next daily run"); refreshStock(); };
   $("#pk-more").onclick = () => { const t = now(); addReq({ rid: "p:" + t.toString(36), kind: "passage", genre: $("#pk-g1").value || null, topic: $("#pk-topic").value.trim().slice(0, 80) }); toast("请 Claude 写了 · Asked; it arrives with the next daily run", 3500); refreshStock(); };
   $("#pk-mins").onchange = e => setStock(e.target.value === "auto" ? { minsSet: false } : { minsSet: true, mins: +e.target.value }, false);
   $("#pk-from").onchange = $("#pk-to").onchange = () => setStock({ from: $("#pk-from").value || undefined, to: $("#pk-to").value || undefined }, true);

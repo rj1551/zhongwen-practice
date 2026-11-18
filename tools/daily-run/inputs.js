@@ -36,7 +36,7 @@ const SUSPECT = [
 const suspect = s => SUSPECT.find(r => r.test(s));
 const held = [];
 const hold = (rid, why) => held.push({ rid: str(rid, 90), why });
-const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, lyrics: /^y:[\w.-]{1,60}$/, pyfix: /^f:[\w.-]{1,60}$/ };
+const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, fwcheck: /^x:[\w.-]{1,40}:[ab]$/, fwtopic: /^wt:[a-z0-9]{1,15}$/, fwdrill: /^wd:[\w.-]{1,40}:[ab]$/, lyrics: /^y:[\w.-]{1,60}$/, pyfix: /^f:[\w.-]{1,60}$/ };
 const GENRES = ["xhs", "news", "book", "travel"];
 
 const o = readJson("outbox.json");
@@ -46,8 +46,8 @@ const note = {
   day: /^\d{4}-\d{2}-\d{2}$/.test(o.day) ? o.day : null,
   target: { mode: oneOf((o.target || {}).mode, ["ahead", "trip"], "ahead"), days: num((o.target || {}).days, 0, 120), mins: num((o.target || {}).mins, 0, 600) },
   covered: num(o.covered, 0, 1000), unreadPassages: num(o.unreadPassages, 0, 1000),
-  short: { ladder: num((o.short || {}).ladder, 0, 1000), sen: num((o.short || {}).sen, 0, 1000), passages: num((o.short || {}).passages, 0, 100) },
-  room: { ladder: num((o.room || {}).ladder, 0, 1000), sen: num((o.room || {}).sen, 0, 1000), passages: num((o.room || {}).passages, 0, 100) },
+  short: { ladder: num((o.short || {}).ladder, 0, 1000), sen: num((o.short || {}).sen, 0, 1000), passages: num((o.short || {}).passages, 0, 100), fw: num((o.short || {}).fw, 0, 60) },
+  room: { ladder: num((o.room || {}).ladder, 0, 1000), sen: num((o.room || {}).sen, 0, 1000), passages: num((o.room || {}).passages, 0, 100), fw: num((o.room || {}).fw, 0, 1000) },
   lyricsAll: o.lyricsAll === true,
   reading: { perDay: num((o.reading || {}).perDay, 0, 10), genres: Array.isArray((o.reading || {}).genres) ? o.reading.genres.filter(g => GENRES.includes(g)) : "auto" },
   hints: {}, packsDone: strs(o.packsDone, 80, 70).filter(x => /^[\w.-]{1,60}$/.test(x)),
@@ -76,6 +76,9 @@ for (const r of Array.isArray(o.requests) ? o.requests.slice(0, 400) : []) {
   let q;
   if (kind === "sentence") { q = { rid, kind, w: str(r.w, 20), py: str(r.py, 60), gl: str(r.gl, 160) }; if (r.new === true) q.new = true; }
   else if (kind === "passage") q = { rid, kind, genre: oneOf(r.genre, GENRES), topic: str(r.topic, 80) };
+  else if (kind === "fwcheck") q = { rid, kind, q: str(r.q, 120), answer: str(r.answer, 600), model: str(r.model, 60), modelScore: num(r.modelScore, 0, 3, null), modelFixed: str(r.modelFixed, 300) };
+  else if (kind === "fwtopic") q = { rid, kind, topic: str(r.topic, 40) };
+  else if (kind === "fwdrill") q = { rid, kind, chunk: str(r.chunk, 20), ctx: str(r.ctx, 300), q: str(r.q, 120) };
   else if (kind === "pyfix") {
     const id = str(r.id, 60), h = str(r.h, 12), auto = strs(r.auto, 300, 1500);
     if (rid !== "f:" + id || !/^[a-z0-9]{1,12}$/.test(h)) { hold(rid, "request doesn't match its id"); continue; }

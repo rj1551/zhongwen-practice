@@ -12,6 +12,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
     const o = {}, kinds = q => q.map(c => c.t + (c.rep ? "*" : "")).join(" ");
     CLOCK_OFF = new Date("2026-11-10T16:00").getTime() - Date.now();
     const k = dayKey(); S.log = {}; S.repeat = []; S.items = {};
+    S.gen.fw = FW_BUILTIN.map(x => Object.assign({}, x, { t: 1, a: { t: 1, raw: "在家", g: { score: 3 }, seen: 1 }, done: true })); // v73: no free-writing prompt left (fw.test.js covers it)
     for (const id of PSG.keys()) S.reads[id] = { t: 1, cpm: 80 }; // v72: no passage due (scheduled reading has its own suite, sched.test.js)
     S.nb = { d: k, allow: 0 }; // no new items for today and nothing due: the note comes first
     startSession(0); o.first = kinds(SESSION.q); o.firstIsNote = SESSION.q[0].t === "div";

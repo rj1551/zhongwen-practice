@@ -13,7 +13,7 @@ const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const APP = path.resolve(opt("--app", path.join(__dirname, "..", "..")));
 const DATA = path.resolve(opt("--data", path.join(APP, "..", "zhongwen-data")));
-const CAP = { ladder: 40, sen: 60, passages: 6, questions: 10, regrades: 30 }; // per run (agreed with the learner 2026-11-06)
+const CAP = { ladder: 40, sen: 60, passages: 6, questions: 10, regrades: 30, fw: 30, fwchecks: 20 }; // per run (agreed with the learner 2026-11-06; fw 2026-11-18)
 const SENT_CAP = 100; // example sentences per run (the app's old daily limit)
 const readJson = f => JSON.parse(fs.readFileSync(f, "utf8"));
 const norm = s => String(s || "").replace(/[\s|\/\[\]，。！？、；：,.!?;:"“”'‘’（）()…—-]/g, "").toLowerCase();
@@ -38,12 +38,12 @@ const html = fs.readFileSync(path.join(APP, "index.html"), "utf8");
 const grab = re => { const m = html.match(re); if (!m) throw new Error("couldn't find " + re + " in index.html"); return m[0]; };
 const fnSrc = name => { const i = html.indexOf("\nfunction " + name + "("); if (i < 0) throw new Error("no " + name); const ends = ["\nfunction ", "\nasync function ", "\nconst ", "\nlet ", "\n/*"].map(t => html.indexOf(t, i + 10)).filter(j => j > 0); return html.slice(i, Math.min(...ends)); };
 const ctx = {}; vm.createContext(ctx);
-vm.runInContext([grab(/const PSG_KINDS = [^\n]*/), grab(/const toQs = [^\n]*/), fnSrc("makeLadder"), fnSrc("makeSen"), fnSrc("makePassage")].join("\n") + "\nthis.api = { makeLadder, makeSen, makePassage, PSG_KINDS };", ctx);
-const { makeLadder, makeSen, makePassage, PSG_KINDS } = ctx.api;
+vm.runInContext([grab(/const PSG_KINDS = [^\n]*/), grab(/const toQs = [^\n]*/), fnSrc("makeLadder"), fnSrc("makeSen"), fnSrc("makePassage"), fnSrc("makeFw"), grab(/const FW_BUILTIN = [\s\S]*?\.map\([^\n]*\n/)].join("\n") + "\nthis.api = { makeLadder, makeSen, makePassage, makeFw, PSG_KINDS, FW_BUILTIN };", ctx);
+const { makeLadder, makeSen, makePassage, makeFw, PSG_KINDS, FW_BUILTIN } = ctx.api;
 
 // ---- what already exists (built-in content + generated content in the progress files; NOT settings/) ----
 const content = readJson(path.join(APP, "data", "content.json"));
-const have = { en: new Set(content.ladder.map(x => norm(x.en))), zh: new Set(content.ladder.map(x => norm(x.zh))), sen: new Set((content.sen || []).map(x => norm(x.s))), title: new Set() };
+const have = { en: new Set(content.ladder.map(x => norm(x.en))), zh: new Set(content.ladder.map(x => norm(x.zh))), sen: new Set((content.sen || []).map(x => norm(x.s))), title: new Set(), fw: new Set(FW_BUILTIN.map(x => norm(x.q))) };
 const prog = path.join(DATA, "progress");
 if (fs.existsSync(prog)) for (const f of fs.readdirSync(prog).filter(f => f.startsWith("gen-"))) {
   const d = readJson(path.join(prog, f));
@@ -51,12 +51,13 @@ if (fs.existsSync(prog)) for (const f of fs.readdirSync(prog).filter(f => f.star
     if (d.kind === "ladder") { have.en.add(norm(x.en)); have.zh.add(norm(x.zh)); }
     if (d.kind === "sen") have.sen.add(norm(x.s));
     if (d.kind === "passages") have.title.add(norm(x.title));
+    if (d.kind === "fw") have.fw.add(norm(x.q));
   }
 }
 if (fs.existsSync(path.join(DATA, "packs"))) for (const f of fs.readdirSync(path.join(DATA, "packs")).filter(f => f.endsWith(".json"))) {
   try { const pk = readJson(path.join(DATA, "packs", f)); if (pk.id === undefined) continue;
     if (path.resolve(DATA, "packs", f) === path.resolve(args[0] || "")) continue;
-    (pk.ladder || []).forEach(x => { have.en.add(norm(x.en)); have.zh.add(norm(x.zh)); }); (pk.sen || []).forEach(x => have.sen.add(norm(x.s))); (pk.passages || []).forEach(x => have.title.add(norm(x.title)));
+    (pk.ladder || []).forEach(x => { have.en.add(norm(x.en)); have.zh.add(norm(x.zh)); }); (pk.sen || []).forEach(x => have.sen.add(norm(x.s))); (pk.passages || []).forEach(x => have.title.add(norm(x.title))); (pk.fw || []).forEach(x => x && have.fw.add(norm(x.q)));
   } catch (e) {}
 }
 
@@ -113,7 +114,7 @@ const has = (s, frag) => norm(s).includes(norm(frag));
 let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
 const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
 // "held": requests (and hints) that tools/daily-run/inputs.js held back as suspicious, reported to the learner
-const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics", "pyfix"];
+const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics", "pyfix", "fw", "fwchecks"];
 // "pyfix": corrections to the app's pinyin / word grouping for a song — only the spots, never the lines
 if (pk.pyfix !== undefined) {
   const cap = 30;
@@ -210,6 +211,37 @@ if (pk.questions !== undefined) {
     });
   }
 }
+// free writing (v73): prompts "fw" [{q, en?, steer?, topic?, rid?}] and Claude's checks "fwchecks" [{rid, score, fixed, natural, notes, chunk}]
+for (const x of (pk.ladder || [])) if (x && x.rid !== undefined && (reqs.get(x.rid) || {}).kind !== "fwdrill") problems.push(`ladder: rid "${x.rid}" isn't a drill request (fwdrill) in outbox.json`);
+if (pk.fw !== undefined) {
+  if (!Array.isArray(pk.fw)) problems.push("fw: must be a list");
+  else {
+    if (pk.fw.length > CAP.fw) problems.push(`fw: ${pk.fw.length}, the per-run cap is ${CAP.fw}`);
+    const seenFw = new Set();
+    pk.fw.forEach((x, i) => {
+      const at = `fw[${i}]` + (x && x.q ? ` "${String(x.q).slice(0, 20)}"` : "");
+      if (!makeFw(x, "t")) return problems.push(at + ": the app would reject it (q: a Chinese question, 4–60 characters)");
+      const n = norm(x.q).length; if (n < 6 || n > 30) warn.push(`${at}: ${n} characters (aim for 8–25)`);
+      if (have.fw.has(norm(x.q)) || seenFw.has(norm(x.q))) problems.push(at + ": same question as an existing prompt");
+      seenFw.add(norm(x.q));
+      if (x.rid !== undefined && (reqs.get(x.rid) || {}).kind !== "fwtopic") problems.push(at + `: rid "${x.rid}" isn't a topic request (fwtopic) in outbox.json`);
+    });
+  }
+}
+if (pk.fwchecks !== undefined) {
+  if (!Array.isArray(pk.fwchecks)) problems.push("fwchecks: must be a list");
+  else {
+    if (pk.fwchecks.length > CAP.fwchecks) problems.push(`fwchecks: ${pk.fwchecks.length}, the per-run cap is ${CAP.fwchecks}`);
+    pk.fwchecks.forEach((a, i) => {
+      const at = `fwchecks[${i}]` + (a && a.rid ? ` ${a.rid}` : "");
+      if (!a || (reqs.get(a.rid) || {}).kind !== "fwcheck") return problems.push(at + ": rid must be a fwcheck request in outbox.json");
+      if (!Number.isInteger(a.score) || a.score < 0 || a.score > 3) problems.push(at + ": score must be 0, 1, 2 or 3");
+      if (typeof a.fixed !== "string" || typeof a.natural !== "string") problems.push(at + ': needs "fixed" and "natural" (strings; may equal the answer)');
+      if (!Array.isArray(a.notes)) problems.push(at + ": notes must be an array (can be empty)");
+      if (a.chunk !== undefined && (typeof a.chunk !== "string" || a.chunk.length > 20)) problems.push(at + ": chunk must be a short string (or empty)");
+    });
+  }
+}
 if (pk.regrades !== undefined) {
   if (!Array.isArray(pk.regrades)) problems.push("regrades: must be an array");
   else {
@@ -223,7 +255,7 @@ if (pk.regrades !== undefined) {
     });
   }
 }
-const counts = `${(pk.ladder || []).length} drills, ${(pk.sen || []).length} sentences, ${(pk.passages || []).length} passages` + (pk.sentences ? `, ${Object.keys(pk.sentences).length} example sentences` : "") + (pk.questions ? `, ${pk.questions.length} question sets` : "") + (pk.regrades ? `, ${pk.regrades.length} regrades` : "");
+const counts = `${(pk.ladder || []).length} drills, ${(pk.sen || []).length} sentences, ${(pk.passages || []).length} passages` + (pk.sentences ? `, ${Object.keys(pk.sentences).length} example sentences` : "") + (pk.questions ? `, ${pk.questions.length} question sets` : "") + (pk.regrades ? `, ${pk.regrades.length} regrades` : "") + (pk.fw ? `, ${pk.fw.length} free-writing prompts` : "") + (pk.fwchecks ? `, ${pk.fwchecks.length} free-writing checks` : "");
 for (const w of warn) console.log("warning: " + w);
 if (problems.length) { for (const p of problems) console.log("PROBLEM: " + p); console.log(`\n${problems.length} problem(s) in ${counts}. Fix or drop those pieces and check again.`); process.exit(1); }
 console.log(`OK: ${counts}${warn.length ? ` (${warn.length} warning${warn.length > 1 ? "s" : ""})` : ""}`);

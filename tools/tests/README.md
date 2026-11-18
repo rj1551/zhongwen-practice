@@ -72,3 +72,11 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   ■ halfway → home card, a resumed read is marked `half` and doesn't count toward speed; a first read in 阅读 after the
   cards gives the ✓; nothing unread → ✓ as before; forecast unaffected; `cd`/`nr` flags merge. `divider.test.js` now
   starts with every passage read.
+- `fw.test.js` (2026-11-18, v73, 8765 server, mocked Groq/Gemini): free writing. A built-in prompt after the cards,
+  the ✓ waits for it; dictionary taps in the question; graded at once (no reference answer); a 2 → comeback in 3
+  days, nothing shown, then last time's answer + correction, retired; a 3 → no comeback; time logged as `fw`, not card
+  time; 加入练习 → a `fwdrill` request, answered by a pack drill with its rid; Claude's checks in the note, Claude's
+  grade wins both ways and shows as a regrade; offline → kept, graded later, feedback card next session; pack prompts
+  (topic requests first), the topics box, stock `short.fw`, merge of answer/comeback groups, forecast unaffected;
+  `inputs.js` and `check-pack.js` on the new request kinds and pack fields. `sched.test.js` / `divider.test.js` start
+  with today's free writing done / no prompts left.

@@ -9,6 +9,7 @@ const done = pg => pg.evaluate(() => daySplit(S.log[dayKey()]).done);
 // a fresh learner whose cards for today are all done: no reviews due, no new items allowed today
 const setup = (pg, per, extra) => pg.evaluate(([per, extra]) => {
   S.placed = true; S.settings = Object.assign(S.settings || {}, { oneTap: true, reading: { perDay: per } }); S.nb = { d: dayKey(), allow: 0 };
+  S.gen.fw = [{ id: "FWB01", q: "你周末一般怎么过？", t: now(), builtin: true, a: { t: now(), raw: "在家", g: { score: 3, fixed: "", nat: "", notes: [], chunk: "", by: "x" }, seen: 1 } }]; // today's free writing done (fw.test.js)
   save();
 }, [per, extra]);
 async function readThrough(pg) { // in the reader: done → answer every question → finish card
@@ -81,7 +82,7 @@ async function readThrough(pg) { // in the reader: done → answer every questio
       const pid = await pg.evaluate(() => SESSION.q[SESSION.i].id);
       await pg.click("#sr-go"); await pg.click("#quit"); await pg.evaluate(() => setView("home"));
       ok(await pg.evaluate(() => READ === null), "■ in the middle of the passage: the reader is let go");
-      ok(/今天的阅读/.test(await pg.evaluate(() => document.querySelector("#main").textContent)) && !(await done(pg)), "home: \"today's reading\" card, no ✓ yet");
+      ok(/今天还有/.test(await pg.evaluate(() => document.querySelector("#main").textContent)) && !(await done(pg)), "home: \"still to do today\" card, no ✓ yet");
       await pg.click("#sr-home"); await pg.click("#sr-go");
       await readThrough(pg);
       const r = await pg.evaluate(pid => S.reads[pid], pid);
