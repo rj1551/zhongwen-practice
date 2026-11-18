@@ -36,6 +36,7 @@ FAILED=(); TOTAL=0
 for t in "${SUITES[@]}"; do
   START=$(date +%s)
   out=$(cd "$HERE" && timeout 600 node "$t" 2>&1); rc=$?
+  [ -n "${KEEP_LOG:-}" ] && printf "%s\n" "$out" > "$KEEP_LOG/$t.log"
   p=$(grep -c '^PASS' <<<"$out"); f=$(grep -c '^FAIL' <<<"$out")
   # keepalive prints a report rather than PASS lines; it fails by exit code / ERROR
   if [ $rc = 0 ] && [ "$f" = 0 ] && ! grep -q '^ERROR' <<<"$out" && { [ "$p" -gt 0 ] || [ "$t" = keepalive.test.js ]; }; then s=ok; else s=FAILED; FAILED+=("$t"); fi

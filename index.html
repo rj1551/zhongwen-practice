@@ -4997,7 +4997,20 @@ function forecast(days, mins) {
     return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days * readPerDay()), t: keepS.updatedAt, perDay };
   } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; BUDGET_MINS = null; }
 }
-function refreshStock() { const c = $("#packcard"); if (c) { c.outerHTML = packCard(); bindPackCard(); } }
+// redraws the stock card in place; whatever you were doing in it survives (open boxes, typed or pasted text, focus).
+// It is redrawn in the background when the note is recomputed after a sync, which used to close the paste box. (v69)
+function refreshStock() {
+  const c = $("#packcard"); if (!c) return;
+  const open = $$("details", c).map(d => d.open), vals = {}, focus = document.activeElement && c.contains(document.activeElement) ? document.activeElement.id : null;
+  $$("input[id], textarea[id], select[id]", c).forEach(x => { vals[x.id] = x.type === "checkbox" ? x.checked : x.value; });
+  const msg = $("#pk-msg", c) ? $("#pk-msg", c).innerHTML : null;
+  c.outerHTML = packCard(); bindPackCard();
+  const n = $("#packcard"); if (!n) return;
+  $$("details", n).forEach((d, i) => { if (open[i]) d.open = true; });
+  for (const id in vals) { const x = n.querySelector("#" + id); if (x && x.tagName === "TEXTAREA") x.value = vals[id]; }
+  if (msg !== null && $("#pk-msg", n) && !$("#pk-msg", n).innerHTML) $("#pk-msg", n).innerHTML = msg;
+  if (focus) { const f = n.querySelector("#" + focus); if (f) f.focus({ preventScroll: true }); }
+}
 function updateForecast() {
   const cfg = stockCfg();
   FORECAST = null; refreshStock();

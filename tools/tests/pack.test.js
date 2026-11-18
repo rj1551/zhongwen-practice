@@ -115,8 +115,13 @@ const genCounts = pg => pg.evaluate(() => ({ lad: S.gen.ladder.length, sen: S.ge
   const a3 = await genCounts(A.page), b3 = await genCounts(B.page);
   ok(a3.lad === a2.lad + 2 && b3.lad === a3.lad && new Set(a3.ladIds.split(",")).size === a3.lad, "both applied the same pack: merged without duplicates (" + a3.lad + " drills on each)");
   // paste
+  // a sync finishing in the background redraws Progress and closes the box: wait for quiet, then open it until it shows
+  await A.page.waitForFunction(() => !GH.busy && !remoteBusy, null, { timeout: 20000 }); await A.page.evaluate(() => SYNCQ);
   await A.page.evaluate(() => setView("me"));
-  await A.page.evaluate(() => document.querySelectorAll("#packcard details").forEach(d => d.open = true));
+  await A.page.waitForFunction(() => { document.querySelectorAll("#packcard details").forEach(d => d.open = true); const t = document.querySelector("#pk-text"); return t && t.offsetParent !== null; }, null, { timeout: 20000, polling: 200 });
+  // the card is redrawn in the background (note recomputed after a sync): the open box and what's typed survive
+  await A.page.fill("#pk-text", "half-pasted"); await A.page.evaluate(() => refreshStock());
+  ok(await A.page.evaluate(() => document.querySelector("#pk-text").offsetParent !== null && document.querySelector("#pk-text").value === "half-pasted"), "background redraw of the stock card: paste box stays open, text kept");
   await A.page.fill("#pk-text", "hello"); await A.page.click("#pk-go");
   ok(/isn't a pack/.test(await A.page.$eval("#pk-msg", e => e.textContent)), "pasting junk: clear message");
   await A.page.fill("#pk-text", "Here you go:\n```json\n" + JSON.stringify(Object.assign({}, PACK, { id: "chat-1" })) + "\n```"); await A.page.click("#pk-go");

@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-GrktdkowPljfc+TqREc+vKU/XlHzeGA2fKJ+gRbIXH4='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-NWjv5GELYglGubv2oC10K+unION0kCgKkW31vd1yJKc='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -2966,7 +2966,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v69 · 11/18 00:45"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v70 · 11/18 01:04"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4998,7 +4998,20 @@ function forecast(days, mins) {
     return { days: covered, target: days, unread: unreadPassages(), needPsg: Math.ceil(days * readPerDay()), t: keepS.updatedAt, perDay };
   } finally { S = keepS; CLOCK_OFF = keepOff; SIM = false; BUDGET_MINS = null; }
 }
-function refreshStock() { const c = $("#packcard"); if (c) { c.outerHTML = packCard(); bindPackCard(); } }
+// redraws the stock card in place; whatever you were doing in it survives (open boxes, typed or pasted text, focus).
+// It is redrawn in the background when the note is recomputed after a sync, which used to close the paste box. (v69)
+function refreshStock() {
+  const c = $("#packcard"); if (!c) return;
+  const open = $$("details", c).map(d => d.open), vals = {}, focus = document.activeElement && c.contains(document.activeElement) ? document.activeElement.id : null;
+  $$("input[id], textarea[id], select[id]", c).forEach(x => { vals[x.id] = x.type === "checkbox" ? x.checked : x.value; });
+  const msg = $("#pk-msg", c) ? $("#pk-msg", c).innerHTML : null;
+  c.outerHTML = packCard(); bindPackCard();
+  const n = $("#packcard"); if (!n) return;
+  $$("details", n).forEach((d, i) => { if (open[i]) d.open = true; });
+  for (const id in vals) { const x = n.querySelector("#" + id); if (x && x.tagName === "TEXTAREA") x.value = vals[id]; }
+  if (msg !== null && $("#pk-msg", n) && !$("#pk-msg", n).innerHTML) $("#pk-msg", n).innerHTML = msg;
+  if (focus) { const f = n.querySelector("#" + focus); if (f) f.focus({ preventScroll: true }); }
+}
 function updateForecast() {
   const cfg = stockCfg();
   FORECAST = null; refreshStock();
