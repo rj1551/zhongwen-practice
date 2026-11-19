@@ -18,7 +18,11 @@ This repo is public. Keep keys, tokens, scheduled-task ids, bucket names and the
    script may run, identified by its SHA-256 fingerprint). Never hand-edit `docs/index.html`; a page whose script
    text changed after the build won't start. No inline `onclick=`-style handlers anywhere (`csp.py` refuses them);
    no `eval` / `new Function` / string `setTimeout`.
-3. `tools/tests/run-all.sh` — every suite must pass. Add or update a suite for what you changed.
+3. Tests (learner, 2026-11-18: keep turns fast): while building, run only the suites a change touches
+   (`tools/tests/run-all.sh --no-build a.test.js b.test.js`). Run the full `tools/tests/run-all.sh` (~3 min, suites run
+   side by side) **once per chat, before the last push** — not before every release; the GitHub check runs everything
+   after each push anyway and emails the learner on a failure. Don't sit waiting for that check. Add or update a
+   suite for what you changed; wait for conditions, not fixed sleeps (suites run in parallel, timing varies).
 4. Commit sources **and** `docs/` together, push to `main`. GitHub Pages deploys in ~1–2 min, and the `tests`
    workflow (`.github/workflows/tests.yml`) runs all suites on the committed `docs/` and checks `docs/` matches the
    sources; a failure emails the learner.

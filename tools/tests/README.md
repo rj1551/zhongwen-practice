@@ -5,7 +5,8 @@ a fake GitHub (in-memory git with fast-forward checks), fake Gemini/Groq, and a 
 request's Signature V4. (The hosted-version tests were removed with the hosted code in v68.)
 
 **Run them all (v69):** `tools/tests/run-all.sh` (builds first) or `tools/tests/run-all.sh --no-build` (tests the
-committed `docs/`, as the GitHub `tests` workflow does on every push); add suite names to run only those. It makes
+committed `docs/`, as the GitHub `tests` workflow does on every push); add suite names to run only those. Since v74 suites run side by side
+(`JOBS`, default = CPUs, 2–4; nosignal/nudge/update run one after another as they share the 8790 copy): ~3 min for all. It makes
 its own copies of `docs/` in a temp folder, starts the servers below and stops them, and exits non-zero if any suite
 fails. Environment: `PLAYWRIGHT` (path to the playwright package; default `playwright`, the runner also tries the
 global npm folder), `TEST_SITE` (the patched copy nosignal/update edit), `TEST_OUT` (screenshots). Pages whose script

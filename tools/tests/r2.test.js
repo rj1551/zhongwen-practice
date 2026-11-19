@@ -199,8 +199,10 @@ let browser;
   ok(await A.page.evaluate(id => !!S.gen.listen.find(x => x.id === id).r2, id4), "Upload anyway uploads it");
   R2S.objs.delete("audio/huge.mp3"); await A.page.evaluate(() => { R2.usageAt = 0; LST = null; });
   // wrong key → clear message
-  await A.page.evaluate(() => setView("me")); await A.page.fill("#r2sk", "WRONG"); await A.page.click("#r2save"); await sleep(1500);
-  ok(/refused the key/.test(await A.page.$eval("#r2st", e => e.textContent)), "wrong secret → 'R2 refused the key'");
+  await A.page.evaluate(() => setView("me")); await A.page.fill("#r2sk", "WRONG"); await A.page.click("#r2save");
+  // wait for the message rather than a fixed time (tests now run side by side, so timing varies)
+  const refused = await A.page.waitForFunction(() => /refused the key/.test((document.querySelector("#r2st") || {}).textContent || ""), null, { timeout: 10000 }).then(() => true, () => false);
+  ok(refused, "wrong secret → 'R2 refused the key'");
   console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });
