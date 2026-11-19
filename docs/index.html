@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-rID2hLbeg8CAX4fNll3Zpgen8BdmTOAPnNI82mJ5Wx8='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-AmPCS92SwaYbd8TisuFtvIGbfz3wBaJYJYXNfpIcx30='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -149,6 +149,16 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .tk{cursor:pointer;border-radius:4px;white-space:nowrap}
 .tk:hover{background:var(--accent-soft)}
 .tk.looked{background:var(--gold-soft)}
+.kf{display:flex;flex-direction:column;min-height:calc(100dvh - 48px);gap:12px}
+.kfsong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.kfbody{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:4vh 0}
+.kfline{font-family:var(--f-zh);font-size:clamp(32px,10vw,48px);line-height:2.1;text-align:center;letter-spacing:.03em;user-select:none;-webkit-user-select:none}
+.kfc{cursor:pointer;border-radius:6px;padding:0 1px}
+.kfc.x{background:var(--gold-soft)} .kfc rt{font-family:var(--f-ui,inherit);font-size:.4em;letter-spacing:0;color:var(--gold)}
+.kfnote{min-height:1.4em;text-align:center}
+.kffoot{display:flex;flex-direction:column;gap:8px;padding-bottom:max(8px,env(safe-area-inset-bottom,0px))}
+#kfpop .kch{font-size:56px;font-weight:700;line-height:1.1} #kfpop .kpy{font-size:28px;font-weight:700;color:var(--accent)}
+#kfpop .kwd{color:var(--muted)} #kfpop .kwd .zh{font-size:17px;color:var(--ink,inherit)}
 .spaced .tk{margin-right:.32em;box-shadow:inset 0 -2px 0 var(--line)}
 .sheet{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px)}
 .sheet .in{width:100%;max-width:600px;background:var(--surface);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0;padding:14px max(18px,env(safe-area-inset-left,0px)) 16px;box-shadow:0 -10px 30px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto}
@@ -858,6 +868,7 @@ function mergeStates(a, b) {
   const gm = Object.assign({}, m.gen); for (const k in o.gen || {}) gm[k] = genMerge(gm[k] || [], o.gen[k] || []); m.gen = Object.assign({ ladder: [], passages: [], sen: [], mine: [], listen: [], fw: [] }, gm);
   // listening history: union of sessions from both sides
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
+  { const k = kfMerge(m.ktv, o.ktv); if (k) m.ktv = k; } // lyric feed stumbles (v74)
   m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
   m.r2del = [...new Set([...(m.r2del || []), ...(o.r2del || [])])];
   m.reqDone = [...new Set([...(m.reqDone || []), ...(o.reqDone || [])])].slice(-500);
@@ -1191,19 +1202,21 @@ function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
    by[device] = {n, ok, due, extra, rd, done}: seconds on scheduled exercises (reviews due, until 复习完了),
    extra exercises (after it: new material), and reading (passages, own texts, re-reads); done = all reviews
    finished that day. Per device so two devices on one day add up (the old merge kept the larger day). Older days
-   have only totals: shown as "earlier, not split". Listening isn't counted (yet). Kept ~2 years. */
+   have only totals: shown as "earlier, not split". fw = free writing (v73), kt = the lyric feed (v74); other
+   listening isn't counted. Kept ~2 years. */
 const LOG_DAYS = 800;
 function devId() { try { let d = localStorage.getItem("zwlgf:dev"); if (!d) { d = "d" + Math.random().toString(36).slice(2, 8); localStorage.setItem("zwlgf:dev", d); } return d; } catch (e) { return "d0"; } }
-const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0); } return { n, ok, sec }; };
+const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0) + (v.kt || 0); } return { n, ok, sec }; };
 function logTotals(d) { const b = byTotal(d), o = d.old || { n: 0, ok: 0, sec: 0 }; d.n = o.n + b.n; d.ok = o.ok + b.ok; d.sec = o.sec + b.sec; return d; }
 function logDay(sec, ok, kind = "due") {
   const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 };
   if (!d.by) { d.old = { n: d.n || 0, ok: d.ok || 0, sec: d.sec || 0 }; d.by = {}; } // a day begun by older code
   const v = d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 };
   // fw = free writing (v73): on top of today's set, so it isn't card time and doesn't move the new-item allowance
-  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "extra" ? "extra" : "due";
+  // kt = the lyric feed (v74, 刷歌词): KTV practice, not card time either
+  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "ktv" ? "kt" : kind === "extra" ? "extra" : "due";
   v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" || kind === "fw" ? 900 : 240));
-  if (kind !== "read" && kind !== "fw") { v.n++; v.ok += ok ? 1 : 0; }
+  if (kind !== "read" && kind !== "fw" && kind !== "ktv") { v.n++; v.ok += ok ? 1 : 0; }
   logTotals(d);
 }
 // per-device flags on today's log (synced, merged by OR): done = today's set is done (✓); cd = today's cards are done
@@ -1214,17 +1227,17 @@ function mergeLogDay(x, y) {
   if (!x) return y; if (!y) return x;
   if (!x.by && !y.by) return { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   const m = { by: {} };
-  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
+  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, kt: Math.max(w.kt || 0, v.kt || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
   // the part from before the split: a day from older code (no by) is its totals minus what's already split
   const b = byTotal(m), legacy = z => z.by ? (z.old || { n: 0, ok: 0, sec: 0 }) : { n: Math.max(0, z.n - b.n), ok: Math.max(0, z.ok - b.ok), sec: Math.max(0, z.sec - b.sec) };
   const lx = legacy(x), ly = legacy(y); m.old = { n: Math.max(lx.n, ly.n), ok: Math.max(lx.ok, ly.ok), sec: Math.max(lx.sec, ly.sec) };
   return logTotals(m);
 }
 function daySplit(d) {
-  const r = { due: 0, extra: 0, rd: 0, old: 0, done: false, cd: false, nr: false };
+  const r = { due: 0, extra: 0, rd: 0, fw: 0, kt: 0, old: 0, done: false, cd: false, nr: false };
   if (!d) return r;
   if (!d.by) { r.old = d.sec || 0; return r; }
-  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
+  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; r.fw += v.fw || 0; r.kt += v.kt || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
   r.old = (d.old || {}).sec || 0; return r;
 }
 const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时 ${m % 60 ? (m % 60) + " 分" : ""}`.trim(); };
@@ -1237,25 +1250,27 @@ function timeCardHtml() {
   if (TRANGE === "7" || TRANGE === "30") { const n = +TRANGE; for (let i = n - 1; i >= 0; i--) { const t = now() - i * DAY, dt = new Date(dayKey(t) + "T12:00"); add(n === 7 ? "日一二三四五六"[dt.getDay()] : (i % 5 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : ""), [dayKey(t)], true); } }
   else if (TRANGE === "12w") { const m0 = new Date(midnight(now())); const back = (m0.getDay() + 6) % 7; const mon = midnight(now()) - back * DAY; for (let w = 11; w >= 0; w--) { const s0 = mon - w * 7 * DAY, keys = []; for (let i = 0; i < 7; i++) keys.push(dayKey(s0 + i * DAY + 3 * 3600e3)); const dt = new Date(s0); add(w % 2 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : "", keys); } }
   else { const ks = Object.keys(S.log || {}).sort(), first = ks.length ? new Date(ks[0] + "T12:00") : new Date(); const cur = new Date(dayKey() + "T12:00"); let y = first.getFullYear(), mo = first.getMonth(); const months = []; while (y < cur.getFullYear() || (y === cur.getFullYear() && mo <= cur.getMonth())) { months.push([y, mo]); mo++; if (mo > 11) { mo = 0; y++; } } months.slice(-24).forEach(([y, mo]) => { const pre = `${y}-${String(mo + 1).padStart(2, "0")}`; add(`${mo + 1}月`, ks.filter(k => k.startsWith(pre))); }); }
-  let T = { due: 0, extra: 0, rd: 0, old: 0 }, days = 0, doneDays = 0;
-  B.forEach(b => { b.s = { due: 0, extra: 0, rd: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of ["due", "extra", "rd", "old"]) b.s[f] += sp[f]; if (sp.due + sp.extra + sp.rd + sp.old > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = b.s.due + b.s.extra + b.s.rd + b.s.old; for (const f in T) T[f] += b.s[f]; });
-  const max = Math.max(60, ...B.map(b => b.tot)), all = T.due + T.extra + T.rd + T.old;
+  const F = ["due", "extra", "fw", "rd", "kt", "old"], sum = o => F.reduce((a, f) => a + (o[f] || 0), 0);
+  let T = { due: 0, extra: 0, fw: 0, rd: 0, kt: 0, old: 0 }, days = 0, doneDays = 0;
+  B.forEach(b => { b.s = { due: 0, extra: 0, fw: 0, rd: 0, kt: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of F) b.s[f] += sp[f]; if (sum(sp) > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = sum(b.s); for (const f in T) T[f] += b.s[f]; });
+  const max = Math.max(60, ...B.map(b => b.tot)), all = sum(T);
   const seg = (v, c) => v ? `<i style="height:${v / max * 100}%;background:${c}"></i>` : "";
-  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", old: "var(--line)" };
+  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", fw: "var(--plum)", kt: "var(--gold)", old: "var(--line)" };
   const today = daySplit(S.log[dayKey()]);
   if (TSEL == null || TSEL >= B.length) TSEL = B.length - 1;
   const sb = B[TSEL], dl = sb.day ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 周${"日一二三四五六"[t.getDay()]}`; })() : TRANGE === "12w" ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 那周 week of`; })() : sb.lab;
-  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
+  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.fw ? ` · 写作 ${fmtMinEn(sb.s.fw)}` : ""}${sb.s.kt ? ` · 歌 KTV ${fmtMinEn(sb.s.kt)}` : ""}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
   return `<span class="label">时间 · Time spent</span>
     <div class="row" style="gap:6px">${TRANGES.map(([k, l]) => `<button class="tagc ${TRANGE === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div>
-    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.rd, C.rd)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
+    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.kt, C.kt)}${seg(b.s.rd, C.rd)}${seg(b.s.fw, C.fw)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
     ${detail}
-    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.rd}"></i>阅读 Reading</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
+    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.fw}"></i>写 Writing</span><span><i style="background:${C.rd}"></i>阅读 Reading</span><span><i style="background:${C.kt}"></i>歌 KTV</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
     <div class="stack small" style="gap:4px">
       <span><b>这段时间 In this period: ${fmtMin(all)}</b> · ${fmtMinEn(all)}${days ? ` · 练了 ${days} 天 on ${days} day${days > 1 ? "s" : ""} (avg ${fmtMinEn(all / days)})` : ""}</span>
       <span>练习 Exercises <b>${fmtMinEn(T.due + T.extra)}</b> = 该做的 today's set ${fmtMinEn(T.due)} + 额外 extra ${fmtMinEn(T.extra)}${doneDays && TRANGE !== "all" ? ` · 做完 set done on ${doneDays} day${doneDays > 1 ? "s" : ""}` : ""}</span>
       <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
-      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 听力不算在内 Listening isn't counted.</span></div>`;
+      <span>写作 Writing <b>${fmtMinEn(T.fw)}</b> · 歌 KTV (刷歌词 lyric feed) <b>${fmtMinEn(T.kt)}</b></span>
+      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.fw ? ` · 写作 ${fmtMinEn(today.fw)}` : ""}${today.kt ? ` · 歌 ${fmtMinEn(today.kt)}` : ""}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 其他听力不算在内 Other listening isn't counted.</span></div>`;
 }
 function bindTimeCard(scope) {
   const redraw = () => { $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); };
@@ -1656,12 +1671,12 @@ function candidates(cat, done = doneToday()) {
 /* ============ views ============ */
 let VIEW = "home";
 let SESSION = null, PLACE = null, READ = null;
-const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid) || (VIEW === "listen" && LST && (LST.play || LST.review));
+const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid) || (VIEW === "listen" && LST && (LST.play || LST.review || (LST.feed && KF && !KF.ended)));
 function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
 function render() {
   const main = $("#main");
   dropBar(); // the listening player bar belongs to an item's page only; drawPlayer puts it back
-  $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place";
+  $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place" || (VIEW === "listen" && LST && LST.feed && KF && !KF.ended);
   $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
   if (VIEW === "home") renderHome(main);
   else if (VIEW === "session") renderSession(main);
@@ -3228,7 +3243,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v73 · 11/18 16:46"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v74 · 11/18 20:31"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -3887,6 +3902,7 @@ function cueAt(it, t) {
 }
 /* ---- views ---- */
 function renderListen(main) {
+  if (LST && LST.feed) return renderFeed(main);
   if (LST && LST.add) return renderListenAdd(main);
   if (LST && LST.id) { const it = S.gen.listen.find(x => x.id === LST.id); if (!it) { LST = null; return renderListen(main); } return LST.review ? renderListenReview(main, it) : renderListenItem(main, it); }
   const all = (S.gen.listen || []).slice().sort((a, b) => b.t - a.t), hasSong = all.some(it => itemType(it) === "song"), hasTalk = all.some(it => itemType(it) !== "song");
@@ -3896,6 +3912,7 @@ function renderListen(main) {
     <button class="btn wide" id="ladd">+ 添加 Add audio</button>
     ${pyfBacklog().length && LFILT !== "talk" ? `<div class="small muted">🤖 Claude 下次运行检查 ${Math.min(PYFIX_PER_RUN, pyfBacklog().length)} 首歌的拼音和分词（约凌晨 3:40；等不及可以在定时任务里点 Run now）· Claude checks the pinyin and word grouping of ${Math.min(PYFIX_PER_RUN, pyfBacklog().length)} song${pyfBacklog().length > 1 ? "s" : ""} in its next run (about 3:40 am, or Run now in the scheduled task)</div>` : ""}
     ${plSongs().length && LFILT !== "talk" ? `<div class="row" style="gap:6px"><button class="btn soft" id="plall" style="flex:1">▶ 连播全部歌 · Play all songs (${plSongs().length})</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf0">🔀 随机 Shuffle</button></div>` : ""}
+    ${kfSongs().length && LFILT !== "talk" ? `<button class="btn soft wide" id="kfopen">🎤 刷歌词 · Lyric feed</button>` : ""}
     ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
     <div id="r2list"></div>
     ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${itemType(it) === "song" ? "🎵" : "🎙"} ${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
@@ -3909,6 +3926,7 @@ function renderListen(main) {
   });
   $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
   const pa = $("#plall", main); if (pa) pa.onclick = () => plStart();
+  const kfo = $("#kfopen", main); if (kfo) kfo.onclick = openFeed;
   const ps = $("#plshuf0", main); if (ps) ps.onclick = () => { try { localStorage.setItem("zwlgf:plshuf", plShuffle() ? "0" : "1"); } catch (e) {} render(); };
   // songs with timings open in Follow; everything else starts with the text hidden (as before)
   $$("[data-l]", main).forEach(b => b.onclick = () => { const it = S.gen.listen.find(x => x.id === b.dataset.l); if (PL) { const j = PL.ids.indexOf(b.dataset.l); if (j >= 0) PL.i = j; else PL = null; } LST = { id: b.dataset.l, mode: it && isTimed(it) && itemType(it) === "song" ? "follow" : "hide", lost: [] }; render(); window.scrollTo(0, 0); });
@@ -4314,6 +4332,286 @@ function mediaMeta(it) {
     h("previoustrack", PL ? () => plGo(-1) : null); h("nexttrack", PL ? () => plGo(1) : null);
   } catch (e) {}
 }
+/* ============ 刷歌词 · Lyric feed (KTV instant mode, v74) ============
+   Endless cards, one lyric line each, no pinyin; the song plays from KF_LEAD s before the line and stops at the
+   line's end. Runs of 2–4 consecutive lines from one song, then another song. Tap a character you weren't sure of:
+   its reading in this line + the word it belongs to (save it like any word); that tap is a stumble on
+   character|reading (还|huán ≠ 还|hái). A stumbled reading comes back sooner, preferably in another line with the
+   same character and reading; two later cards with it untapped retire it. Swipe up / Space / ↓ = next card.
+   Synced in S.ktv (merged by union): ev = stumbles [{t, k, s: song id, l: line, w: word, x: 1 if 点错了}],
+   ok = {k: [times seen again untapped]}, ln = {"song:line": [last shown, times]}, sg = {song: [runs, last]}.
+   Outside FSRS, the new-item allowance and today's set; time is logged as kt (Time card 歌 KTV). */
+const KF_LEAD = 1.5, KF_GAP0 = 3 * MIN, KF_EV_MAX = 500, KF_OK_KEEP = 4, KF_RETIRE = 2;
+const HAN_RE = /\p{Script=Han}/u;
+let KF = null; // this sitting (not saved): {cards, looked, sec, run, ri, tapped, aud, url, aid, ended…}
+const kfMuted = () => { try { return localStorage.getItem("zwlgf:kfmute") === "1"; } catch (e) { return false; } };
+function kfState() { const k = S.ktv = S.ktv || {}; k.ev = k.ev || []; k.ok = k.ok || {}; k.ln = k.ln || {}; k.sg = k.sg || {}; return k; }
+function kfMerge(a, b) {
+  if (!a && !b) return undefined; a = a || {}; b = b || {};
+  const ev = new Map();
+  for (const e of [...(a.ev || []), ...(b.ev || [])]) { const id = e.t + "|" + e.k + "|" + e.s + "|" + e.l, w = ev.get(id); if (!w) ev.set(id, Object.assign({}, e)); else if (e.x) w.x = 1; }
+  const ok = {}; for (const src of [a.ok || {}, b.ok || {}]) for (const k in src) ok[k] = [...new Set([...(ok[k] || []), ...src[k]])].sort((p, q) => p - q).slice(-KF_OK_KEEP);
+  const mx = (p, q) => [Math.max(p[0] || 0, q[0] || 0), Math.max(p[1] || 0, q[1] || 0)];
+  const ln = Object.assign({}, a.ln); for (const k in b.ln || {}) ln[k] = ln[k] ? mx(ln[k], b.ln[k]) : b.ln[k];
+  const sg = Object.assign({}, a.sg); for (const k in b.sg || {}) sg[k] = sg[k] ? mx(sg[k], b.sg[k]) : b.sg[k];
+  return { ev: [...ev.values()].sort((p, q) => p.t - q.t).slice(-KF_EV_MAX), ok, ln, sg };
+}
+const kfSongs = () => (S.gen.listen || []).filter(it => itemType(it) === "song" && isTimed(it) && (it.cues || []).length > 1);
+// credits ("作词：…"), lines without Chinese, and lines with no time are skipped
+function kfLineOk(it, i) {
+  const s = (it.cues[i] || [])[1] || "";
+  if (/[:：]/.test(s) || cueT(it, i) == null) return false;
+  return Array.from(s).filter(c => HAN_RE.test(c)).length >= 2;
+}
+// a word's pinyin ("huángěi") split per character, by matching each character's dictionary readings (tones ignored,
+// so 一/不 tone changes and light tones still split); the syllables keep the tones the line shows
+const pyBase = ch => ch.normalize("NFD").replace(/[̀́̄̌]/g, "").normalize("NFC").toLowerCase();
+function splitPy(chars, py) {
+  const P = Array.from(String(py || "").normalize("NFC").replace(/[\s'’·\-\/]/g, "")), B = P.map(pyBase).join("");
+  if (chars.length === 1) return [P.join("").toLowerCase()];
+  if (B.length !== P.length) return chars.map(c => { const l = lookup(c); return l ? pyKey(l.py) : ""; });
+  const cands = chars.map(c => { const a = lookupAll(c), s = new Set((a ? a.readings : []).map(r => Array.from(pyKey(r.py)).map(pyBase).join("")).filter(Boolean)); if (c === "儿") s.add("r"); return [...s].sort((x, y) => y.length - x.length); });
+  const memo = new Map();
+  const go = (k, at) => {
+    if (k === chars.length) return at === B.length ? [] : null;
+    const key = k + ":" + at; if (memo.has(key)) return memo.get(key);
+    let res = null;
+    for (const c of cands[k]) if (B.startsWith(c, at)) { const r = go(k + 1, at + c.length); if (r) { res = [P.slice(at, at + c.length).join("").toLowerCase(), ...r]; break; } }
+    memo.set(key, res); return res;
+  };
+  return go(0, 0) || chars.map(c => { const l = lookup(c); return l ? pyKey(l.py) : ""; });
+}
+// the characters of a line as shown (简/繁), each with its reading in this line and the word it belongs to
+const KF_LC = new Map();
+function kfChars(it, i) {
+  const key = it.id + ":" + i + ":" + (it.u || 0) + ":" + (cuePref().tr ? 1 : 0) + ":" + (CED ? 1 : 0) + ":" + (ZHC ? 1 : 0), hit = KF_LC.get(key);
+  if (hit) return hit;
+  const toks = lineToks(it, i), pys = linePys(it, toks), out = [];
+  toks.forEach((t, ti) => {
+    const sa = Array.from(t.s), da = Array.from(t.d), sy = HAN_RE.test(t.s) ? splitPy(sa, pys[ti] || "") : [];
+    sa.forEach((c, j) => out.push({ c: da.length === sa.length ? da[j] : c, s: c, py: sy[j] || "", w: t.s, wd: t.d, wpy: pys[ti] || "", gl: t.gl || "", x: !!t.x, han: HAN_RE.test(c) }));
+  });
+  KF_LC.set(key, out); return out;
+}
+const kfKey = ch => ch.s + "|" + ch.py;
+// a reading that isn't the one you'd say by reflex (了 liǎo, 着 zhuó, 还 huán): a short list of common characters'
+// less usual readings, plus any reading Claude's pinyin check corrected (when it isn't the dictionary's first).
+// (Comparing with the dictionary's first reading alone flagged 地 dì, 石 shí… on the learner's songs.)
+const KF_TRICKY = { 了: "liǎo", 着: "zhuó zháo zhāo", 还: "huán", 似: "shì", 血: "xiě", 薄: "báo bò", 落: "là lào", 曲: "qū", 角: "jué", 重: "chóng", 长: "zhǎng", 乐: "yuè", 觉: "jiào", 降: "xiáng", 强: "qiǎng jiàng", 量: "liáng", 得: "děi", 便: "pián", 处: "chǔ", 调: "diào", 少: "shào", 种: "zhòng", 弹: "dàn", 藏: "zàng", 传: "zhuàn", 都: "dū", 和: "hè huó huò", 相: "xiàng", 华: "huà", 难: "nàn", 散: "sǎn", 冲: "chòng", 担: "dàn", 正: "zhēng", 朝: "cháo", 省: "xǐng", 尽: "jǐn", 将: "jiàng", 恶: "wù ě", 背: "bēi", 磨: "mò", 模: "mú", 露: "lòu", 给: "jǐ", 系: "jì", 应: "yīng", 为: "wéi", 行: "háng", 要: "yāo", 号: "háo", 只: "zhī", 数: "shǔ shuò", 空: "kòng", 分: "fèn", 当: "dàng", 场: "cháng", 看: "kān", 转: "zhuàn", 胖: "pán", 挣: "zhēng", 舍: "shè", 奔: "bèn", 晕: "yùn", 塞: "sè sài", 剥: "bō", 削: "xuē", 扎: "zā zhá", 折: "shé zhē", 冠: "guàn", 结: "jiē" };
+function kfSpecial(ch) {
+  if (!ch.han || !ch.py || "一不".includes(ch.s)) return false;
+  const t = KF_TRICKY[ch.s]; if (t && t.split(" ").some(r => pyKey(r) === pyKey(ch.py))) return true;
+  if (!ch.x) return false;
+  const a = lookupAll(ch.s); return !!(a && a.readings.length > 1 && pyKey(a.readings[0].py) !== pyKey(ch.py));
+}
+let KF_COMMON = null; // characters that appear in HSK 1–4 words: everything else counts as rarer
+function kfRare(c) {
+  if (!KF_COMMON) { KF_COMMON = new Set(); for (const [w, d] of DICT) if (d && d.lv && d.lv <= 4) for (const ch of Array.from(w)) KF_COMMON.add(ch); }
+  return HAN_RE.test(c) && !KF_COMMON.has(c);
+}
+// stumbles that still count: grouped by character|reading, active until KF_RETIRE later cards without a tap
+function kfStumbles() {
+  const st = kfState(), by = new Map();
+  for (const e of st.ev) { if (e.x) continue; const g = by.get(e.k) || { k: e.k, t: 0, w: e.w, at: [] }; g.t = Math.max(g.t, e.t); g.at.push([e.s, e.l]); by.set(e.k, g); }
+  const out = [];
+  for (const g of by.values()) {
+    const ok = (st.ok[g.k] || []).filter(t => t > g.t); if (ok.length >= KF_RETIRE) continue;
+    g.passes = ok.length; g.last = Math.max(g.t, ...ok); g.due = now() - g.last >= KF_GAP0 * Math.pow(4, ok.length);
+    g.texts = new Set(g.at.map(([s, l]) => { const it = (S.gen.listen || []).find(x => x.id === s); return it && it.cues[l] ? it.cues[l][1] : null; }).filter(Boolean));
+    out.push(g);
+  }
+  return out.sort((p, q) => p.last - q.last);
+}
+function kfLineScore(it, i, dueKeys) {
+  const ch = kfChars(it, i), ln = kfState().ln[it.id + ":" + i];
+  let sc = 0, rare = 0;
+  for (const c of ch) { if (!c.han) continue; if (kfSpecial(c)) sc += 2; if (kfRare(c.s)) rare++; if (dueKeys.has(kfKey(c))) sc += 4; }
+  sc += Math.min(3, rare);
+  if (ln) sc -= now() - ln[0] < 3 * DAY ? 4 : Math.min(3, ln[1] || 0) * 0.5;
+  return sc + Math.random() * 0.8;
+}
+function kfRunFrom(it, i, why) {
+  const n = 2 + Math.floor(Math.random() * 3), lines = [];
+  for (let j = i; j < it.cues.length && lines.length < n; j++) { if (!kfLineOk(it, j)) break; lines.push(j); }
+  return { it, lines, why };
+}
+function kfPickRun() {
+  const songs = kfSongs(); if (!songs.length) return null;
+  const stum = kfStumbles(), due = stum.filter(g => g.due), dueKeys = new Set(due.map(g => g.k));
+  // a due stumble: preferably a different line with the same character and reading
+  if (due.length && Math.random() < 0.6) for (const g of due) {
+    const cand = [];
+    for (const it of songs) it.cues.forEach((c, i) => { if (KF && KF.lastLine === it.id + ":" + i) return; if (!g.texts.has(c[1]) && kfLineOk(it, i) && kfChars(it, i).some(x => kfKey(x) === g.k)) cand.push([it, i]); });
+    if (cand.length) { const [it, i] = cand[Math.floor(Math.random() * cand.length)]; return kfRunFrom(it, i, g.k); }
+  }
+  // otherwise a song played least (here and in 听), not the one just done; then its best stretch
+  const sg = kfState().sg, last = KF && KF.run && KF.run.it.id;
+  for (let tries = 0; tries < 6 && songs.length; tries++) {
+  const wt = songs.map(it => (songs.length > 1 && it.id === last ? 0 : 1) / (1 + ((sg[it.id] || [])[0] || 0) + 0.3 * ((S.lsn || {})[it.id] || []).length));
+  let r = Math.random() * wt.reduce((a, b) => a + b, 0), it = songs[0];
+  for (let k = 0; k < songs.length; k++) { r -= wt[k]; if (r <= 0 && wt[k] > 0) { it = songs[k]; break; } }
+  const sc = it.cues.map((c, i) => kfLineOk(it, i) ? kfLineScore(it, i, dueKeys) : null), starts = [];
+  for (let i = 0; i < sc.length; i++) { if (sc[i] == null) continue; let s = 0, n = 0; for (let j = i; j < sc.length && n < 3 && sc[j] != null; j++, n++) s += sc[j]; starts.push([s / n + (n >= 2 ? 0.5 : -2), i]); }
+  if (!starts.length) { songs.splice(songs.indexOf(it), 1); continue; } // nothing usable in this one: another song
+  starts.sort((p, q) => q[0] - p[0]);
+  const pick = starts[Math.floor(Math.random() * Math.min(3, starts.length))][1];
+  return kfRunFrom(it, pick, null);
+  }
+  return null;
+}
+// ---- audio: own element (the 听 player is paused while the feed is open) ----
+function kfUnlock() { // in the tap that opens the feed, so phones allow the later plays
+  if (AUD && !AUD.paused) AUD.pause(); PL = null;
+  if (!KF.aud) { KF.aud = document.createElement("audio"); KF.aud.preload = "auto"; KF.aud.hidden = true; document.body.append(KF.aud); }
+  try { const b = new Uint8Array(46); const v = new DataView(b.buffer); "RIFF".split("").forEach((c, i) => b[i] = c.charCodeAt(0)); v.setUint32(4, 38, true); "WAVEfmt ".split("").forEach((c, i) => b[8 + i] = c.charCodeAt(0)); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); "data".split("").forEach((c, i) => b[36 + i] = c.charCodeAt(0)); v.setUint32(40, 2, true); b[44] = b[45] = 128;
+    const u = URL.createObjectURL(new Blob([b], { type: "audio/wav" })); KF.aud.src = u; KF.aud.muted = true; KF.aud.play().then(() => { if (KF && KF.aud && KF.aud.src === u) KF.aud.pause(); KF.aud.muted = false; }).catch(() => { KF.aud.muted = false; }); KF.aid = null; } catch (e) {}
+}
+function kfHush() { if (!KF) return; KF.ptok = (KF.ptok || 0) + 1; clearTimeout(KF.padT); clearInterval(KF.watch); if (KF.aud && !KF.aud.paused) KF.aud.pause(); }
+const kfEnd = (it, i) => { const st = cueT(it, i); for (let j = i + 1; j < it.cues.length; j++) { const t = cueT(it, j); if (t != null && t > st) return Math.min(t, st + 10); } return st + 6; };
+async function kfPlay(it, i) {
+  kfHush(); const tok = KF.ptok; KF.audMsg = "";
+  if (kfMuted()) return;
+  if (it.kind !== "file") { KF.audMsg = "这首没有音频文件 · No audio file for this song"; return kfNoteDraw(); }
+  if (KF.aid !== it.id) {
+    let blob = await audioGet(it.id);
+    if (!blob && it.r2 && r2Cfg() && navigator.onLine) { try { blob = await r2Fetch1(it); } catch (e) { noteErr("lyric feed audio", e); } }
+    if (tok !== KF.ptok) return;
+    if (!blob) { KF.audMsg = navigator.onLine ? "这台设备上没有这首歌的音频 · This song's audio isn't on this device" : "离线：这首歌没下载 · Offline: this song isn't downloaded"; return kfNoteDraw(); }
+    if (KF.url) URL.revokeObjectURL(KF.url);
+    KF.url = URL.createObjectURL(blob); KF.aud.src = KF.url; KF.aid = it.id;
+    if (KF.aud.readyState < 1) await new Promise(res => { const d = () => res(); KF.aud.addEventListener("loadedmetadata", d, { once: true }); KF.aud.addEventListener("error", d, { once: true }); setTimeout(d, 4000); });
+    if (tok !== KF.ptok) return;
+  }
+  const st = cueT(it, i), from = st - KF_LEAD; KF.endAt = kfEnd(it, i);
+  const go = () => {
+    if (tok !== KF.ptok || !KF.aud) return;
+    try { KF.aud.currentTime = Math.max(0, from); } catch (e) {}
+    KF.aud.play().catch(() => {});
+    clearInterval(KF.watch); KF.watch = setInterval(() => { if (tok !== KF.ptok || !KF.aud) return clearInterval(KF.watch); if (KF.aud.currentTime >= KF.endAt + 0.15 || KF.aud.ended) { KF.aud.pause(); clearInterval(KF.watch); } }, 40);
+  };
+  if (from < 0) { try { KF.aud.currentTime = 0; } catch (e) {} KF.padT = setTimeout(go, -from * 1000); } else go(); // the line starts < 1.5 s in: silence first
+}
+function kfNoteDraw() { const el = $("#kfnote"); if (el) el.textContent = KF.audMsg || ""; }
+// ---- time: only while the page is visible; per card at most 2 minutes (a card left open isn't practice) ----
+function kfClock(on) { if (!KF) return; if (on && KF.since == null) KF.since = now(); if (!on && KF.since != null) { KF.acc += now() - KF.since; KF.since = null; } }
+function kfCardSec() { kfClock(false); const s = Math.min(120, KF.acc / 1000); KF.acc = 0; return s; }
+document.addEventListener("visibilitychange", () => { if (!KF || KF.ended) return; if (document.hidden) { kfClock(false); kfHush(); } else if (VIEW === "listen" && LST && LST.feed) kfClock(true); });
+// ---- the cards ----
+function openFeed() {
+  closeSheet(); KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, ri: 0, tapped: new Map(), ended: false, aud: KF && KF.aud, url: KF && KF.url, aid: KF && KF.aid };
+  kfUnlock(); LST = { feed: true }; KF.loading = true; setView("listen");
+  // the dictionary (readings per character) and the 简/繁 table first, so the first card is split right
+  // (the table always: some songs' lyrics are in traditional characters and are looked up in simplified)
+  Promise.all([loadCedict(), loadZhc()]).catch(() => {}).then(() => {
+    if (!KF || !KF.loading) return; KF.loading = false; KF.run = kfPickRun(); KF.ri = 0;
+    if (VIEW === "listen" && LST && LST.feed) render();
+    kfWarm();
+  });
+}
+// work out every line's readings in small steps in the background, so picking a line for a stumble stays instant
+function kfWarm() {
+  const todo = []; for (const it of kfSongs()) it.cues.forEach((c, i) => todo.push([it, i]));
+  const step = () => { if (!KF || KF.ended) return; const t0 = performance.now(); while (todo.length && performance.now() - t0 < 12) { const [it, i] = todo.shift(); if (kfLineOk(it, i)) kfChars(it, i); } if (todo.length) setTimeout(step, 30); };
+  setTimeout(step, 300);
+}
+function kfFinishCard() { // leaving a card: its time, untapped stumbled readings seen again, the line's memory
+  if (!KF || !KF.cur) return;
+  const { it, i } = KF.cur, st = kfState(), sec = kfCardSec();
+  if (sec > 0) { logDay(sec, true, "ktv"); KF.sec += sec; }
+  const active = new Map(kfStumbles().map(g => [g.k, g])), tappedKeys = new Set([...KF.tapped.values()].map(e => e.k));
+  for (const c of kfChars(it, i)) { const g = active.get(kfKey(c)); if (g && !tappedKeys.has(g.k) && !g.texts.has(it.cues[i][1])) { st.ok[g.k] = [...(st.ok[g.k] || []), now()].slice(-KF_OK_KEEP); active.delete(g.k); } }
+  const lk = it.id + ":" + i, l = st.ln[lk] || [0, 0]; st.ln[lk] = [now(), (l[1] || 0) + 1]; KF.lastLine = lk;
+  KF.cards++; KF.cur = null; KF.tapped = new Map(); save();
+}
+function kfNext() {
+  if (!KF || KF.ended) return; kfPopClose();
+  kfFinishCard(); KF.ri++;
+  if (!KF.run || KF.ri >= KF.run.lines.length) { const prev = KF.run; KF.run = kfPickRun(); KF.ri = 0; if (prev) { const sg = kfState().sg, s = sg[prev.it.id] || [0, 0]; sg[prev.it.id] = [(s[0] || 0) + 1, now()]; } }
+  render();
+}
+function kfStop() { if (!KF) return; kfPopClose(); kfHush(); kfFinishCard(); KF.ended = true; render(); }
+function renderFeed(main) {
+  if (!KF) KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, ri: 0, tapped: new Map(), ended: false };
+  if (KF.ended) {
+    main.innerHTML = `<div class="top"><div><h1>刷歌词</h1><p class="date">Lyric feed</p></div></div>
+      <div class="card stack kfsum"><span class="label">这次 · This time</span><p class="big zh" id="kfsumt">${KF.cards} 行 · ${KF.looked} 个字查了拼音</p><p class="small muted">${KF.cards} line${KF.cards === 1 ? "" : "s"} · ${KF.looked} character${KF.looked === 1 ? "" : "s"} looked up</p>
+      <div class="row"><button class="btn" id="kfgo">继续 Continue</button><button class="btn ghost" id="kfback">回到听力 Back</button></div></div>`;
+    $("#kfgo", main).onclick = () => openFeed();
+    $("#kfback", main).onclick = () => { KF.ended = false; LST = null; KF.cur = null; render(); };
+    return;
+  }
+  if (KF.loading) { main.innerHTML = `<div class="kf"><div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button></div><p class="muted" style="margin:auto">词典加载中… Loading the dictionary…</p></div>`; $("#kfquit", main).onclick = () => { KF.loading = false; KF.ended = true; render(); }; return; }
+  if (!KF.run) KF.run = kfPickRun();
+  if (!KF.run || !KF.run.lines.length) {
+    main.innerHTML = `<div class="card stack"><p>还没有带时间的歌词 · No songs with timed lyrics yet. Add a song in 听 with an .lrc file or from LRCLIB.</p><button class="btn ghost" id="kfback">回到听力 Back</button></div>`;
+    $("#kfback", main).onclick = () => { KF = null; LST = null; render(); }; return;
+  }
+  const it = KF.run.it, i = KF.run.lines[KF.ri], same = KF.cur && KF.cur.it === it && KF.cur.i === i;
+  if (!same) { KF.cur = { it, i }; KF.tapped = new Map(); KF.acc = 0; KF.since = null; }
+  kfClock(!document.hidden);
+  const ch = kfChars(it, i), muted = kfMuted();
+  main.innerHTML = `<div class="kf" id="kf">
+    <div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button><span class="small muted kfsong">🎵 ${esc(it.title || "")}${KF.run.lines.length > 1 ? ` · ${KF.ri + 1}/${KF.run.lines.length}` : ""}</span>
+      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfre" aria-label="再听一次 Play again" ${muted ? "hidden" : ""}>↻</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
+    <div class="kfbody" id="kfbody"><div class="kfline" id="kfline">${ch.map((c, k) => c.han ? `<span class="kfc ${KF.tapped.has(k) ? "x" : ""}" data-kc="${k}">${KF.tapped.has(k) ? `<ruby>${esc(c.c)}<rt>${esc(c.py)}</rt></ruby>` : esc(c.c)}</span>` : `<span class="kfp">${esc(c.c)}</span>`).join("")}</div>
+      <p class="small muted kfnote" id="kfnote">${esc(KF.audMsg || "")}</p></div>
+    <div class="kffoot"><p class="small muted">跟着唱或读 · 不确定的字点一下 · Sing or read along; tap any character you weren't sure of</p><button class="btn wide" id="kfnext">下一句 Next ↓</button></div></div>`;
+  $("#kfquit", main).onclick = kfStop;
+  $("#kfnext", main).onclick = kfNext;
+  $("#kfre", main).onclick = () => kfPlay(it, i);
+  $("#kfmute", main).onclick = () => { try { localStorage.setItem("zwlgf:kfmute", muted ? "0" : "1"); } catch (e) {} if (!muted) kfHush(); render(); if (muted) kfPlay(it, i); };
+  $$(".kfc", main).forEach(el => el.onclick = () => kfTap(+el.dataset.kc, el));
+  const body = $("#kf", main); let y0 = null, x0 = null;
+  body.addEventListener("touchstart", e => { if (e.touches.length === 1) { y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; } }, { passive: true });
+  body.addEventListener("touchend", e => { if (y0 == null) return; const t = e.changedTouches[0], dy = t.clientY - y0, dx = t.clientX - x0; y0 = null; if (dy < -60 && Math.abs(dx) < -dy) { if ($("#kfpop")) kfPopClose(); else kfNext(); } }, { passive: true });
+  if (!same) kfPlay(it, i); else kfNoteDraw();
+}
+// ---- tapping a character: that character large with its reading here, the word small underneath ----
+function kfTap(k, el) {
+  if (!KF || !KF.cur) return;
+  const { it, i } = KF.cur, c = kfChars(it, i)[k]; if (!c || !c.han) return;
+  if (!KF.tapped.has(k)) {
+    const e = { t: now(), k: kfKey(c), s: it.id, l: i, w: c.w }; kfState().ev.push(e); if (kfState().ev.length > KF_EV_MAX) kfState().ev.splice(0, kfState().ev.length - KF_EV_MAX);
+    KF.tapped.set(k, e); KF.looked++; save();
+    el.classList.add("x"); el.innerHTML = `<ruby>${esc(c.c)}<rt>${esc(c.py)}</rt></ruby>`;
+  }
+  kfPopOpen(k);
+}
+function kfPopClose() { const p = $("#kfpop"); if (p) p.remove(); document.body.style.paddingBottom = ""; }
+function kfPopOpen(k) {
+  kfPopClose();
+  const { it, i } = KF.cur, c = kfChars(it, i)[k], gl = Object.assign({}, it.gl || {}, lyrGl(it));
+  const A = lookupAll(c.w, gl), rd = A ? (A.readings.find(r => pyKey(r.py) === pyKey(c.wpy)) || A.readings[0]) : null;
+  const wgl = c.gl || (rd && pyKey(rd.py) === pyKey(c.wpy) ? rd.gl : rd ? rd.gl : "");
+  const inBank = !!S.bank[c.w] && !isAutoWord(S.bank[c.w]);
+  const sh = document.createElement("div"); sh.className = "sheet"; sh.id = "kfpop";
+  sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:14px;align-items:baseline"><span class="kch zh">${esc(c.c)}</span><span class="kpy">${esc(c.py || "?")}</span></div><button class="x" id="kfcls" aria-label="关闭">×</button></div>
+    <div class="kwd small"><span class="zh">${esc(c.wd)}</span> ${esc(c.wpy)}${wgl ? " · " + esc(String(wgl).slice(0, 90)) : ""}</div>
+    <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="kfadd" ${inBank ? "disabled" : ""}>${inBank ? "✓ 已在复习中 In review" : "加入复习 Add to review"}</button><button class="btn ghost" id="kfmis">点错了 · Mis-tap</button></div></div>`;
+  document.body.append(sh);
+  document.body.style.paddingBottom = sh.querySelector(".in").offsetHeight + 24 + "px";
+  $("#kfcls", sh).onclick = kfPopClose;
+  $("#kfmis", sh).onclick = () => {
+    const e = KF.tapped.get(k); if (e) { e.x = 1; KF.tapped.delete(k); KF.looked = Math.max(0, KF.looked - 1); save(); }
+    const el = $(`.kfc[data-kc="${k}"]`); if (el) { el.classList.remove("x"); el.textContent = c.c; }
+    kfPopClose();
+  };
+  $("#kfadd", sh).onclick = () => {
+    const w = c.w;
+    if (S.bank[w] && isAutoWord(S.bank[w])) { S.bank[w].saved = true; save(); kfPopClose(); toast("已在复习中 · Already in your review"); return; }
+    if (S.bank[w]) return;
+    S.bank[w] = { zh: w, s: toSimp(it.cues[i][1]), py: c.wpy || (rd ? rd.py : ""), gl: wgl || "", t: now(), src: "A:" + it.id };
+    if (it.tags && it.tags.length) S.bank[w].tags = it.tags.slice();
+    save(); kfPopClose(); toastAction("已加入 " + w, "撤销 Undo", () => { removeFromBank(w, false); toast("已撤销 Undone"); });
+  };
+}
+// with the popup open, a tap anywhere outside it (another character, the line, Next) only closes it
+document.addEventListener("click", e => { const p = $("#kfpop"); if (!p || p.contains(e.target) || !e.target.isConnected) return; if (e.target.closest("#toasts,.toast")) return; e.stopPropagation(); e.preventDefault(); kfPopClose(); }, true);
+document.addEventListener("keydown", e => {
+  if (!(VIEW === "listen" && LST && LST.feed && KF && !KF.ended) || e.isComposing || /^(INPUT|TEXTAREA)$/.test((e.target || {}).tagName || "")) return;
+  if (e.key === "Escape") { kfPopClose(); return; }
+  if (e.key === " " || e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); kfNext(); }
+});
 /* ---- earlier versions of an item's text (learner: LRC files are often off, so try another and go back if it's
    worse). Replacing keeps the current one, with its timing fixes and questions, in it.trPrev (newest first, at most
    3; only texts up to 8,000 characters, i.e. songs and short clips). Switching swaps them, so nothing is lost. */
@@ -5221,9 +5519,11 @@ function makePassage(j, kind, id) {
 const PSG_KINDS = ["xhs", "news", "travel", "book"];
 const PSG_GENRES = [["xhs", "小红书"], ["news", "新闻"], ["book", "书面"], ["travel", "对话"]];
 // minutes/day × days, or trip dates (from/to, "YYYY-MM-DD"): with both dates set they decide the number of days
-// average minutes on the days you practised in the last 2 weeks (never below 15; 30 if there's no history yet)
+// average minutes of card time (today's set + extra; not reading, writing or the lyric feed, which the forecast
+// doesn't simulate) on the days you practised cards in the last 2 weeks (never below 15; 30 with no history yet)
+const cardSec = d => { if (!d) return 0; if (!d.by) return d.sec || 0; const sp = daySplit(d); return sp.due + sp.extra + sp.old; };
 function autoMins() {
-  const m = []; for (let i = 1; i <= 14; i++) { const d = S.log[dayKey(now() - i * DAY)]; if (d && d.sec > 60) m.push(d.sec / 60); }
+  const m = []; for (let i = 1; i <= 14; i++) { const c = cardSec(S.log[dayKey(now() - i * DAY)]); if (c > 60) m.push(c / 60); }
   return m.length ? Math.max(15, Math.round(m.reduce((a, b) => a + b, 0) / m.length / 5) * 5) : 30;
 }
 const stockCfg = () => {

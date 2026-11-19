@@ -81,3 +81,4 @@ Each prints PASS/FAIL lines and "ALL PASSED". `sigv4.js` is the same signer as i
   (topic requests first), the topics box, stock `short.fw`, merge of answer/comeback groups, forecast unaffected;
   `inputs.js` and `check-pack.js` on the new request kinds and pack fields. `sched.test.js` / `divider.test.js` start
   with today's free writing done / no prompts left.
+- `ktv.test.js` (2026-11-18, v74): the lyric feed 刷歌词 — per-character readings (还给 → 还 huán), 1.5 s lead-in (silence first early in a song) and stop at the line's end, runs of consecutive lines then another song, character popup (taps outside only close, 点错了, 加入复习), stumbles back in another line and retiring, merge, mute, 繁, summary, kt time, Time card 写/歌, autoMins from card time only.
