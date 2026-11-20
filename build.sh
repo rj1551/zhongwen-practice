@@ -13,7 +13,7 @@ mkdir -p docs/data
   printf '\n</body></html>\n'
 } > docs/index.html
 python3 tools/csp.py docs/index.html # script lock: only this build's own script may run (fingerprint of its exact text)
-cp data/words.json data/content.json data/cedict.txt data/CEDICT-LICENSE.txt data/zhconv.txt data/OPENCC-LICENSE.txt docs/data/
+cp data/words.json data/content.json data/slang.json data/cedict.txt data/CEDICT-LICENSE.txt data/zhconv.txt data/OPENCC-LICENSE.txt docs/data/
 cp manifest.json sw.js icon-192.png icon-512.png icon-180.png docs/
 touch docs/.nojekyll
 echo built

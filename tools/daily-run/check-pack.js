@@ -119,6 +119,8 @@ const has = (s, frag) => norm(s).includes(norm(frag));
     let ob0 = {}; try { ob0 = readJson(path.join(DATA, "outbox.json")) || {}; } catch (e) {}
     const retired = new Set((ob0.hints || {}).slangRetired || []);
     for (const t of p.slang) if (retired.has(t)) problems.push(`${at}: slang "${t}" is retired (in hints.slangRetired): don't target it`);
+    let list = []; try { list = (readJson(path.join(APP, "data", "slang.json")).terms || []).map(x => x.zh); } catch (e) {}
+    for (const t of p.slang) if (!list.includes(t)) problems.push(`${at}: slang "${t}" isn't in data/slang.json (only reviewed slang may be targeted)`);
   }
   seen.title.add(norm(x.title));
 });

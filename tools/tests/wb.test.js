@@ -14,7 +14,7 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
     "回复|@|芒果不加冰|：|笑死|，|你|这|条|评论|活人感|拉满|，|我|已经|截图|发|给|同事|了|。",
     "小鹿今天不加班|：|楼上|说|得|对|，|我|上个月|刚|跑路|，|现在|每天|六点|下班|，|夯爆了|！"],
   gl: { "没招": ["méi zhāo", "out of ideas, helpless (我真没招了 = I give up)"], "夯爆了": ["hāng bào le", "awesome, top tier (夯 = top rank in a tier list)"], "活人感": ["huó rén gǎn", "feels like a real, unpolished person"], "跑路": ["pǎo lù", "quit and get out"] },
-  en: "Worked overtime till ten…", slang: ["没招", "夯爆了", "活人感"],
+  en: "Worked overtime till ten…", slang: ["夯爆了", "活人感"],
   qs: [Q("What does the first commenter suggest?", "Quit the job"), Q("What does 活人感拉满 say about the comment?", "It sounds very real and human"), Q("How does the last commenter feel now?", "Very happy with the new job")] }, extra || {});
 
 (async () => {
@@ -35,6 +35,7 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
     post({ title: "b", style: "douyin" }),
     post({ title: "c", slang: ["没招", "不存在"] }),
     post({ title: "d", slang: ["跑路", "笑死"] }),
+    post({ title: "f", slang: ["没招"] }),
     post({ title: "e", paras: ["绝绝子|，|今天|加班|到|十点|。", "芒果|：|没招|了|。"], slang: ["绝绝子"], gl: { "绝绝子": ["jué jué zǐ", "amazing"] } })] });
   ok(/style": "weibo" or "douyin"/.test(bad), "check-pack: wb without a style is refused");
   ok(/douyin: the first paragraph must be the video line/.test(bad), "check-pack: a Douyin post must start with the 【视频：…】 line");
@@ -42,8 +43,11 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
   ok(/slang "笑死" has no gl entry/.test(bad), "check-pack: a slang term without a gloss is refused");
   ok(/slang "绝绝子" is retired/.test(bad) && /at least 2 replies/.test(bad), "check-pack: a retired term (hints.slangRetired) and a post without a thread are refused");
   ok(/at most 2 wb/.test(bad), "check-pack: at most 2 wb posts a pack");
+  ok(/slang "没招" isn't in data\/slang.json/.test(bad), "check-pack: slang that isn't on the reviewed list is refused");
   const rb = fs.readFileSync(path.join(DR, "RUNBOOK.md"), "utf8");
-  ok(/Only with the web search/.test(rb) && /never copy real\s+posts/.test(rb) && /at most 3/.test(rb), "RUNBOOK: wb only with the slang search (≤ 3 searches), everything invented");
+  ok(/Slang only from the reviewed list/.test(rb) && /no web search either/.test(rb) && /no real posts/.test(rb), "RUNBOOK: slang only from data/slang.json, no web search, everything invented");
+  const sl = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../data/slang.json"), "utf8"));
+  ok(/^\d{4}-\d{2}-\d{2}$/.test(sl.updated) && sl.terms.length >= 15 && sl.terms.every(t => t.zh && t.py && t.gl && t.since), "data/slang.json: a dated list, every term with pinyin, gloss and since (" + sl.terms.length + " terms, " + sl.updated + ")");
 
   // ---- 2. the app ----
   const browser = await chromium.launch();
@@ -51,7 +55,7 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
   page.on("pageerror", e => { console.log("PAGE ERROR", e.message); fails++; });
   await page.goto(URL0); await page.waitForFunction(() => typeof applyPack === "function" && !document.querySelector("#tabs").hidden);
   const r = await page.evaluate(pk => { const r = applyPack(pk, "test"); const p = S.gen.passages.find(x => x.reg === "wb"); return { r, p: p && { sty: p.sty, slang: p.slang, reg: p.reg } }; }, { zwpack: 1, id: "2026-11-20", made: "x", passages: [post({ style: "weibo" }), post({ title: "抖音那条", style: "douyin", slang: ["夯爆了", "假词"], paras: ["【视频|：|小猫|第一次|看到|雪|】", "芒果|：|夯爆了|！", "鹿|：|活人感|。"] })] });
-  ok(r.r.psg === 2 && r.p.reg === "wb" && r.p.sty === "weibo" && r.p.slang.join() === "没招,夯爆了,活人感", "a pack's wb post becomes a passage with its style and slang: " + JSON.stringify(r.p));
+  ok(r.r.psg === 2 && r.p.reg === "wb" && r.p.sty === "weibo" && r.p.slang.join() === "夯爆了,活人感", "a pack's wb post becomes a passage with its style and slang: " + JSON.stringify(r.p));
   ok(await page.evaluate(() => S.gen.passages.find(x => x.title === "抖音那条").slang.join() === "夯爆了"), "slang not in the text is dropped by the app too");
   // the reader: chip, thread styling, slang in the popup
   await page.click('#tabs button[data-tab="read"]');
@@ -81,8 +85,22 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
   });
   ok(st.sl.retired.join() === "绝绝子" && st.sl.active.includes("夯爆了"), "a term in 3 posts and never saved is retired (绝绝子); one in 2 (夯爆了) isn't yet: " + st.sl.retired.join(","));
   ok(st.sl.saved.includes("破防") && !st.sl.active.includes("破防"), "a saved term isn't retired (破防, in 3 posts but saved)");
-  ok(st.sl.active[0] === "上头" && st.sl.active.includes("活人感") && st.sl.active.includes("没招"), "terms met 1–2 times stay active, newest first: " + st.sl.active.join(","));
+  ok(st.sl.active[0] === "上头" && st.sl.active.includes("活人感"), "terms met 1–2 times stay active, newest first: " + st.sl.active.join(","));
   ok(JSON.stringify(st.h) === JSON.stringify([st.sl.active, st.sl.retired, st.sl.saved]), "the note's hints carry the three lists");
+  // ---- 4. the reminder to refresh the slang list ----
+  await page.waitForFunction(() => SLANG && SLANG.terms.length > 0);
+  await page.evaluate(() => { S.placed = true; SLANG.updated = dayKey(now() - 20 * DAY); setView("home"); });
+  await page.waitForSelector("#slangcard");
+  const card = await page.textContent("#slangcard");
+  ok(/20 天没更新了/.test(card) && /更新热梗表/.test(card), "after 2 weeks the home screen says the slang list is due, with the words to say to Claude: " + card.replace(/\s+/g, " ").slice(0, 80));
+  await page.click("#slang-later"); await page.waitForFunction(() => !$("#slangcard"));
+  ok(await page.evaluate(() => +localStorage.getItem("zwlgf:slangsnooze") > now() + 2.9 * DAY), "过几天再说 · Later puts it off for 3 days on this device");
+  await page.evaluate(() => { localStorage.removeItem("zwlgf:slangsnooze"); S.settings = setSettings({ reading: Object.assign({}, (S.settings || {}).reading, { genres: ["news"] }) }); setView("home"); });
+  ok(await page.locator("#slangcard").count() === 0, "not shown while 微博·抖音 isn't among the genres");
+  await page.evaluate(() => { S.settings = setSettings({ reading: Object.assign({}, (S.settings || {}).reading, { genres: null }) }); SLANG.updated = dayKey(); setView("home"); });
+  ok(await page.locator("#slangcard").count() === 0, "a fresh list: no card");
+  await page.click('#tabs button[data-tab="me"]'); await page.waitForSelector("#slanginfo");
+  ok(/热梗表 · Slang list: \d{4}-\d{2}-\d{2} · \d+ 个 terms/.test(await page.textContent("#slanginfo")), "Progress shows the list's date and size: " + await page.textContent("#slanginfo"));
   await browser.close();
   console.log(fails ? `${fails} FAILED` : "ALL PASSED"); process.exit(fails ? 1 : 0);
 })();

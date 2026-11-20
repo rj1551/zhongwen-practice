@@ -42,3 +42,11 @@ This repo is public. Keep keys, tokens, scheduled-task ids, bucket names and the
 - Outside text reaching `innerHTML` always goes through `esc()`.
 - Local progress is written only through `writeLocal()`; quiet failures go to `noteErr(where, e)` (Progress → 出错记录).
 - Tests: `tools/tests/README.md`. Playwright comes from `playwright` or `$PLAYWRIGHT`.
+
+## Refreshing the slang list (`data/slang.json`, v79)
+The 微博·抖音 posts (kind `wb`) may only target slang from this list; the nightly run never searches the web. When the
+learner asks to refresh it (the app reminds them after 14 days): do a few web searches for current Chinese internet
+slang (news write-ups, year/half-year buzzword lists, meme explainers), keep terms that are still current, drop stale
+ones, add new ones; leave out anything crude, political, or tied to a private person. Write each gloss in your own
+words (`zh`, `py`, `gl`, `since`), set `updated` to today, **show the learner the list (added / dropped) before
+pushing**, then bump `CACHE` (slang.json is cached with the app), build, run `wb.test.js`, push.

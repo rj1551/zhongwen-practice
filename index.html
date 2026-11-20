@@ -152,11 +152,13 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .tk.looked{background:var(--gold-soft)}
 .kf{display:flex;flex-direction:column;height:calc(100dvh - 48px);gap:8px}
 .kfsong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.kfview{position:relative;flex:1;overflow:hidden;-webkit-mask-image:linear-gradient(transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(transparent,#000 14%,#000 86%,transparent)}
-.kfcol{transition:transform .45s ease;will-change:transform}
-.kfl{position:relative;display:flex;align-items:center;gap:6px;justify-content:center;font-family:var(--f-zh);text-align:center;padding:6px 0;line-height:1.9;color:var(--muted);font-size:clamp(19px,5.6vw,26px);user-select:none;-webkit-user-select:none;transition:color .3s,opacity .3s}
-.kfl.cur{color:var(--accent);font-size:clamp(32px,10vw,48px);font-weight:600;padding:14px 0}
-.kfl.prev{opacity:.45} .kfl.gone{opacity:.2} .kfl.later{opacity:.5}
+.kfview{position:relative;flex:1;overflow:hidden;display:flex;align-items:center}
+.kfcol{width:100%}
+.kfcol.turn .kfl:not(.off){animation:kfin .3s ease}
+@keyframes kfin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.kfl{position:relative;display:flex;align-items:center;gap:6px;justify-content:center;font-family:var(--f-zh);text-align:center;padding:12px 0;line-height:1.9;font-size:clamp(26px,7.6vw,38px);user-select:none;-webkit-user-select:none;transition:color .12s,opacity .12s}
+.kfl.cur{color:var(--accent);font-weight:700}
+.kfl.sung{opacity:.4} .kfl.off{display:none}
 .kft{flex:0 1 auto;letter-spacing:.03em}
 .kfre{flex:none;border:0;background:none;color:var(--muted);font-size:15px;padding:6px;cursor:pointer;opacity:.7}
 .kfl.cur .kfre{visibility:hidden}
@@ -1712,7 +1714,7 @@ function renderHome(main) {
   ${!S.placed ? `<div class="card"><span class="label">第一步 · First step</span><h2>先做水平测试（约 10 分钟）</h2>
     <p class="muted">Placement test: words in context, chunking, news parsing, natural vs. English-shaped Chinese, writing, and timed reading. It sets how your daily practice is weighted.</p>
     <div class="row"><button class="btn" id="go-place">开始测试 Start</button><button class="btn ghost" id="skip-place">先随便练 Skip</button></div></div>` : ""}
-  ${storeCard()}${schedHomeCard()}${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
+  ${storeCard()}${schedHomeCard()}${slangCard()}${ghHomeCard()}${provGoneCard()}${checkHomeCards()}${gradedCard()}
   ${autoCard()}
   ${reqWaitCard()}
   ${backupNudge()}
@@ -1741,6 +1743,8 @@ function renderHome(main) {
   bindStoreCard(main);
   const hr = $("#sr-home", main); if (hr) hr.onclick = () => startSession();
   const hs = $("#sr-homeskip", main); if (hs) hs.onclick = () => { markDay("nr"); maybeDayDone(); save(); render(); };
+  const sc = $("#slang-copy", main); if (sc) sc.onclick = () => navigator.clipboard.writeText(SLANG_ASK).then(() => toast("已复制 · Copied"), () => toast("复制不了 · Couldn't copy"));
+  const sl = $("#slang-later", main); if (sl) sl.onclick = () => { try { localStorage.setItem(SLANG_SNOOZE, String(now() + 3 * DAY)); } catch (e) {} render(); };
   const pf = $("#prov-fix", main); if (pf) pf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#provcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   const gp = $("#go-place", main); if (gp) gp.onclick = startPlacement;
   const sp = $("#skip-place", main); if (sp) sp.onclick = () => { S.placed = true; S.skills = S.skills || { ctx: .6, seg: .5, news: .35, pick: .5, write: .3, speed: .4 }; save(); render(); };
@@ -2914,6 +2918,22 @@ function schedNext(used) {
   if (used.srq.length >= schedReadLeft()) return null;
   const p = schedPassage(new Set(used.srq)); if (!p) return null;
   used.srq.push(p.id); return { t: "sr", id: p.id };
+}
+// ---- the slang list (data/slang.json, v79): the only slang the 微博·抖音 posts may target. It is refreshed in a chat
+// with Claude (the nightly run stays offline), so the app reminds the learner when it gets old: a home card after
+// SLANG_OLD days, "Later" puts it off for 3 days on this device. Shown only while 微博·抖音 is among the genres.
+let SLANG = null; const SLANG_OLD = 14, SLANG_SNOOZE = "zwlgf:slangsnooze", SLANG_ASK = "更新热梗表 · Refresh the slang list for 中文练功房 (data/slang.json)";
+function loadSlang() { return fetch("data/slang.json").then(r => r.ok ? r.json() : null).then(j => { if (j && /^\d{4}-\d{2}-\d{2}$/.test(j.updated) && Array.isArray(j.terms)) { SLANG = j; if (VIEW === "home") render(); } }).catch(e => noteErr("slang list", e)); }
+const slangAge = () => SLANG ? Math.floor((now() - new Date(SLANG.updated + "T12:00:00").getTime()) / DAY) : null;
+const wbOn = () => !readGenres() || readGenres().includes("wb");
+function slangCard() {
+  const age = slangAge(); if (age == null || age < SLANG_OLD || !wbOn()) return "";
+  let until = 0; try { until = +localStorage.getItem(SLANG_SNOOZE) || 0; } catch (e) {}
+  if (now() < until) return "";
+  return `<div class="card stack" id="slangcard"><span class="label">热梗表 · Slang list</span>
+    <p class="small">${age} 天没更新了。微博·抖音的帖子只用这张表里的梗，所以过一阵就该换新的 · Last refreshed ${age} days ago (${esc(SLANG.updated)}). The 微博·抖音 posts only use slang from this list, so it needs a refresh now and then. In a chat with Claude in your Chinese project, say:</p>
+    <p class="zh" style="font-size:15px">${esc(SLANG_ASK)}</p>
+    <div class="row"><button class="btn soft" id="slang-copy">复制 Copy</button><button class="btn ghost" id="slang-later">过几天再说 · Later</button></div></div>`;
 }
 // after a first read, a skip or a free-writing answer outside the session: the day's ✓ if nothing is left
 // home: today's cards are done but the passage isn't yet (so no ✓ yet) — says why, offers both ways
@@ -4344,10 +4364,10 @@ function mediaMeta(it) {
   } catch (e) {}
 }
 /* ============ 刷歌词 · Lyric feed (KTV instant mode; v74, scrolling v75) ============
-   Endless, like a KTV screen: a run of 4–8 consecutive lines from one song, the current line large and highlighted,
-   the line before faded above and the next two below; the song plays straight through from KF_LEAD s before the
-   run's first line (three dots go out one by one until the words start) and the lines scroll up by themselves, then
-   the next song. Muted / no audio: the lines still move at the song's timing. ↺ on any line starts from it (with the
+   Endless, like a KTV screen: a run of 4–8 consecutive lines from one song shown as a page of KF_PAGE lines (v79),
+   all the same size; the song plays straight through from KF_LEAD s before the run's first line (three dots go out
+   one by one until the words start), the highlight steps down the page by itself and the page turns, then the next
+   song. Muted / no audio: the lines still move at the song's timing. ↺ on any line starts from it (with the
    lead-in); swipe up / ↓ skips a line, swipe down / ↑ goes back; swipe left / → / ⏭ = the next song, swipe right /
    ← / ⏮ = back through the runs met so far, → forward again (like a browser's history, KF_HIST); Space or a tap on
    an empty spot pauses.
@@ -4570,7 +4590,7 @@ function kfSong(d) {
 // runs met in this sitting, like a browser's history: ← steps back through them, → forward again, and only past the
 // newest does → (or a run ending by itself) pick a new one. Up to KF_HIST runs.
 const KF_HIST = 20;
-function kfSetRun(run) { KF.run = run; KF.li = 0; KF.tapped = new Map(); KF.drawn = null; if (VIEW === "listen" && LST && LST.feed) render(); }
+function kfSetRun(run) { KF.run = run; KF.li = 0; KF.ps = null; KF.tapped = new Map(); KF.drawn = null; if (VIEW === "listen" && LST && LST.feed) render(); }
 function kfNewRun() {
   if (KF.hi < KF.hist.length - 1) { KF.hi++; return kfSetRun(KF.hist[KF.hi]); }
   const r = kfPickRun(); if (!r) return kfSetRun(null);
@@ -4627,17 +4647,22 @@ function kfStop() {
   else { const s = kfLineSec(); if (s > 0) { logDay(s, true, "ktv"); KF.sec += s; save(); } }
   KF.ended = true; render();
 }
-// classes and scroll for the current line: the one before faded above, the next two below, the rest dimmer
+// KTV page (v79, learner: "resembles most ktv systems"): KF_PAGE lines stand still, all the same size, and the
+// highlight steps down through them; after the page's last line the page turns, keeping the line just sung at the
+// top for context. Nothing moves or grows between turns, so a line read ahead is where it was when it's sung.
+const KF_PAGE = 4;
 function kfShow() {
   const col = $("#kfcol"); if (!col || !KF.run) return;
-  const li = KF.li;
+  const li = KF.li, old = KF.ps;
+  if (KF.ps == null || li < KF.ps || li >= KF.ps + KF_PAGE) KF.ps = li === 0 ? 0 : li - 1;
+  const ps = KF.ps;
   $$(".kfl", col).forEach(el => {
-    const j = +el.dataset.j, d = j - li;
-    el.className = "kfl " + (d === 0 ? "cur" : d < 0 ? (d === -1 ? "prev" : "gone") : (d <= 2 ? "next" : "later"));
+    const j = +el.dataset.j, d = j - li, on = j >= ps && j < ps + KF_PAGE;
+    el.className = "kfl " + (!on ? "off" : d === 0 ? "cur" : d < 0 ? "sung" : "next");
   });
-  const cur = $(`.kfl[data-j="${li}"]`, col), view = $("#kfview"), dots = $("#kfdots");
+  if (old != null && old !== ps) { col.classList.remove("turn"); void col.offsetWidth; col.classList.add("turn"); } // the page turns: a short fade-in
+  const cur = $(`.kfl[data-j="${li}"]`, col), dots = $("#kfdots");
   if (cur && dots && dots.parentNode !== cur) cur.prepend(dots);
-  if (cur && view) col.style.transform = `translateY(${Math.round(view.clientHeight * 0.4 - (cur.offsetTop + cur.offsetHeight / 2))}px)`;
   const pz = $("#kfpz"); if (pz) pz.hidden = !(KF.state === "pause" && KF.paused);
   const pos = $("#kfpos"); if (pos) pos.textContent = `${li + 1}/${KF.run.lines.length}`;
 }
@@ -4652,7 +4677,7 @@ function renderFeed(main) {
     return;
   }
   if (KF.loading) { main.innerHTML = `<div class="kf"><div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button></div><p class="muted" style="margin:auto">词典加载中… Loading the dictionary…</p></div>`; $("#kfquit", main).onclick = () => { KF.loading = false; KF.ended = true; render(); }; return; }
-  if (!KF.run) { const r = kfPickRun(); if (r) { KF.hist.push(r); KF.hi = KF.hist.length - 1; KF.run = r; } }
+  if (!KF.run) { const r = kfPickRun(); if (r) { KF.hist.push(r); KF.hi = KF.hist.length - 1; KF.run = r; KF.ps = null; } }
   if (!KF.run || !KF.run.lines.length) {
     main.innerHTML = `<div class="card stack"><p>还没有带时间的歌词 · No songs with timed lyrics yet. Add a song in 听 with an .lrc file or from LRCLIB.</p><button class="btn ghost" id="kfback">回到听力 Back</button></div>`;
     $("#kfback", main).onclick = () => { KF = null; LST = null; render(); }; return;
@@ -6068,6 +6093,7 @@ function packCard() {
       ${cfg.from || cfg.to ? `<button class="btn ghost" id="pk-clr" style="min-height:34px;padding:6px 10px">清除 Clear</button>` : ""}</div>
     <div class="row small" style="gap:6px">阅读量 Reading: ${sel("pk-read", [[0.5, "两天一篇 1 every 2 days"], [1, "每天一篇 1 a day"], [2, "每天两篇 2 a day"]], readPerDay())}</div>
     <div class="row small" style="gap:10px;flex-wrap:wrap">体裁 Genres: ${PSG_GENRES.map(([k, n]) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-genre="${k}" ${!readGenres() || readGenres().includes(k) ? "checked" : ""}> ${n}</label>`).join("")}${readGenres() ? "" : ` <span class="muted">(自动 auto: mostly 新闻 and 小红书)</span>`}</div>
+    ${SLANG ? `<p class="small muted" id="slanginfo">热梗表 · Slang list: ${esc(SLANG.updated)} · ${SLANG.terms.length} 个 terms${slangAge() >= SLANG_OLD ? " · 该更新了 due a refresh" : ""}</p>` : ""}
     <div id="st-body">${status}</div>
     <details><summary class="small" style="cursor:pointer">多来一篇 · One more passage</summary>
       <div class="row small" style="gap:6px;margin-top:6px">${sel("pk-g1", [["", "任何体裁 Any genre"], ...PSG_GENRES], "")}</div>
@@ -6173,7 +6199,7 @@ function drawUpdate() {
 
 /* ============ boot ============ */
 (async function boot() {
-  try { await loadData(); }
+  try { await loadData(); loadSlang(); }
   catch (e) { $("#main").innerHTML = `<div class="card"><h2>加载失败</h2><p class="muted">Couldn't load the word data. Check your connection and reload.</p></div>`; return; }
   $("#tabs").hidden = false;
   rescoreLastPlacement();

@@ -2,10 +2,10 @@
 // Two stores (v68): CACHE holds the app and is renewed with every release; DATA holds the big files that almost
 // never change (the 7 MB dictionary, the 简/繁 table) and is renewed only when DATA's number is bumped. Before v68
 // every release downloaded those ~7.3 MB again. Bump DATA only when cedict.txt or zhconv.txt changes.
-const CACHE = "zwlgf-v78";
+const CACHE = "zwlgf-v79";
 const DATA = "zwlgf-data-1";
 const BIG = ["data/cedict.txt", "data/zhconv.txt"];
-const FILES = ["./", "index.html", "data/words.json", "data/content.json", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
+const FILES = ["./", "index.html", "data/words.json", "data/content.json", "data/slang.json", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
 const isBig = url => BIG.some(f => new URL(f, self.registration.scope).href === url.split(/[?#]/)[0]);
 const storeFor = url => isBig(url) ? DATA : CACHE;
 // fill DATA: a file already in DATA stays; one still in an old app store (pre-v68 layout, zwlgf-vNN) is copied over

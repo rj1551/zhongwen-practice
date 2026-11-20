@@ -45,7 +45,9 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.click("#kfopen"); await page.waitForSelector("#kfcol .kfl.cur");
   ok(await page.locator("#tabs").isHidden(), "the tabs are hidden while the feed is open (■ stops it)");
   const lines = await page.$$eval("#kfcol .kfl", els => els.map(e => [e.className, e.querySelector(".kft").textContent]));
-  ok(lines.length === 5 && lines[0][0].includes("cur") && lines[0][1] === "我还给你自由" && lines[1][0].includes("next") && lines[2][0].includes("next") && lines[3][0].includes("later"), "the run's lines are all on screen: current large, the next two below, the rest dimmer: " + lines.map(l => l[0].replace("kfl ", "") + ":" + l[1]).join(" "));
+  ok(lines.length === 5 && lines[0][0].includes("cur") && lines[0][1] === "我还给你自由" && lines.slice(1, 4).every(l => l[0].includes("next")) && lines[4][0].includes("off"), "a page of 4 lines: the current one highlighted, the next three below (the 5th waits for the page turn): " + lines.map(l => l[0].replace("kfl ", "") + ":" + l[1]).join(" "));
+  const fs0 = await page.$$eval("#kfcol .kfl:not(.off)", els => els.map(e => getComputedStyle(e).fontSize));
+  ok(new Set(fs0).size === 1, "all lines on the page are the same size (" + fs0[0] + ")");
   ok(await page.locator("#kfcol .kpyl").count() === 0, "no pinyin on the lines");
   await page.waitForFunction(() => !$("#kfdots").hidden && $$("#kfdots i:not(.off)").length >= 1, null, { timeout: 2000 });
   const d0 = await page.evaluate(() => [$$("#kfdots i:not(.off)").length, KF.state, $("#kfdots").parentNode.classList.contains("cur")]);
@@ -54,13 +56,15 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.evaluate(() => KF.aud.paused && KF.aud.currentTime < 0.05), "a run starting 1 s into the song: silence first");
   await page.waitForFunction(() => KF.state === "play", null, { timeout: 3000 });
   ok(await page.evaluate(() => $("#kfdots").hidden && !KF.aud.paused && KF.aud.currentTime >= 0.9 && KF.aud.currentTime < 1.6), "the dots go when the words start (song at ~1 s, playing)");
-  const y0 = await page.evaluate(() => $("#kfcol").style.transform);
+  const y0 = await page.evaluate(() => [...$$("#kfcol .kfl")].map(e => Math.round(e.getBoundingClientRect().top)).join());
   await page.waitForFunction(() => KF.li === 1, null, { timeout: 5000 });
-  const a1 = await page.evaluate(() => [KF.aud.currentTime, KF.aud.paused, $(".kfl.cur .kft").textContent, $(".kfl.prev .kft").textContent, $("#kfcol").style.transform]);
-  ok(a1[0] >= 3.95 && a1[0] < 4.4 && !a1[1] && a1[2] === "你说了一句话" && a1[3] === "我还给你自由", "at the next line's time it becomes current by itself, the song still playing (no button): " + a1.slice(0, 4).join(" | "));
-  ok(a1[4] !== y0, "the lines scroll up (" + y0 + " → " + a1[4] + ")");
-  ok(/2\/5/.test(await page.textContent("#kfpos")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and the place in the run show at the top");
+  const a1 = await page.evaluate(() => [KF.aud.currentTime, KF.aud.paused, $(".kfl.cur .kft").textContent, $(".kfl.sung .kft").textContent, [...$$("#kfcol .kfl")].map(e => Math.round(e.getBoundingClientRect().top)).join()]);
+  ok(a1[0] >= 3.95 && a1[0] < 4.4 && !a1[1] && a1[2] === "你说了一句话" && a1[3] === "我还给你自由", "at the next line's time the highlight steps down by itself, the song still playing (no button): " + a1.slice(0, 4).join(" | "));
+  ok(a1[4] === y0, "nothing moves between page turns (line positions " + y0 + ")");
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-card.png" });
+  const turn = await page.evaluate(() => { KF.li = 3; kfShow(); const a = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 4; kfShow(); const b = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 1; KF.ps = null; kfShow(); return [a, b]; });
+  ok(turn[0] === "sung,sung,sung,cur,off" && turn[1] === "off,off,off,sung,cur", "after the page's last line the page turns, keeping the line just sung on top: " + turn.join(" → "));
+  ok(/2\/5/.test(await page.textContent("#kfpos")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and the place in the run show at the top");
 
   // ---- 3. tapping a character pauses; closing goes on from 1.5 s before the line ----
   const huan = page.locator('.kfl[data-j="0"] .kfc', { hasText: "还" });
@@ -96,7 +100,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.waitForFunction(() => KF.li === 3 && !KF.aud.paused, null, { timeout: 3000 });
   const r2 = await page.evaluate(() => [KF.aud.currentTime, KF.state, $(".kfl.cur .kft").textContent]);
   ok(r2[0] >= 8.4 && r2[0] < 9.3 && r2[1] === "lead" && r2[2] === "慢慢地走着", "↺ on a line starts from it: 1.5 s before (line at 10 s), with the lead-in: " + r2[0].toFixed(2));
-  ok(await page.evaluate(() => getComputedStyle($(".kfl.cur .kfre")).visibility === "hidden" && getComputedStyle($(".kfl.prev .kfre")).visibility !== "hidden"), "every line but the current one has its ↺");
+  ok(await page.evaluate(() => getComputedStyle($(".kfl.cur .kfre")).visibility === "hidden" && getComputedStyle($(".kfl.sung .kfre")).visibility !== "hidden"), "every line but the current one has its ↺");
   await page.keyboard.press("ArrowUp"); await page.waitForFunction(() => KF.li === 2 && !KF.aud.paused, null, { timeout: 3000 });
   ok(await page.evaluate(() => KF.aud.currentTime >= 5.4 && KF.aud.currentTime < 6.3), "↑ goes back a line (with the lead-in)");
   await page.keyboard.press("ArrowDown"); await page.waitForFunction(() => KF.li === 3 && !KF.aud.paused, null, { timeout: 3000 });

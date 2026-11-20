@@ -1,0 +1,31 @@
+{
+  "updated": "2026-11-20",
+  "about": "Current Chinese internet slang for the 微博·抖音 posts (kind wb). Reviewed in a chat with the learner, refreshed about every 2 weeks (CLAUDE.md: Refreshing the slang list). The nightly run only targets terms from this list and never searches the web. Glosses are our own words.",
+  "terms": [
+    { "zh": "厉娜", "py": "Lì Nà", "gl": "tacked on at the end of a sentence as a dramatic sigh (我下班了，厉娜); from a line in the reunion show 后会友期", "since": "2026-11" },
+    { "zh": "不烧心", "py": "bù shāo xīn", "gl": "'no heartburn' = honest, worth it, no regrets; from an AI short-drama line 贵是贵了点，但下午干活不烧心", "since": "2026-10" },
+    { "zh": "特别通透", "py": "tèbié tōngtòu", "gl": "'so clear-headed', said half-ironically after something silly; from a viral exercise video", "since": "2026-10" },
+    { "zh": "夯爆了", "py": "hāng bào le", "gl": "top tier, awesome (夯 = the top rank in a tier list)", "since": "2026" },
+    { "zh": "大脑降噪", "py": "dànǎo jiàngzào", "gl": "'noise-cancel your brain': tune out the mental clutter", "since": "2026" },
+    { "zh": "我真没招了", "py": "wǒ zhēn méi zhāo le", "gl": "I'm out of ideas, I give up (helpless, joking)", "since": "2026" },
+    { "zh": "碾压", "py": "niǎnyā", "gl": "crush, totally outclass (also used for looks: 颜值碾压)", "since": "2026" },
+    { "zh": "活人感", "py": "huó rén gǎn", "gl": "the feel of a real, unpolished person (not a performance or a corporate voice)", "since": "2025" },
+    { "zh": "爱你老己", "py": "ài nǐ lǎo jǐ", "gl": "'love you, old self': treating and comforting yourself", "since": "2025" },
+    { "zh": "邪修", "py": "xié xiū", "gl": "an unorthodox but effective shortcut (邪修做饭 = weird but working cooking hacks); from fantasy novels", "since": "2025" },
+    { "zh": "主理人", "py": "zhǔlǐrén", "gl": "'owner-curator' of a small trendy shop or brand; often teasing", "since": "2025" },
+    { "zh": "情绪价值", "py": "qíngxù jiàzhí", "gl": "'emotional value': making someone feel good (他很会提供情绪价值)", "since": "2025" },
+    { "zh": "如何呢又能怎", "py": "rúhé ne yòu néng zěn", "gl": "so what, what can you do — a shrug", "since": "2025" },
+    { "zh": "敬自己一杯", "py": "jìng zìjǐ yì bēi", "gl": "raise a glass to yourself (for getting through something)", "since": "2025" },
+    { "zh": "当个事儿办", "py": "dàng gè shìr bàn", "gl": "take it seriously, handle it properly", "since": "2025" },
+    { "zh": "拼好饭", "py": "pīn hǎo fàn", "gl": "cheap group-buy takeaway; 拼好X = a pieced-together budget version of X", "since": "2025" },
+    { "zh": "误闯天家", "py": "wù chuǎng tiān jiā", "gl": "stumbled into somewhere far above your level (a fancy shop, a pro event)", "since": "2025" },
+    { "zh": "高雅人士", "py": "gāoyǎ rénshì", "gl": "'a person of refinement', said ironically about yourself", "since": "2025" },
+    { "zh": "班味", "py": "bān wèi", "gl": "the worn-out 'office worker' look and vibe", "since": "2024" },
+    { "zh": "草台班子", "py": "cǎotái bānzi", "gl": "a makeshift troupe: nobody really knows what they're doing (said of companies, the world)", "since": "2024" },
+    { "zh": "偷感很重", "py": "tōu gǎn hěn zhòng", "gl": "acting furtive, trying not to be noticed", "since": "2024" },
+    { "zh": "预制人", "py": "yùzhì rén", "gl": "'pre-made person': acting on autopilot, like reheated pre-made food", "since": "2025" },
+    { "zh": "搭子", "py": "dāzi", "gl": "a buddy for one activity only (饭搭子 = lunch buddy, 旅游搭子)", "since": "2023" },
+    { "zh": "来财", "py": "lái cái", "gl": "'money, come!' — a cheerful lucky phrase, often repeated", "since": "2025" },
+    { "zh": "村咖", "py": "cūn kā", "gl": "a café out in a village (a trendy weekend trip)", "since": "2025" }
+  ]
+}
