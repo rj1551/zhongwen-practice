@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-HbTZeMJygyfwIIw6iV6mULO1MThXUhthsWEjcVBWNc4='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-NW0O93R9Kh4yAw05ybNU4NFk/2vWceQq8sAZFCUie7s='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -155,12 +155,14 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .kfsong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .kfview{position:relative;flex:1;overflow:hidden;display:flex;align-items:center}
 .kfcol{width:100%}
+html.kflock,html.kflock body{overflow:hidden;overscroll-behavior:none;height:100%}
+.kf{touch-action:none;overscroll-behavior:none}
 .kfcol.turn .kfl:not(.off){animation:kfin .3s ease}
 @keyframes kfin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.kfl{position:relative;display:flex;align-items:center;gap:6px;justify-content:center;font-family:var(--f-zh);text-align:center;padding:12px 0;line-height:1.9;font-size:clamp(26px,7.6vw,38px);user-select:none;-webkit-user-select:none;transition:color .12s,opacity .12s}
+.kfl{position:relative;display:flex;align-items:center;gap:6px;justify-content:center;font-family:var(--f-zh);text-align:center;padding:10px 4px;line-height:1.7;font-size:clamp(24px,7vw,36px);box-sizing:border-box;width:100%;max-width:100%;user-select:none;-webkit-user-select:none}
 .kfl.cur{color:var(--accent);font-weight:700}
 .kfl.sung{opacity:.4} .kfl.off{display:none}
-.kft{flex:0 1 auto;letter-spacing:.03em}
+.kft{flex:0 1 auto;min-width:0;letter-spacing:.03em;word-break:break-all;overflow-wrap:anywhere}
 .kfre{flex:none;border:0;background:none;color:var(--muted);font-size:15px;padding:6px;cursor:pointer;opacity:.7}
 .kfl.cur .kfre{visibility:hidden}
 .kfc{position:relative;cursor:pointer;border-radius:6px;padding:0 1px}
@@ -1691,6 +1693,7 @@ function render() {
   const main = $("#main");
   dropBar(); // the listening player bar belongs to an item's page only; drawPlayer puts it back
   $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place" || (VIEW === "listen" && LST && LST.feed && KF && !KF.ended);
+  document.documentElement.classList.toggle("kflock", !!(VIEW === "listen" && LST && LST.feed && KF && !KF.ended)); // lyric feed: the page itself never scrolls
   $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
   if (VIEW === "home") renderHome(main);
   else if (VIEW === "session") renderSession(main);
@@ -3275,7 +3278,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v79 · 11/20 00:14"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v80 · 11/20 00:32"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4552,6 +4555,7 @@ async function kfStartAt(j) {
   else go();
   clearInterval(KF.tick); KF.tick = setInterval(() => kfTick(tok), 50); kfTick(tok);
 }
+const KF_EARLY = 0.15; // the highlight moves this much before the line's time (screen + reading lag; 听 uses ~0.05 + its own update rate)
 function kfTick(tok) {
   if (!KF || tok !== KF.ptok || !KF.run) return;
   const it = KF.run.it, t = kfT(), last = KF.run.lines.length - 1;
@@ -4564,7 +4568,7 @@ function kfTick(tok) {
   } else if (dots && !dots.hidden) dots.hidden = true;
   // the current line follows the song
   let j = KF.li;
-  while (j < last && t >= cueT(it, kfLine(j + 1))) j++;
+  while (j < last && t >= cueT(it, kfLine(j + 1)) - KF_EARLY) j++;
   if (j !== KF.li) { for (let k = KF.li; k < j; k++) kfLineDone(k); KF.li = j; kfShow(); }
   if (t >= kfEnd(it, kfLine(last)) || (KF.useAud && KF.aud.ended)) kfRunEnd();
 }
@@ -4724,7 +4728,7 @@ function kfTap(j, k, el) {
   kfPopOpen(j, k);
 }
 function kfPopClose(resume) {
-  const p = $("#kfpop"); if (p) p.remove(); document.body.style.paddingBottom = "";
+  const p = $("#kfpop"); if (p) p.remove();
   if (p && resume !== false && KF && KF.popPaused && !KF.ended) kfResume();
 }
 function kfPopOpen(j, k) {
@@ -4737,8 +4741,7 @@ function kfPopOpen(j, k) {
   sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:14px;align-items:baseline"><span class="kch zh">${esc(c.c)}</span><span class="kpy">${esc(c.py || "?")}</span></div><button class="x" id="kfcls" aria-label="关闭">×</button></div>
     <div class="kwd small"><span class="zh">${esc(c.wd)}</span> ${esc(c.wpy)}${wgl ? " · " + esc(String(wgl).slice(0, 90)) : ""}</div>
     <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="kfadd" ${inBank ? "disabled" : ""}>${inBank ? "✓ 已在复习中 In review" : "加入复习 Add to review"}</button><button class="btn ghost" id="kfmis">点错了 · Mis-tap</button></div></div>`;
-  document.body.append(sh);
-  document.body.style.paddingBottom = sh.querySelector(".in").offsetHeight + 24 + "px";
+  document.body.append(sh); // (no padding on the page: that shrank the lyric view and moved the lines)
   $("#kfcls", sh).onclick = () => kfPopClose(true);
   $("#kfmis", sh).onclick = () => {
     const key = j + ":" + k, e = KF.tapped.get(key); if (e) { e.x = 1; KF.tapped.delete(key); KF.looked = Math.max(0, KF.looked - 1); save(); }

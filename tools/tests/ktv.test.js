@@ -59,8 +59,11 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const y0 = await page.evaluate(() => [...$$("#kfcol .kfl")].map(e => Math.round(e.getBoundingClientRect().top)).join());
   await page.waitForFunction(() => KF.li === 1, null, { timeout: 5000 });
   const a1 = await page.evaluate(() => [KF.aud.currentTime, KF.aud.paused, $(".kfl.cur .kft").textContent, $(".kfl.sung .kft").textContent, [...$$("#kfcol .kfl")].map(e => Math.round(e.getBoundingClientRect().top)).join()]);
-  ok(a1[0] >= 3.95 && a1[0] < 4.4 && !a1[1] && a1[2] === "你说了一句话" && a1[3] === "我还给你自由", "at the next line's time the highlight steps down by itself, the song still playing (no button): " + a1.slice(0, 4).join(" | "));
+  ok(a1[0] >= 3.8 && a1[0] < 4.3 && !a1[1] && a1[2] === "你说了一句话" && a1[3] === "我还给你自由", "at the next line's time the highlight steps down by itself, the song still playing (no button): " + a1.slice(0, 4).join(" | "));
   ok(a1[4] === y0, "nothing moves between page turns (line positions " + y0 + ")");
+  ok(await page.evaluate(() => document.documentElement.classList.contains("kflock") && getComputedStyle(document.body).overflow === "hidden" && getComputedStyle($("#kf")).touchAction === "none"), "the page itself can't scroll while the feed is open (it fought the swipes)");
+  const wrap = await page.evaluate(() => { const t = $(".kfl.next .kft"), keep = t.innerHTML; t.innerHTML = "倔强的我最后过回了沉溺在那旧日时光".split("").map(c => `<span class="kfc">${c}</span>`).join(""); const v = $("#kfview").getBoundingClientRect(), r = t.getBoundingClientRect(), out = [Math.round(r.left), Math.round(r.right), Math.round(v.left), Math.round(v.right), Math.round(r.height)]; t.innerHTML = keep; return out; });
+  ok(wrap[0] >= wrap[2] && wrap[1] <= wrap[3] && wrap[4] > 60, "a long line wraps inside the screen instead of running off the edges: " + wrap.join(","));
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-card.png" });
   const turn = await page.evaluate(() => { KF.li = 3; kfShow(); const a = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 4; kfShow(); const b = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 1; KF.ps = null; kfShow(); return [a, b]; });
   ok(turn[0] === "sung,sung,sung,cur,off" && turn[1] === "off,off,off,sung,cur", "after the page's last line the page turns, keeping the line just sung on top: " + turn.join(" → "));
@@ -70,6 +73,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   const huan = page.locator('.kfl[data-j="0"] .kfc', { hasText: "还" });
   await huan.click(); await page.waitForSelector("#kfpop");
   ok(await page.evaluate(() => KF.aud.paused && KF.state === "pause"), "tapping a character pauses the song");
+  ok(await page.evaluate(() => document.body.style.paddingBottom === ""), "the popup doesn't pad the page (that moved the lines)");
   ok(/还/.test(await page.textContent("#kfpop .kch")) && /huán/.test(await page.textContent("#kfpop .kpy")), "the popup shows that character large with its reading in its line: " + (await page.textContent("#kfpop .kpy")));
   ok(/还给/.test(await page.textContent("#kfpop .kwd")) && /huángěi/.test(await page.textContent("#kfpop .kwd")), "the word it belongs to is underneath, small: " + (await page.textContent("#kfpop .kwd")).trim());
   const pop = await page.textContent("#kfpop");
