@@ -66,7 +66,9 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(wrap[0] >= wrap[2] && wrap[1] <= wrap[3] && wrap[4] > 60, "a long line wraps inside the screen instead of running off the edges: " + wrap.join(","));
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-card.png" });
   const turn = await page.evaluate(() => { KF.li = 3; kfShow(); const a = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 4; kfShow(); const b = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 1; KF.ps = null; kfShow(); return [a, b]; });
-  ok(turn[0] === "sung,sung,sung,cur,off" && turn[1] === "off,off,off,sung,cur", "after the page's last line the page turns, keeping the line just sung on top: " + turn.join(" → "));
+  ok(turn[0] === "off,off,off,cur,next" && turn[1] === "off,off,off,sung,cur", "when the highlight would reach the bottom slot the page turns with that line on top, so the next line is already showing (only the run's last line sits at the bottom): " + turn.join(" → "));
+  const ahead = await page.evaluate(() => { const r = []; for (let j = 0; j < KF.run.lines.length - 1; j++) { KF.li = j; kfShow(); r.push(!!$(`.kfl[data-j="${j + 1}"]:not(.off)`)); } KF.li = 1; KF.ps = null; kfShow(); return r; });
+  ok(ahead.every(Boolean), "for every line, the next one is already on screen: " + ahead.join(","));
   await page.waitForFunction(() => KF.sbId === "Kb" && KF.nextRun && KF.nextRun.it.id === "Kb", null, { timeout: 3000 });
   ok(await page.evaluate(() => { const a = kfOther(); return a.readyState >= 1 && a !== KF.aud && Math.abs(a.currentTime - 0.5) < 0.05; }), "while a run plays, the next song is already loaded on the second player, sought to its lead-in");
   ok(/2\/5/.test(await page.textContent("#kfpos")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and the place in the run show at the top");
@@ -108,7 +110,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.evaluate(() => window.__unpz()) === 0, "a jump inside the playing song just moves the playhead: the player never stops (like 听)");
   const r2 = await page.evaluate(() => [KF.aud.currentTime, KF.state, $(".kfl.cur .kft").textContent]);
   ok(r2[0] >= 8.4 && r2[0] < 9.3 && r2[1] === "lead" && r2[2] === "慢慢地走着", "↺ on a line starts from it: 1.5 s before (line at 10 s), with the lead-in: " + r2[0].toFixed(2));
-  ok(await page.evaluate(() => getComputedStyle($(".kfl.cur .kfre")).visibility === "hidden" && getComputedStyle($(".kfl.sung .kfre")).visibility !== "hidden"), "every line but the current one has its ↺");
+  ok(await page.evaluate(() => getComputedStyle($(".kfl.cur .kfre")).visibility === "hidden" && getComputedStyle($(".kfl.next .kfre")).visibility !== "hidden"), "every line but the current one has its ↺");
   await page.keyboard.press("ArrowUp"); await page.waitForFunction(() => KF.li === 2 && !KF.aud.paused, null, { timeout: 3000 });
   ok(await page.evaluate(() => KF.aud.currentTime >= 5.4 && KF.aud.currentTime < 6.3), "↑ goes back a line (with the lead-in)");
   await page.keyboard.press("ArrowDown"); await page.waitForFunction(() => KF.li === 3 && !KF.aud.paused, null, { timeout: 3000 });

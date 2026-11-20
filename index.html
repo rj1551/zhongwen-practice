@@ -4690,13 +4690,17 @@ function kfStop() {
   KF.ended = true; render();
 }
 // KTV page (v79, learner: "resembles most ktv systems"): KF_PAGE lines stand still, all the same size, and the
-// highlight steps down through them; after the page's last line the page turns, keeping the line just sung at the
-// top for context. Nothing moves or grows between turns, so a line read ahead is where it was when it's sung.
+// highlight steps down through them. v82 (learner: give the next line time to show before it has to be read): the
+// current line never sits in the bottom slot — when the highlight would get there the page turns with that line on
+// top, so at least the next line is always on screen about one line ahead, page turns included (only the run's last
+// line can be in the bottom slot). Nothing moves or grows between turns.
 const KF_PAGE = 4;
 function kfShow() {
   const col = $("#kfcol"); if (!col || !KF.run) return;
   const li = KF.li, old = KF.ps;
-  if (KF.ps == null || li < KF.ps || li >= KF.ps + KF_PAGE) KF.ps = li === 0 ? 0 : li - 1;
+  const last = KF.run.lines.length - 1;
+  if (KF.ps == null) KF.ps = li <= KF_PAGE - 2 ? 0 : li;
+  else if (li < KF.ps || (li > KF.ps + KF_PAGE - 2 && li < last) || li >= KF.ps + KF_PAGE) KF.ps = li;
   const ps = KF.ps;
   $$(".kfl", col).forEach(el => {
     const j = +el.dataset.j, d = j - li, on = j >= ps && j < ps + KF_PAGE;

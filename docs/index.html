@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-CHR5kOr2Lxn/S/cD9uHx5gTChZ33MJJRXLVWFAqSZkE='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-0Dodzvr/WVv9Nvt81onX3gEy5wsvcbQp/XPYCtQ92oo='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3278,7 +3278,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v81 · 11/20 00:56"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v82 · 11/20 01:23"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4691,13 +4691,17 @@ function kfStop() {
   KF.ended = true; render();
 }
 // KTV page (v79, learner: "resembles most ktv systems"): KF_PAGE lines stand still, all the same size, and the
-// highlight steps down through them; after the page's last line the page turns, keeping the line just sung at the
-// top for context. Nothing moves or grows between turns, so a line read ahead is where it was when it's sung.
+// highlight steps down through them. v82 (learner: give the next line time to show before it has to be read): the
+// current line never sits in the bottom slot — when the highlight would get there the page turns with that line on
+// top, so at least the next line is always on screen about one line ahead, page turns included (only the run's last
+// line can be in the bottom slot). Nothing moves or grows between turns.
 const KF_PAGE = 4;
 function kfShow() {
   const col = $("#kfcol"); if (!col || !KF.run) return;
   const li = KF.li, old = KF.ps;
-  if (KF.ps == null || li < KF.ps || li >= KF.ps + KF_PAGE) KF.ps = li === 0 ? 0 : li - 1;
+  const last = KF.run.lines.length - 1;
+  if (KF.ps == null) KF.ps = li <= KF_PAGE - 2 ? 0 : li;
+  else if (li < KF.ps || (li > KF.ps + KF_PAGE - 2 && li < last) || li >= KF.ps + KF_PAGE) KF.ps = li;
   const ps = KF.ps;
   $$(".kfl", col).forEach(el => {
     const j = +el.dataset.j, d = j - li, on = j >= ps && j < ps + KF_PAGE;
