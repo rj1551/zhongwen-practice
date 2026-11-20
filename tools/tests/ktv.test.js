@@ -67,6 +67,8 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-card.png" });
   const turn = await page.evaluate(() => { KF.li = 3; kfShow(); const a = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 4; kfShow(); const b = [...$$("#kfcol .kfl")].map(e => e.className.replace("kfl ", "")).join(); KF.li = 1; KF.ps = null; kfShow(); return [a, b]; });
   ok(turn[0] === "sung,sung,sung,cur,off" && turn[1] === "off,off,off,sung,cur", "after the page's last line the page turns, keeping the line just sung on top: " + turn.join(" → "));
+  await page.waitForFunction(() => KF.sbId === "Kb" && KF.nextRun && KF.nextRun.it.id === "Kb", null, { timeout: 3000 });
+  ok(await page.evaluate(() => { const a = kfOther(); return a.readyState >= 1 && a !== KF.aud && Math.abs(a.currentTime - 0.5) < 0.05; }), "while a run plays, the next song is already loaded on the second player, sought to its lead-in");
   ok(/2\/5/.test(await page.textContent("#kfpos")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and the place in the run show at the top");
 
   // ---- 3. tapping a character pauses; closing goes on from 1.5 s before the line ----
@@ -100,8 +102,10 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(bk && bk.py === "huángěi" && bk.src === "A:Ka" && bk.s === "我还给你自由", "加入复习 saves the word with its line as the sentence: " + JSON.stringify(bk && { py: bk.py, s: bk.s, src: bk.src }));
 
   // ---- 4. restart from a line, skip, back, pause ----
+  const pz0 = await page.evaluate(() => { let paused = 0; const h = () => paused++; KF.aud.addEventListener("pause", h); window.__unpz = () => { KF.aud.removeEventListener("pause", h); return paused; }; return true; });
   await page.click('.kfl[data-j="3"] .kfre');
   await page.waitForFunction(() => KF.li === 3 && !KF.aud.paused, null, { timeout: 3000 });
+  ok(await page.evaluate(() => window.__unpz()) === 0, "a jump inside the playing song just moves the playhead: the player never stops (like 听)");
   const r2 = await page.evaluate(() => [KF.aud.currentTime, KF.state, $(".kfl.cur .kft").textContent]);
   ok(r2[0] >= 8.4 && r2[0] < 9.3 && r2[1] === "lead" && r2[2] === "慢慢地走着", "↺ on a line starts from it: 1.5 s before (line at 10 s), with the lead-in: " + r2[0].toFixed(2));
   ok(await page.evaluate(() => getComputedStyle($(".kfl.cur .kfre")).visibility === "hidden" && getComputedStyle($(".kfl.sung .kfre")).visibility !== "hidden"), "every line but the current one has its ↺");
@@ -126,6 +130,8 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.keyboard.press("ArrowDown");
   await page.waitForFunction(() => KF.run && KF.run.it.id === "Kb" && $(".kfl.cur") && $(".kfl.cur .kft").textContent === "把心还给我吧", null, { timeout: 4000 });
   ok(/歌二/.test(await page.textContent(".kfsong")) && await page.locator("#kfcol .kfl").count() === 4, "after the run's last line the next song's run follows by itself");
+  const sw = await page.evaluate(async () => { const t0 = performance.now(); while (KF.aud.paused && performance.now() - t0 < 3000) await new Promise(r => setTimeout(r, 10)); return [Math.round(performance.now() - t0), KF.aid, KF.sbId]; });
+  ok(sw[0] < 400 && sw[1] === "Kb" && sw[2] === "Ka", "the prepared player takes over: the next song plays at once (" + sw[0] + " ms after its run appears), the last one stays ready on the other");
   ok(await page.evaluate(c => KF.cards > c, cards0), "lines that went by are counted");
   await page.waitForFunction(() => KF.state === "play", null, { timeout: 4000 });
   ok(await page.evaluate(() => KF.aud.currentTime >= 1.9 && KF.aud.currentTime < 2.6), "…from 1.5 s before its first line (line at 2 s)");

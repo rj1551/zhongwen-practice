@@ -4500,12 +4500,21 @@ function kfPickRun() {
   return null;
 }
 // ---- audio: own element (the 听 player is paused while the feed is open) ----
-function kfUnlock() { // in the tap that opens the feed, so phones allow the later plays
+// Two players (v81): KF.aud plays; the other (kfOther()) quietly loads the song most likely to come next, so a song
+// change starts at once instead of loading from storage at the moment of the swipe. Both are unlocked in the tap that
+// opens the feed, so phones allow their later plays.
+function kfUnlock() {
   if (AUD && !AUD.paused) AUD.pause(); PL = null;
-  if (!KF.aud) { KF.aud = document.createElement("audio"); KF.aud.preload = "auto"; KF.aud.hidden = true; document.body.append(KF.aud); }
-  try { const b = new Uint8Array(46); const v = new DataView(b.buffer); "RIFF".split("").forEach((c, i) => b[i] = c.charCodeAt(0)); v.setUint32(4, 38, true); "WAVEfmt ".split("").forEach((c, i) => b[8 + i] = c.charCodeAt(0)); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); "data".split("").forEach((c, i) => b[36 + i] = c.charCodeAt(0)); v.setUint32(40, 2, true); b[44] = b[45] = 128;
-    const u = URL.createObjectURL(new Blob([b], { type: "audio/wav" })); KF.aud.src = u; KF.aud.muted = true; KF.aud.play().then(() => { if (KF && KF.aud && KF.aud.src === u) KF.aud.pause(); KF.aud.muted = false; }).catch(() => { KF.aud.muted = false; }); KF.aid = null; } catch (e) {}
+  if (!KF.auds) { KF.auds = [0, 1].map(() => { const a = document.createElement("audio"); a.preload = "auto"; a.hidden = true; document.body.append(a); return a; }); KF.aud = KF.auds[0]; }
+  KF.urls = KF.urls || new Map();
+  try {
+    const b = new Uint8Array(46); const v = new DataView(b.buffer); "RIFF".split("").forEach((c, i) => b[i] = c.charCodeAt(0)); v.setUint32(4, 38, true); "WAVEfmt ".split("").forEach((c, i) => b[8 + i] = c.charCodeAt(0)); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); "data".split("").forEach((c, i) => b[36 + i] = c.charCodeAt(0)); v.setUint32(40, 2, true); b[44] = b[45] = 128;
+    const u = URL.createObjectURL(new Blob([b], { type: "audio/wav" }));
+    for (const a of KF.auds) { a.src = u; a.muted = true; a.play().then(() => { if (a.src === u) a.pause(); a.muted = false; }).catch(() => { a.muted = false; }); }
+    KF.aid = null; KF.sbId = null;
+  } catch (e) {}
 }
+const kfOther = () => KF.auds[0] === KF.aud ? KF.auds[1] : KF.auds[0];
 // ---- playback: one clock for the whole run. With audio it is the song's own time; muted / no audio it is a
 // stand-in clock at the song's timing, so the lines still move at song pace (silently) ----
 function kfHush() { if (!KF) return; KF.ptok = (KF.ptok || 0) + 1; clearTimeout(KF.padT); clearInterval(KF.tick); KF.tick = null; if (KF.aud && !KF.aud.paused) KF.aud.pause(); }
@@ -4516,31 +4525,59 @@ function kfT() {
   if (KF.useAud && !KF.padding) return KF.aud.currentTime;
   return KF.vFrom + (performance.now() - KF.vStart) / 1000;
 }
-async function kfLoadAud(it) { // → true when this song's audio is ready on the feed's player
+// a song's audio as a blob: URL, kept for the sitting (up to 6 songs), so going back and forth doesn't re-read storage
+async function kfUrl(it) {
+  if (KF.urls.has(it.id)) return KF.urls.get(it.id);
+  let blob = await audioGet(it.id);
+  if (!blob && it.r2 && r2Cfg() && navigator.onLine) { try { blob = await r2Fetch1(it); } catch (e) { noteErr("lyric feed audio", e); } }
+  if (!blob) return null;
+  const u = URL.createObjectURL(blob); KF.urls.set(it.id, u);
+  if (KF.urls.size > 6) { for (const [id, x] of KF.urls) { if (id !== it.id && id !== KF.aid && id !== KF.sbId) { URL.revokeObjectURL(x); KF.urls.delete(id); break; } } }
+  return u;
+}
+const kfMeta = a => a.readyState >= 1 ? null : new Promise(res => { const d = () => res(); a.addEventListener("loadedmetadata", d, { once: true }); a.addEventListener("error", d, { once: true }); setTimeout(d, 4000); });
+async function kfLoadAud(it) { // → true when this song's audio is ready on the playing player
   KF.audMsg = "";
   if (kfMuted()) return false;
   if (it.kind !== "file") { KF.audMsg = "这首没有音频文件 · No audio file for this song"; return false; }
   if (KF.aid === it.id) return true;
-  const tok = KF.ptok;
-  let blob = await audioGet(it.id);
-  if (!blob && it.r2 && r2Cfg() && navigator.onLine) { try { blob = await r2Fetch1(it); } catch (e) { noteErr("lyric feed audio", e); } }
+  if (KF.sbId === it.id) { // already loading or loaded on the other player: swap
+    if (!KF.aud.paused) KF.aud.pause();
+    const was = KF.aid; KF.aud = kfOther(); KF.sbId = was; KF.aid = it.id;
+    const w = kfMeta(KF.aud); if (w) await w;
+    return true;
+  }
+  const tok = KF.ptok, u = await kfUrl(it);
   if (tok !== KF.ptok) return null;
-  if (!blob) { KF.audMsg = navigator.onLine ? "这台设备上没有这首歌的音频 · This song's audio isn't on this device" : "离线：这首歌没下载 · Offline: this song isn't downloaded"; return false; }
-  if (KF.url) URL.revokeObjectURL(KF.url);
-  KF.url = URL.createObjectURL(blob); KF.aud.src = KF.url; KF.aid = it.id;
-  if (KF.aud.readyState < 1) await new Promise(res => { const d = () => res(); KF.aud.addEventListener("loadedmetadata", d, { once: true }); KF.aud.addEventListener("error", d, { once: true }); setTimeout(d, 4000); });
+  if (!u) { KF.audMsg = navigator.onLine ? "这台设备上没有这首歌的音频 · This song's audio isn't on this device" : "离线：这首歌没下载 · Offline: this song isn't downloaded"; return false; }
+  KF.aud.src = u; KF.aid = it.id;
+  const w = kfMeta(KF.aud); if (w) await w;
   return tok === KF.ptok ? true : null;
+}
+// the run most likely to come next, picked now and loaded on the other player, already sought to its lead-in
+async function kfPrep() {
+  if (!KF || KF.ended || !KF.run || KF.hi !== KF.hist.length - 1 || kfMuted()) return;
+  if (!KF.nextRun) KF.nextRun = kfPickRun();
+  const r = KF.nextRun; if (!r || r.it.kind !== "file" || r.it.id === KF.aid || r.it.id === KF.sbId) return;
+  const u = await kfUrl(r.it); if (!u || !KF || KF.nextRun !== r) return;
+  const a = kfOther(); a.src = u; KF.sbId = r.it.id;
+  const w = kfMeta(a); if (w) await w;
+  try { if (KF.sbId === r.it.id && a !== KF.aud) a.currentTime = Math.max(0, cueT(r.it, r.lines[0]) - KF_LEAD); } catch (e) {}
 }
 // (re)start the run at line j: the song from KF_LEAD s before it, the lead-in dots, then it plays straight through
 async function kfStartAt(j) {
   if (!KF || !KF.run || KF.ended) return;
-  kfHush(); const tok = KF.ptok, it = KF.run.it;
+  const it = KF.run.it;
   j = Math.max(0, Math.min(KF.run.lines.length - 1, j));
-  KF.li = j; KF.state = "lead"; KF.paused = false;
   const st = cueT(it, kfLine(j)), from = st - KF_LEAD;
+  // a jump inside the song that's already playing: just move the playhead, the player never stops (like 听)
+  const quick = from >= 0 && KF.aid === it.id && !kfMuted() && it.kind === "file";
+  if (quick) { KF.ptok = (KF.ptok || 0) + 1; clearTimeout(KF.padT); clearInterval(KF.tick); KF.tick = null; } else kfHush();
+  const tok = KF.ptok;
+  KF.li = j; KF.state = "lead"; KF.paused = false;
   KF.leadTo = st; KF.vFrom = from; KF.vStart = performance.now(); KF.padding = true; KF.useAud = false;
   kfShow(); kfClock(!document.hidden);
-  const ok = await kfLoadAud(it); if (ok === null || tok !== KF.ptok) return;
+  const ok = quick ? true : await kfLoadAud(it); if (ok === null || tok !== KF.ptok) return;
   kfNoteDraw();
   KF.useAud = ok;
   const go = () => {
@@ -4553,6 +4590,7 @@ async function kfStartAt(j) {
   if (from < 0) { if (KF.useAud) try { KF.aud.currentTime = 0; } catch (e) {} KF.vFrom = from; KF.vStart = performance.now(); KF.padT = setTimeout(go, -from * 1000); }
   else go();
   clearInterval(KF.tick); KF.tick = setInterval(() => kfTick(tok), 50); kfTick(tok);
+  if (j === 0) setTimeout(() => { if (tok === KF.ptok) kfPrep(); }, 400); // a run just started: get the next song ready
 }
 const KF_EARLY = 0.15; // the highlight moves this much before the line's time (screen + reading lag; 听 uses ~0.05 + its own update rate)
 function kfTick(tok) {
@@ -4597,7 +4635,7 @@ const KF_HIST = 20;
 function kfSetRun(run) { KF.run = run; KF.li = 0; KF.ps = null; KF.tapped = new Map(); KF.drawn = null; if (VIEW === "listen" && LST && LST.feed) render(); }
 function kfNewRun() {
   if (KF.hi < KF.hist.length - 1) { KF.hi++; return kfSetRun(KF.hist[KF.hi]); }
-  const r = kfPickRun(); if (!r) return kfSetRun(null);
+  const r = KF.nextRun || kfPickRun(); KF.nextRun = null; if (!r) return kfSetRun(null);
   KF.hist.push(r); if (KF.hist.length > KF_HIST) KF.hist.shift(); KF.hi = KF.hist.length - 1;
   kfSetRun(r);
 }
@@ -4613,7 +4651,7 @@ function kfLineSec() { const run = KF.since != null; kfClock(false); const s = M
 document.addEventListener("visibilitychange", () => { if (!KF || KF.ended || !KF.run) return; if (document.hidden && KF.state !== "pause") kfPause(false); });
 // ---- the feed ----
 function openFeed() {
-  closeSheet(); KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false, hist: [], hi: -1, aud: KF && KF.aud, url: KF && KF.url, aid: KF && KF.aid };
+  closeSheet(); KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false, hist: [], hi: -1, auds: KF && KF.auds, aud: KF && KF.aud, urls: KF && KF.urls, aid: KF && KF.aid, sbId: KF && KF.sbId };
   kfUnlock(); LST = { feed: true }; KF.loading = true; setView("listen");
   // the dictionary (readings per character) and the 简/繁 table first, so the first lines are split right
   // (the table always: some songs' lyrics are in traditional characters and are looked up in simplified)
@@ -4699,7 +4737,7 @@ function renderFeed(main) {
   KF.drawn = KF.run;
   $("#kfquit", main).onclick = kfStop;
   $("#kfsp", main).onclick = () => kfSong(-1); $("#kfsn", main).onclick = () => kfSong(1);
-  $("#kfmute", main).onclick = () => { try { localStorage.setItem("zwlgf:kfmute", muted ? "0" : "1"); } catch (e) {} KF.aid = null; kfHush(); render(); };
+  $("#kfmute", main).onclick = () => { try { localStorage.setItem("zwlgf:kfmute", muted ? "0" : "1"); } catch (e) {} kfHush(); render(); };
   const view = $("#kfview", main);
   view.addEventListener("click", e => {
     const re = e.target.closest(".kfre"); if (re) { kfPopClose(false); kfStartAt(+re.dataset.re); return; }
