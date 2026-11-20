@@ -1,5 +1,5 @@
-// Lyric feed (刷歌词, KTV instant mode, v74): cards of one line, song from 1.5 s before the line (silence first when
-// the line starts earlier), runs of 2–4 lines, character popup with the reading in this line, taps outside only
+// Lyric feed (刷歌词, KTV instant mode, v74; scrolling v75): a run of lines scrolling with the song, lead-in dots, ↺ from a line,
+// skip / back / pause, character popup (pauses; the reading in this line), taps outside only
 // close, 点错了 un-marks, stumbles come back in another line and retire, sync merge, summary, Time card 写/歌,
 // autoMins from card time only. Serve docs/ on 8765 first (see README).
 const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
@@ -37,85 +37,112 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.evaluate(() => kfSpecial(kfChars(S.gen.listen[0], 1).find(c => c.s === "还")) && !kfSpecial(kfChars(S.gen.listen[0], 3).find(c => c.s === "还"))), "还 huán counts as a lyric reading, 还 hái doesn't");
   ok(await page.evaluate(() => !kfLineOk(S.gen.listen[0], 0) && kfLineOk(S.gen.listen[0], 1) && kfSongs().length === 2), "credit lines are skipped; only songs (not talks) are in the feed");
 
-  // ---- 2. opening: the button, tabs hidden, a line without pinyin, the song from 1.5 s before ----
+  // ---- 2. opening: several lines, the song from 1.5 s before the run, lead-in dots, lines scroll by themselves ----
   await page.click('#tabs button[data-tab="listen"]'); await page.waitForSelector("#kfopen");
   ok(/刷歌词/.test(await page.textContent("#kfopen")), "听 has a 刷歌词 · Lyric feed button");
-  // first run: song Ka from line 4 (starts at 10 s → audio from 8.5 s)
-  await page.evaluate(() => { const o = kfPickRun; window.__pick = [{ id: "Ka", i: 4, n: 2 }, { id: "Ka", i: 1, n: 2 }, { id: "Kb", i: 1, n: 3 }]; kfPickRun = () => { const p = window.__pick.shift(); if (!p) return o(); const it = S.gen.listen.find(x => x.id === p.id); return { it, lines: Array.from({ length: p.n }, (_, k) => p.i + k), why: null }; }; });
-  await page.click("#kfopen"); await page.waitForSelector("#kfline");
+  // runs: Ka lines 1–5 (1 s, 4 s, 7 s, 10 s, 13 s), then Kb lines 0–3
+  await page.evaluate(() => { const o = kfPickRun; window.__pick = [{ id: "Ka", i: 1, n: 5 }, { id: "Kb", i: 0, n: 4 }]; kfPickRun = () => { const p = window.__pick.shift(); if (!p) return o(); const it = S.gen.listen.find(x => x.id === p.id); return { it, lines: Array.from({ length: p.n }, (_, k) => p.i + k), why: null }; }; });
+  await page.click("#kfopen"); await page.waitForSelector("#kfcol .kfl.cur");
   ok(await page.locator("#tabs").isHidden(), "the tabs are hidden while the feed is open (■ stops it)");
-  ok(await page.textContent("#kfline") === "慢慢地走着" && await page.locator("#kfline rt").count() === 0, "the card shows one line, large, no pinyin");
-  await page.waitForFunction(() => KF.aud && !KF.aud.paused && KF.aud.currentTime > 0, null, { timeout: 5000 });
-  const t1 = await page.evaluate(() => KF.aud.currentTime);
-  ok(t1 >= 8.4 && t1 < 9.6, "the song plays from ~1.5 s before the line (line at 10 s): " + t1.toFixed(2));
-  await page.waitForFunction(() => KF.aud.paused, null, { timeout: 8000 });
-  const t2 = await page.evaluate(() => KF.aud.currentTime);
-  ok(t2 >= 12.9 && t2 < 13.6, "and stops at the line's end (next line at 13 s): " + t2.toFixed(2));
+  const lines = await page.$$eval("#kfcol .kfl", els => els.map(e => [e.className, e.querySelector(".kft").textContent]));
+  ok(lines.length === 5 && lines[0][0].includes("cur") && lines[0][1] === "我还给你自由" && lines[1][0].includes("next") && lines[2][0].includes("next") && lines[3][0].includes("later"), "the run's lines are all on screen: current large, the next two below, the rest dimmer: " + lines.map(l => l[0].replace("kfl ", "") + ":" + l[1]).join(" "));
+  ok(await page.locator("#kfcol rt").count() === 0, "no pinyin on the lines");
+  await page.waitForFunction(() => !$("#kfdots").hidden && $$("#kfdots i:not(.off)").length >= 1, null, { timeout: 2000 });
+  const d0 = await page.evaluate(() => [$$("#kfdots i:not(.off)").length, KF.state, $("#kfdots").parentNode.classList.contains("cur")]);
+  await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-lead.png" });
+  ok(d0[1] === "lead" && d0[0] >= 1 && d0[2], "lead-in: dots above the current line before the words start: " + JSON.stringify(d0));
+  ok(await page.evaluate(() => KF.aud.paused && KF.aud.currentTime < 0.05), "a run starting 1 s into the song: silence first");
+  await page.waitForFunction(() => KF.state === "play", null, { timeout: 3000 });
+  ok(await page.evaluate(() => $("#kfdots").hidden && !KF.aud.paused && KF.aud.currentTime >= 0.9 && KF.aud.currentTime < 1.6), "the dots go when the words start (song at ~1 s, playing)");
+  const y0 = await page.evaluate(() => $("#kfcol").style.transform);
+  await page.waitForFunction(() => KF.li === 1, null, { timeout: 5000 });
+  const a1 = await page.evaluate(() => [KF.aud.currentTime, KF.aud.paused, $(".kfl.cur .kft").textContent, $(".kfl.prev .kft").textContent, $("#kfcol").style.transform]);
+  ok(a1[0] >= 3.95 && a1[0] < 4.4 && !a1[1] && a1[2] === "你说了一句话" && a1[3] === "我还给你自由", "at the next line's time it becomes current by itself, the song still playing (no button): " + a1.slice(0, 4).join(" | "));
+  ok(a1[4] !== y0, "the lines scroll up (" + y0 + " → " + a1[4] + ")");
+  ok(/2\/5/.test(await page.textContent("#kfpos")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and the place in the run show at the top");
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-card.png" });
-  ok(/1\/2/.test(await page.textContent(".kfsong")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and place in the run show at the top");
 
-  // ---- 3. next (Space), a line early in the song: silence first ----
-  await page.keyboard.press("Space"); await page.waitForFunction(() => $("#kfline") && $("#kfline").textContent === "最后一句歌词");
-  ok(true, "Space goes to the next line of the run");
-  await page.keyboard.press("ArrowDown"); await page.waitForFunction(() => $("#kfline") && $("#kfline").textContent === "我还给你自由");
-  ok(await page.evaluate(() => KF.run.it.id === "Ka" && KF.ri === 0), "↓ also goes on; after a run's last line a new run starts");
-  const t3 = await page.evaluate(async () => { await new Promise(r => setTimeout(r, 200)); return [KF.aud.paused, KF.aud.currentTime]; });
-  ok(t3[0] === true && t3[1] < 0.05, "a line 1 s into the song: silence first (nothing playing 0.2 s in): " + JSON.stringify(t3));
-  await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 3000 });
-  ok(await page.evaluate(() => KF.aud.currentTime < 0.6), "then the song from the start, so the lead-in is still 1.5 s");
-
-  // ---- 4. tapping a character ----
-  const huan = page.locator('.kfc', { hasText: "还" });
+  // ---- 3. tapping a character pauses; closing goes on from 1.5 s before the line ----
+  const huan = page.locator('.kfl[data-j="0"] .kfc', { hasText: "还" });
   await huan.click(); await page.waitForSelector("#kfpop");
-  const pop = await page.textContent("#kfpop");
-  ok(/还/.test(await page.textContent("#kfpop .kch")) && /huán/.test(await page.textContent("#kfpop .kpy")), "the popup shows that character large with its reading in this line: " + (await page.textContent("#kfpop .kpy")));
+  ok(await page.evaluate(() => KF.aud.paused && KF.state === "pause"), "tapping a character pauses the song");
+  ok(/还/.test(await page.textContent("#kfpop .kch")) && /huán/.test(await page.textContent("#kfpop .kpy")), "the popup shows that character large with its reading in its line: " + (await page.textContent("#kfpop .kpy")));
   ok(/还给/.test(await page.textContent("#kfpop .kwd")) && /huángěi/.test(await page.textContent("#kfpop .kwd")), "the word it belongs to is underneath, small: " + (await page.textContent("#kfpop .kwd")).trim());
-  await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-popup.png" });
+  const pop = await page.textContent("#kfpop");
   ok(/加入复习/.test(pop) && /点错了/.test(pop), "with 加入复习 Add to review and 点错了 · Mis-tap");
-  ok(await page.evaluate(() => kfState().ev.length === 1 && kfState().ev[0].k === "还|huán" && kfState().ev[0].s === "Ka" && kfState().ev[0].l === 1), "the stumble is recorded on character + reading (还|huán)");
+  await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-popup.png" });
+  ok(await page.evaluate(() => kfState().ev.length === 1 && kfState().ev[0].k === "还|huán" && kfState().ev[0].s === "Ka" && kfState().ev[0].l === 1), "the stumble is recorded on character + reading (还|huán), in the line it was in");
   ok(await huan.locator("rt").textContent() === "huán", "the tapped character keeps its pinyin above it");
-  await page.locator('.kfc', { hasText: "自" }).click(); await sleep(150);
+  await page.locator('.kfl[data-j="1"] .kfc').first().click(); await sleep(150);
   ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.length === 1) && await page.locator('.kfc.x').count() === 1, "with the popup open, tapping another character only closes it (nothing else selected)");
+  await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 3000 });
+  const r1 = await page.evaluate(() => [KF.li, KF.aud.currentTime]);
+  ok(r1[0] === 1 && r1[1] >= 2.4 && r1[1] < 3.2, "…and the song goes on from 1.5 s before the line it was on (line at 4 s): " + r1[1].toFixed(2));
   await huan.click(); await page.waitForSelector("#kfpop");
   ok(await page.evaluate(() => kfState().ev.length === 1 && KF.looked === 1), "tapping the same character again reopens the popup without a second stumble");
   await huan.click(); await sleep(150);
   ok(await page.locator("#kfpop").count() === 0, "tapping it again while open just closes the popup");
-  await page.locator('.kfc', { hasText: "你" }).click(); await page.waitForSelector("#kfpop");
+  await page.locator('.kfl[data-j="0"] .kfc', { hasText: "你" }).click(); await page.waitForSelector("#kfpop");
   await page.click("#kfmis"); await sleep(100);
   ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.filter(e => !e.x).length === 1 && kfState().ev.some(e => e.x && e.k.startsWith("你"))) && await page.locator('.kfc.x').count() === 1, "点错了 un-marks it (kept flagged, so the mis-tap also syncs)");
   await huan.click(); await page.waitForSelector("#kfpop"); await page.click("#kfadd"); await sleep(100);
   const bk = await page.evaluate(() => S.bank["还给"]);
-  ok(bk && bk.py === "huángěi" && bk.src === "A:Ka" && bk.s === "我还给你自由", "加入复习 saves the word with this line as its sentence: " + JSON.stringify(bk && { py: bk.py, s: bk.s, src: bk.src }));
-  await page.locator("#kfnext").click(); await page.waitForFunction(() => $("#kfline") && $("#kfline").textContent === "你说了一句话");
-  ok(true, "下一句 Next button works");
+  ok(bk && bk.py === "huángěi" && bk.src === "A:Ka" && bk.s === "我还给你自由", "加入复习 saves the word with its line as the sentence: " + JSON.stringify(bk && { py: bk.py, s: bk.s, src: bk.src }));
 
-  // ---- 5. swipe up ----
-  const swipe = async () => page.evaluate(() => { const el = $("#kfbody"), mk = y => new Touch({ identifier: 1, target: el, clientX: 200, clientY: y }); el.dispatchEvent(new TouchEvent("touchstart", { touches: [mk(600)], changedTouches: [mk(600)], bubbles: true })); el.dispatchEvent(new TouchEvent("touchend", { touches: [], changedTouches: [mk(400)], bubbles: true })); });
-  const before = await page.textContent("#kfline"); await swipe(); await page.waitForFunction(b => $("#kfline") && $("#kfline").textContent !== b, before);
-  ok(await page.evaluate(() => KF.run.it.id === "Kb" && KF.run.lines[KF.ri] === 1), "swiping up goes to the next card (here: a run from another song)");
+  // ---- 4. restart from a line, skip, back, pause ----
+  await page.click('.kfl[data-j="3"] .kfre');
+  await page.waitForFunction(() => KF.li === 3 && !KF.aud.paused, null, { timeout: 3000 });
+  const r2 = await page.evaluate(() => [KF.aud.currentTime, KF.state, $(".kfl.cur .kft").textContent]);
+  ok(r2[0] >= 8.4 && r2[0] < 9.3 && r2[1] === "lead" && r2[2] === "慢慢地走着", "↺ on a line starts from it: 1.5 s before (line at 10 s), with the lead-in: " + r2[0].toFixed(2));
+  ok(await page.evaluate(() => getComputedStyle($(".kfl.cur .kfre")).visibility === "hidden" && getComputedStyle($(".kfl.prev .kfre")).visibility !== "hidden"), "every line but the current one has its ↺");
+  await page.keyboard.press("ArrowUp"); await page.waitForFunction(() => KF.li === 2 && !KF.aud.paused, null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.aud.currentTime >= 5.4 && KF.aud.currentTime < 6.3), "↑ goes back a line (with the lead-in)");
+  await page.keyboard.press("ArrowDown"); await page.waitForFunction(() => KF.li === 3 && !KF.aud.paused, null, { timeout: 3000 });
+  ok(true, "↓ skips to the next line");
+  const swipe = async (from, to) => page.evaluate(([a, b]) => { const el = $("#kfview"), mk = y => new Touch({ identifier: 1, target: el, clientX: 200, clientY: y }); el.dispatchEvent(new TouchEvent("touchstart", { touches: [mk(a)], changedTouches: [mk(a)], bubbles: true })); el.dispatchEvent(new TouchEvent("touchend", { touches: [], changedTouches: [mk(b)], bubbles: true })); }, [from, to]);
+  await swipe(600, 400); await page.waitForFunction(() => KF.li === 4, null, { timeout: 3000 });
+  await swipe(400, 600); await page.waitForFunction(() => KF.li === 3, null, { timeout: 3000 });
+  ok(true, "swiping up skips a line, swiping down goes back");
+  await page.keyboard.press("Space"); await sleep(150);
+  ok(await page.evaluate(() => KF.aud.paused && KF.state === "pause") && await page.locator("#kfpz").isVisible(), "Space pauses (⏸ 已暂停 shows)");
+  await page.click("#kfview", { position: { x: 30, y: 20 } }); await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.li === 3 && KF.aud.currentTime < 9.3) && await page.locator("#kfpz").isHidden(), "a tap on an empty spot goes on, from 1.5 s before the line");
+  await page.click("#kfview", { position: { x: 30, y: 20 } }); await sleep(100);
+  ok(await page.evaluate(() => KF.state === "pause"), "…and a tap on an empty spot pauses too");
 
-  // ---- 6. runs: consecutive lines, 2–4, then another song ----
-  const runs = await page.evaluate(() => { const out = []; KF.lastLine = null; for (let k = 0; k < 40; k++) { KF.run = kfPickRun(); out.push([KF.run.it.id, KF.run.lines]); } return out; });
-  const consec = runs.every(([, l]) => l.length >= 1 && l.length <= 4 && l.every((x, j) => j === 0 || x === l[j - 1] + 1));
-  const alt = runs.every(([id], k) => k === 0 || id !== runs[k - 1][0] || runs[k].why);
-  ok(consec && runs.filter(([, l]) => l.length >= 2).length >= 30, "runs are 1–4 consecutive lines (mostly 2–4): " + runs.slice(0, 6).map(([id, l]) => id + ":" + l.join(",")).join(" "));
+  // ---- 5. end of the run → the next song, with its own lead-in ----
+  const cards0 = await page.evaluate(() => KF.cards);
+  await page.click('.kfl[data-j="4"] .kfre'); await page.waitForFunction(() => KF.li === 4, null, { timeout: 3000 });
+  await page.keyboard.press("ArrowDown");
+  await page.waitForFunction(() => KF.run && KF.run.it.id === "Kb" && $(".kfl.cur") && $(".kfl.cur .kft").textContent === "把心还给我吧", null, { timeout: 4000 });
+  ok(/歌二/.test(await page.textContent(".kfsong")) && await page.locator("#kfcol .kfl").count() === 4, "after the run's last line the next song's run follows by itself");
+  ok(await page.evaluate(c => KF.cards > c, cards0), "lines that went by are counted");
+  await page.waitForFunction(() => KF.state === "play", null, { timeout: 4000 });
+  ok(await page.evaluate(() => KF.aud.currentTime >= 1.9 && KF.aud.currentTime < 2.6), "…from 1.5 s before its first line (line at 2 s)");
+
+  // ---- 6. runs: 4–8 consecutive lines, then another song ----
+  const runs = await page.evaluate(() => { const out = []; KF.lastLine = null; const keep = KF.run; for (let k = 0; k < 40; k++) { KF.run = kfPickRun(); out.push([KF.run.it.id, KF.run.lines]); } KF.run = keep; return out; });
+  const consec = runs.every(([, l]) => l.length >= 1 && l.length <= 8 && l.every((x, j) => j === 0 || x === l[j - 1] + 1));
+  const alt = runs.every(([id], k) => k === 0 || id !== runs[k - 1][0]);
+  ok(consec && runs.every(([id, l]) => l.length >= 4 || l[l.length - 1] === (id === "Ka" ? 5 : 3)), "runs are 4–8 consecutive lines (fewer only at a song's end): " + runs.slice(0, 6).map(([id, l]) => id + ":" + l.join(",")).join(" "));
   ok(alt, "a run is followed by a run from another song");
+  await page.keyboard.press("Space");
 
   // ---- 7. a stumble comes back in another line with the same reading, and retires ----
   const back = await page.evaluate(() => {
-    const e = kfState().ev.find(x => x.k === "还|huán"); e.t = now() - 10 * MIN; KF.lastLine = null; KF.run = null;
+    const e = kfState().ev.find(x => x.k === "还|huán"); e.t = now() - 10 * MIN; delete kfState().ok["还|huán"]; KF.lastLine = null; const keep = KF.run;
     let hit = 0, other = 0; for (let k = 0; k < 40; k++) { const r = kfPickRun(); if (r.why === "还|huán") { if (r.it.id === "Kb" && r.lines[0] === 0) hit++; else other++; } }
-    return [hit, other];
+    KF.run = keep; return [hit, other];
   });
   ok(back[0] >= 12 && back[1] === 0, "a due stumble (还|huán) comes back in a different line with 还 huán (把心还给我吧), never the same line: " + back.join("/"));
   ok(await page.evaluate(() => !kfChars(S.gen.listen[0], 3).some(c => kfKey(c) === "还|huán")), "(我们还在这里 has 还 hái, so it isn't used for it)");
   const retire = await page.evaluate(() => {
-    const it = S.gen.listen.find(x => x.id === "Kb"); const r = [];
-    for (let k = 0; k < 2; k++) { KF.cur = { it, i: 0 }; KF.tapped = new Map(); kfFinishCard(); r.push(kfStumbles().filter(g => g.k === "还|huán").length); kfState().ok["还|huán"] = kfState().ok["还|huán"].map(t => t - 1000); }
-    return r;
+    const keep = KF.run; KF.run = { it: S.gen.listen.find(x => x.id === "Kb"), lines: [0] }; KF.tapped = new Map(); const r = [];
+    for (let k = 0; k < 2; k++) { kfLineDone(0); r.push(kfStumbles().filter(g => g.k === "还|huán").length); kfState().ok["还|huán"] = kfState().ok["还|huán"].map(t => t - 1000); }
+    KF.run = keep; return r;
   });
   ok(retire[0] === 1 && retire[1] === 0, "seen again untapped in another line twice → retired: " + retire.join(","));
-  const same = await page.evaluate(() => { const it = S.gen.listen[0], k = kfKey(kfChars(it, 4).find(c => c.s === "着")); kfState().ev.push({ t: now() - 5000, k, s: "Ka", l: 4, w: "着" }); KF.cur = { it, i: 4 }; KF.tapped = new Map(); kfFinishCard(); return (kfState().ok[k] || []).length; });
+  const same = await page.evaluate(() => { const it = S.gen.listen[0], k = kfKey(kfChars(it, 4).find(c => c.s === "着")); kfState().ev.push({ t: now() - 5000, k, s: "Ka", l: 4, w: "着" }); const keep = KF.run; KF.run = { it, lines: [4] }; kfLineDone(0); KF.run = keep; return (kfState().ok[k] || []).length; });
   ok(same === 0, "seeing the same line again doesn't count as reading it (memory of the line)");
 
   // ---- 8. merge (sync) ----
@@ -127,20 +154,20 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   });
   ok(mg.n === 3 && mg.x === 1 && mg.ok === "5,7" && mg.ln === "20,2" && mg.sg === "3,30" && mg.same, "stumbles merge between devices: union, a mis-tap on either side wins, line/song memory by max: " + JSON.stringify(mg));
 
-  // ---- 9. mute ----
-  await page.evaluate(() => { KF.run = null; render(); }); await page.waitForSelector("#kfline");
-  await page.click("#kfmute"); await sleep(150);
-  ok(await page.evaluate(() => localStorage.getItem("zwlgf:kfmute") === "1" && KF.aud.paused) && /静音/.test(await page.textContent("#kfmute")) && await page.locator("#kfre").isHidden(), "🔇 mutes (remembered on this device), no replay button");
-  await page.keyboard.press("Space"); await sleep(400);
-  ok(await page.evaluate(() => KF.aud.paused), "muted cards stay silent");
+  // ---- 9. mute: silent, but the lines still move at the song's timing ----
+  await page.click("#kfmute"); await page.waitForSelector("#kfcol .kfl.cur");
+  ok(await page.evaluate(() => localStorage.getItem("zwlgf:kfmute") === "1") && /静音/.test(await page.textContent("#kfmute")), "🔇 mutes (remembered on this device)");
+  await page.evaluate(() => kfStartAt(0));
+  await page.waitForFunction(() => KF.li === 1, null, { timeout: 6000 });
+  ok(await page.evaluate(() => KF.aud.paused && !KF.useAud), "muted, the lines still scroll by themselves at the song's timing, silently");
   await page.click("#kfmute"); await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 4000 });
-  ok(true, "unmuting plays the line again");
+  ok(true, "unmuting plays again (from 1.5 s before the current line)");
 
   // ---- 10. traditional ----
-  await page.evaluate(async () => { setCuePref({ tr: true }); await loadZhc(); KF.run = { it: S.gen.listen.find(x => x.id === "Kb"), lines: [1], why: null }; KF.ri = 0; KF.cur = null; render(); });
-  await page.waitForSelector("#kfline");
-  const trd = await page.textContent("#kfline");
-  await page.locator('.kfc').nth(3).click(); await page.waitForSelector("#kfpop"); await page.mouse.click(200, 120); await sleep(100);
+  await page.evaluate(async () => { setCuePref({ tr: true }); await loadZhc(); KF.run = { it: S.gen.listen.find(x => x.id === "Kb"), lines: [1], why: null }; KF.li = 0; KF.tapped = new Map(); render(); });
+  await page.waitForSelector("#kfcol .kfl.cur");
+  const trd = await page.textContent(".kfl.cur .kft");
+  await page.locator('.kfl.cur .kfc').nth(3).click(); await page.waitForSelector("#kfpop"); await page.mouse.click(200, 120); await sleep(100);
   ok(/雨/.test(trd) && /著|着/.test(trd) && await page.evaluate(() => kfState().ev.slice(-1)[0].k.startsWith("着|")), "with 繁 on, the line shows traditional characters but stumbles are kept under the simplified one: " + trd);
   await page.evaluate(() => setCuePref({ tr: false }));
 
