@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-1izEvJE8+CiGNeg+foKMDxa19EIFY6A0XvDiIeONlN0='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-dleNbmywWwS9FG8tvH4tgfuZF/0KGE2t/O/J/5qmNWo='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3253,7 +3253,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v75 · 11/19 23:01"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v76 · 11/19 23:16"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4347,7 +4347,8 @@ function mediaMeta(it) {
    the line before faded above and the next two below; the song plays straight through from KF_LEAD s before the
    run's first line (three dots go out one by one until the words start) and the lines scroll up by themselves, then
    the next song. Muted / no audio: the lines still move at the song's timing. ↺ on any line starts from it (with the
-   lead-in); swipe up / ↓ skips a line, swipe down / ↑ goes back; Space or a tap on an empty spot pauses.
+   lead-in); swipe up / ↓ skips a line, swipe down / ↑ goes back; swipe left / → / ⏭ = the next song, swipe right /
+   ← / ⏮ = back to the run just left (one run back); Space or a tap on an empty spot pauses.
    Tap a character you weren't sure of: the song pauses; its reading in this line + the word it belongs to (save it
    like any word); closing goes on from 1.5 s before the line. That tap is a stumble on character|reading
    (还|huán ≠ 还|hái). A stumbled reading comes back sooner, preferably in another line with the same character and
@@ -4546,10 +4547,24 @@ function kfTick(tok) {
 }
 function kfRunEnd() { // the run's last line is over: a short breath, then the next song (with its own lead-in)
   kfHush(); kfLineDone(KF.li);
-  const prev = KF.run, sg = kfState().sg, s = sg[prev.it.id] || [0, 0]; sg[prev.it.id] = [(s[0] || 0) + 1, now()];
+  kfPlayed(KF.run); KF.prev = KF.run;
   KF.state = "gap"; save();
   const tok = KF.ptok;
   KF.padT = setTimeout(() => { if (!KF || tok !== KF.ptok || KF.ended) return; kfNewRun(); }, 700);
+}
+function kfPlayed(run) { const sg = kfState().sg, s = sg[run.it.id] || [0, 0]; sg[run.it.id] = [(s[0] || 0) + 1, now()]; }
+// ⏭ / swipe left / →: the next song now; ⏮ / swipe right / ←: back to the run just left (one run back), from its start
+function kfSong(d) {
+  if (!KF || KF.ended || !KF.run) return;
+  kfPopClose(false);
+  if (d < 0 && !KF.prev) { toast("没有上一首 · No previous song"); return; }
+  const was = KF.state; kfHush();
+  if (was === "lead" || was === "play") kfLineDone(KF.li); // the line you were hearing counts; skipped ones don't
+  else { const s = kfLineSec(); if (s > 0) { logDay(s, true, "ktv"); KF.sec += s; } }
+  if (was !== "gap") kfPlayed(KF.run);
+  save();
+  if (d > 0) { KF.prev = KF.run; kfNewRun(); }
+  else { const r = KF.prev; KF.prev = null; KF.run = r; KF.li = 0; KF.tapped = new Map(); KF.drawn = null; if (VIEW === "listen" && LST && LST.feed) render(); }
 }
 function kfNewRun() { KF.run = kfPickRun(); KF.li = 0; KF.tapped = new Map(); if (VIEW === "listen" && LST && LST.feed) render(); }
 function kfPause(byPopup) {
@@ -4636,14 +4651,15 @@ function renderFeed(main) {
   const lineHtml = (i, j) => { const ch = kfChars(it, i); return `<div class="kfl" data-j="${j}"><button class="kfre" data-re="${j}" aria-label="从这句开始 Start from this line">↺</button><span class="kft">${ch.map((c, k) => c.han ? `<span class="kfc ${KF.tapped.has(j + ":" + k) ? "x" : ""}" data-kc="${k}">${KF.tapped.has(j + ":" + k) ? `<ruby>${esc(c.c)}<rt>${esc(c.py)}</rt></ruby>` : esc(c.c)}</span>` : `<span class="kfp">${esc(c.c)}</span>`).join("")}</span></div>`; };
   main.innerHTML = `<div class="kf" id="kf">
     <div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button><span class="small muted kfsong">🎵 ${esc(it.title || "")} · <span id="kfpos"></span></span>
-      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
+      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.prev ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
     <div class="kfview" id="kfview"><div class="kfcol" id="kfcol">${KF.run.lines.map(lineHtml).join("")}</div>
       <div class="kfdots" id="kfdots" hidden><i></i><i></i><i></i></div>
       <div class="kfpz" id="kfpz" hidden>⏸ 已暂停 · Paused<br><span class="small">点一下继续 · Tap to go on</span></div></div>
     <p class="small muted kfnote" id="kfnote">${esc(KF.audMsg || "")}</p>
-    <p class="small muted kfhint">不确定的字点一下看拼音 · ↺ 从那句重来 · 上滑下一句 · Tap a character for its pinyin; ↺ starts from that line; swipe to skip</p></div>`;
+    <p class="small muted kfhint">不确定的字点一下看拼音 · ↺ 从那句重来 · 上下滑换句 · 左右滑换歌 · Tap a character for its pinyin; ↺ starts from that line; swipe up/down for lines, left/right for songs</p></div>`;
   KF.drawn = KF.run;
   $("#kfquit", main).onclick = kfStop;
+  $("#kfsp", main).onclick = () => kfSong(-1); $("#kfsn", main).onclick = () => kfSong(1);
   $("#kfmute", main).onclick = () => { try { localStorage.setItem("zwlgf:kfmute", muted ? "0" : "1"); } catch (e) {} KF.aid = null; kfHush(); render(); };
   const view = $("#kfview", main);
   view.addEventListener("click", e => {
@@ -4653,7 +4669,7 @@ function renderFeed(main) {
   });
   const box = $("#kf", main); let y0 = null, x0 = null;
   box.addEventListener("touchstart", e => { if (e.touches.length === 1) { y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; } }, { passive: true });
-  box.addEventListener("touchend", e => { if (y0 == null) return; const t = e.changedTouches[0], dy = t.clientY - y0, dx = t.clientX - x0; y0 = null; if (Math.abs(dy) > 60 && Math.abs(dx) < Math.abs(dy)) { if ($("#kfpop")) kfPopClose(true); else kfJump(dy < 0 ? 1 : -1); } }, { passive: true });
+  box.addEventListener("touchend", e => { if (y0 == null) return; const t = e.changedTouches[0], dy = t.clientY - y0, dx = t.clientX - x0; y0 = null; if (Math.max(Math.abs(dx), Math.abs(dy)) <= 60) return; if ($("#kfpop")) { kfPopClose(true); return; } if (Math.abs(dx) < Math.abs(dy)) kfJump(dy < 0 ? 1 : -1); else kfSong(dx < 0 ? 1 : -1); }, { passive: true });
   kfShow(); kfNoteDraw();
   if (fresh) kfStartAt(0);
   else if (KF.state === "play" || KF.state === "lead") kfStartAt(KF.li);
@@ -4710,6 +4726,8 @@ document.addEventListener("keydown", e => {
   if (e.key === " ") { e.preventDefault(); if ($("#kfpop")) kfPopClose(true); else if (KF.state === "pause") kfResume(); else kfPause(false); return; }
   if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); kfJump(1); }
   if (e.key === "ArrowUp" || e.key === "PageUp") { e.preventDefault(); kfJump(-1); }
+  if (e.key === "ArrowRight") { e.preventDefault(); kfSong(1); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); kfSong(-1); }
 });
 /* ---- earlier versions of an item's text (learner: LRC files are often off, so try another and go back if it's
    worse). Replacing keeps the current one, with its timing fixes and questions, in it.trPrev (newest first, at most

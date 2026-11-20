@@ -120,6 +120,24 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.waitForFunction(() => KF.state === "play", null, { timeout: 4000 });
   ok(await page.evaluate(() => KF.aud.currentTime >= 1.9 && KF.aud.currentTime < 2.6), "…from 1.5 s before its first line (line at 2 s)");
 
+  // ---- 5b. changing songs: ⏭ / swipe left / →, ⏮ / swipe right / ← (one run back) ----
+  const sg0 = await page.evaluate(() => (kfState().sg.Kb || [0])[0]);
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForFunction(() => KF.run.it.id === "Ka" && $(".kfl.cur .kft") && $(".kfl.cur .kft").textContent === "我还给你自由", null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.li === 0 && KF.run.lines.join() === "1,2,3,4,5"), "← goes back to the run just left (same song, same lines), from its first line");
+  ok(await page.evaluate(s => (kfState().sg.Kb || [0])[0] === s + 1, sg0), "the song you left counts as played");
+  ok(await page.locator("#kfsp").isDisabled(), "only one run back: ⏮ is then greyed out");
+  await page.keyboard.press("ArrowLeft"); await sleep(200);
+  ok(await page.evaluate(() => KF.run.it.id === "Ka" && KF.li === 0), "← again does nothing (says 没有上一首)");
+  await page.click("#kfsn");
+  await page.waitForFunction(() => KF.run.it.id === "Kb" && KF.state !== "gap", null, { timeout: 3000 });
+  ok(await page.locator("#kfsp").isEnabled(), "⏭ goes to the next song (another song), and ⏮ can come back");
+  const hswipe = async (a, b) => page.evaluate(([x0, x1]) => { const el = $("#kfview"), mk = x => new Touch({ identifier: 2, target: el, clientX: x, clientY: 300 }); el.dispatchEvent(new TouchEvent("touchstart", { touches: [mk(x0)], changedTouches: [mk(x0)], bubbles: true })); el.dispatchEvent(new TouchEvent("touchend", { touches: [], changedTouches: [mk(x1)], bubbles: true })); }, [a, b]);
+  await hswipe(300, 100); await page.waitForFunction(() => KF.run.it.id === "Ka", null, { timeout: 3000 });
+  ok(true, "swiping left goes to the next song");
+  await hswipe(100, 300); await page.waitForFunction(() => KF.run.it.id === "Kb", null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.li === 0), "swiping right goes back to the previous one");
+
   // ---- 6. runs: 4–8 consecutive lines, then another song ----
   const runs = await page.evaluate(() => { const out = []; KF.lastLine = null; const keep = KF.run; for (let k = 0; k < 40; k++) { KF.run = kfPickRun(); out.push([KF.run.it.id, KF.run.lines]); } KF.run = keep; return out; });
   const consec = runs.every(([, l]) => l.length >= 1 && l.length <= 8 && l.every((x, j) => j === 0 || x === l[j - 1] + 1));
