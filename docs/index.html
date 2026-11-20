@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-CsxrTNGj3MM1R8vjXRwj4KpqOfBnOLLupwx1PF852jI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-BrD0s8636kJyzR0h6mQxqVa8sjtaZP+sedNnzfHVE3g='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -161,8 +161,8 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .kft{flex:0 1 auto;letter-spacing:.03em}
 .kfre{flex:none;border:0;background:none;color:var(--muted);font-size:15px;padding:6px;cursor:pointer;opacity:.7}
 .kfl.cur .kfre{visibility:hidden}
-.kfc{cursor:pointer;border-radius:6px;padding:0 1px}
-.kfc.x{background:var(--gold-soft)} .kfc rt{font-family:var(--f-ui,inherit);font-size:.4em;letter-spacing:0;color:var(--gold)}
+.kfc{position:relative;cursor:pointer;border-radius:6px;padding:0 1px}
+.kfc.kx{background:var(--gold-soft)} /* not .x: that's the close buttons' class (18 px) */ .kfc .kpyl{position:absolute;left:50%;bottom:86%;transform:translateX(-50%);font-family:var(--f-ui,inherit);font-size:.36em;font-weight:500;line-height:1;letter-spacing:0;white-space:nowrap;color:var(--gold);pointer-events:none}
 .kfdots{position:absolute;top:-4px;left:50%;transform:translateX(-50%);display:flex;gap:10px}
 .kfdots i{width:12px;height:12px;border-radius:50%;background:var(--accent);transition:opacity .15s}
 .kfdots i.off{opacity:.12}
@@ -3255,7 +3255,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v77 · 11/19 23:45"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v78 · 11/19 23:57"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4350,7 +4350,8 @@ function mediaMeta(it) {
    run's first line (three dots go out one by one until the words start) and the lines scroll up by themselves, then
    the next song. Muted / no audio: the lines still move at the song's timing. ↺ on any line starts from it (with the
    lead-in); swipe up / ↓ skips a line, swipe down / ↑ goes back; swipe left / → / ⏭ = the next song, swipe right /
-   ← / ⏮ = back to the run just left (one run back); Space or a tap on an empty spot pauses.
+   ← / ⏮ = back through the runs met so far, → forward again (like a browser's history, KF_HIST); Space or a tap on
+   an empty spot pauses.
    Tap a character you weren't sure of: the song pauses; its reading in this line + the word it belongs to (save it
    like any word); closing goes on from 1.5 s before the line. That tap is a stumble on character|reading
    (还|huán ≠ 还|hái). A stumbled reading comes back sooner, preferably in another line with the same character and
@@ -4549,7 +4550,7 @@ function kfTick(tok) {
 }
 function kfRunEnd() { // the run's last line is over: a short breath, then the next song (with its own lead-in)
   kfHush(); kfLineDone(KF.li);
-  kfPlayed(KF.run); KF.prev = KF.run;
+  kfPlayed(KF.run);
   KF.state = "gap"; save();
   const tok = KF.ptok;
   KF.padT = setTimeout(() => { if (!KF || tok !== KF.ptok || KF.ended) return; kfNewRun(); }, 700);
@@ -4559,16 +4560,24 @@ function kfPlayed(run) { const sg = kfState().sg, s = sg[run.it.id] || [0, 0]; s
 function kfSong(d) {
   if (!KF || KF.ended || !KF.run) return;
   kfPopClose(false);
-  if (d < 0 && !KF.prev) { toast("没有上一首 · No previous song"); return; }
+  if (d < 0 && !(KF.hi > 0)) { toast("没有上一首 · No previous song"); return; }
   const was = KF.state; kfHush();
   if (was === "lead" || was === "play") kfLineDone(KF.li); // the line you were hearing counts; skipped ones don't
   else { const s = kfLineSec(); if (s > 0) { logDay(s, true, "ktv"); KF.sec += s; } }
   if (was !== "gap") kfPlayed(KF.run);
   save();
-  if (d > 0) { KF.prev = KF.run; kfNewRun(); }
-  else { const r = KF.prev; KF.prev = null; KF.run = r; KF.li = 0; KF.tapped = new Map(); KF.drawn = null; if (VIEW === "listen" && LST && LST.feed) render(); }
+  if (d > 0) kfNewRun(); else { KF.hi--; kfSetRun(KF.hist[KF.hi]); }
 }
-function kfNewRun() { KF.run = kfPickRun(); KF.li = 0; KF.tapped = new Map(); if (VIEW === "listen" && LST && LST.feed) render(); }
+// runs met in this sitting, like a browser's history: ← steps back through them, → forward again, and only past the
+// newest does → (or a run ending by itself) pick a new one. Up to KF_HIST runs.
+const KF_HIST = 20;
+function kfSetRun(run) { KF.run = run; KF.li = 0; KF.tapped = new Map(); KF.drawn = null; if (VIEW === "listen" && LST && LST.feed) render(); }
+function kfNewRun() {
+  if (KF.hi < KF.hist.length - 1) { KF.hi++; return kfSetRun(KF.hist[KF.hi]); }
+  const r = kfPickRun(); if (!r) return kfSetRun(null);
+  KF.hist.push(r); if (KF.hist.length > KF_HIST) KF.hist.shift(); KF.hi = KF.hist.length - 1;
+  kfSetRun(r);
+}
 function kfPause(byPopup) {
   if (!KF || KF.ended || KF.state === "pause") return;
   kfHush(); KF.state = "pause"; KF.paused = !byPopup; KF.popPaused = !!byPopup; kfClock(false); kfShow();
@@ -4581,7 +4590,7 @@ function kfLineSec() { const run = KF.since != null; kfClock(false); const s = M
 document.addEventListener("visibilitychange", () => { if (!KF || KF.ended || !KF.run) return; if (document.hidden && KF.state !== "pause") kfPause(false); });
 // ---- the feed ----
 function openFeed() {
-  closeSheet(); KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false, aud: KF && KF.aud, url: KF && KF.url, aid: KF && KF.aid };
+  closeSheet(); KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false, hist: [], hi: -1, aud: KF && KF.aud, url: KF && KF.url, aid: KF && KF.aid };
   kfUnlock(); LST = { feed: true }; KF.loading = true; setView("listen");
   // the dictionary (readings per character) and the 简/繁 table first, so the first lines are split right
   // (the table always: some songs' lyrics are in traditional characters and are looked up in simplified)
@@ -4634,7 +4643,7 @@ function kfShow() {
   const pos = $("#kfpos"); if (pos) pos.textContent = `${li + 1}/${KF.run.lines.length}`;
 }
 function renderFeed(main) {
-  if (!KF) KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false };
+  if (!KF) KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false, hist: [], hi: -1 };
   if (KF.ended) {
     main.innerHTML = `<div class="top"><div><h1>刷歌词</h1><p class="date">Lyric feed</p></div></div>
       <div class="card stack kfsum"><span class="label">这次 · This time</span><p class="big zh" id="kfsumt">${KF.cards} 行 · ${KF.looked} 个字查了拼音</p><p class="small muted">${KF.cards} line${KF.cards === 1 ? "" : "s"} · ${KF.looked} character${KF.looked === 1 ? "" : "s"} looked up</p>
@@ -4644,16 +4653,16 @@ function renderFeed(main) {
     return;
   }
   if (KF.loading) { main.innerHTML = `<div class="kf"><div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button></div><p class="muted" style="margin:auto">词典加载中… Loading the dictionary…</p></div>`; $("#kfquit", main).onclick = () => { KF.loading = false; KF.ended = true; render(); }; return; }
-  if (!KF.run) KF.run = kfPickRun();
+  if (!KF.run) { const r = kfPickRun(); if (r) { KF.hist.push(r); KF.hi = KF.hist.length - 1; KF.run = r; } }
   if (!KF.run || !KF.run.lines.length) {
     main.innerHTML = `<div class="card stack"><p>还没有带时间的歌词 · No songs with timed lyrics yet. Add a song in 听 with an .lrc file or from LRCLIB.</p><button class="btn ghost" id="kfback">回到听力 Back</button></div>`;
     $("#kfback", main).onclick = () => { KF = null; LST = null; render(); }; return;
   }
   const it = KF.run.it, muted = kfMuted(), fresh = KF.drawn !== KF.run;
-  const lineHtml = (i, j) => { const ch = kfChars(it, i); return `<div class="kfl" data-j="${j}"><button class="kfre" data-re="${j}" aria-label="从这句开始 Start from this line">↺</button><span class="kft">${ch.map((c, k) => c.han ? `<span class="kfc ${KF.tapped.has(j + ":" + k) ? "x" : ""}" data-kc="${k}">${KF.tapped.has(j + ":" + k) ? `<ruby>${esc(c.c)}<rt>${esc(c.py)}</rt></ruby>` : esc(c.c)}</span>` : `<span class="kfp">${esc(c.c)}</span>`).join("")}</span></div>`; };
+  const lineHtml = (i, j) => { const ch = kfChars(it, i); return `<div class="kfl" data-j="${j}"><button class="kfre" data-re="${j}" aria-label="从这句开始 Start from this line">↺</button><span class="kft">${ch.map((c, k) => c.han ? `<span class="kfc ${KF.tapped.has(j + ":" + k) ? "kx" : ""}" data-kc="${k}">${esc(c.c)}${KF.tapped.has(j + ":" + k) ? `<span class="kpyl">${esc(c.py)}</span>` : ""}</span>` : `<span class="kfp">${esc(c.c)}</span>`).join("")}</span></div>`; };
   main.innerHTML = `<div class="kf" id="kf">
     <div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button><span class="small muted kfsong">🎵 ${esc(it.title || "")} · <span id="kfpos"></span></span>
-      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.prev ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
+      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.hi > 0 ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
     <div class="kfview" id="kfview"><div class="kfcol" id="kfcol">${KF.run.lines.map(lineHtml).join("")}</div>
       <div class="kfdots" id="kfdots" hidden><i></i><i></i><i></i></div>
       <div class="kfpz" id="kfpz" hidden>⏸ 已暂停 · Paused<br><span class="small">点一下继续 · Tap to go on</span></div></div>
@@ -4684,7 +4693,7 @@ function kfTap(j, k, el) {
   if (!KF.tapped.has(key)) {
     const e = { t: now(), k: kfKey(c), s: it.id, l: i, w: c.w }, ev = kfState().ev; ev.push(e); if (ev.length > KF_EV_MAX) ev.splice(0, ev.length - KF_EV_MAX);
     KF.tapped.set(key, e); KF.looked++; save();
-    el.classList.add("x"); el.innerHTML = `<ruby>${esc(c.c)}<rt>${esc(c.py)}</rt></ruby>`;
+    el.classList.add("kx"); el.innerHTML = `${esc(c.c)}<span class="kpyl">${esc(c.py)}</span>`; // a label above, so the character keeps its size and the line doesn't move
   }
   if (KF.state === "lead" || KF.state === "play") kfPause(true);
   kfPopOpen(j, k);
@@ -4708,7 +4717,7 @@ function kfPopOpen(j, k) {
   $("#kfcls", sh).onclick = () => kfPopClose(true);
   $("#kfmis", sh).onclick = () => {
     const key = j + ":" + k, e = KF.tapped.get(key); if (e) { e.x = 1; KF.tapped.delete(key); KF.looked = Math.max(0, KF.looked - 1); save(); }
-    const el = $(`.kfl[data-j="${j}"] .kfc[data-kc="${k}"]`); if (el) { el.classList.remove("x"); el.textContent = c.c; }
+    const el = $(`.kfl[data-j="${j}"] .kfc[data-kc="${k}"]`); if (el) { el.classList.remove("kx"); el.textContent = c.c; }
     kfPopClose(true);
   };
   $("#kfadd", sh).onclick = () => {

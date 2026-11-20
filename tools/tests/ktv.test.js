@@ -46,7 +46,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.locator("#tabs").isHidden(), "the tabs are hidden while the feed is open (■ stops it)");
   const lines = await page.$$eval("#kfcol .kfl", els => els.map(e => [e.className, e.querySelector(".kft").textContent]));
   ok(lines.length === 5 && lines[0][0].includes("cur") && lines[0][1] === "我还给你自由" && lines[1][0].includes("next") && lines[2][0].includes("next") && lines[3][0].includes("later"), "the run's lines are all on screen: current large, the next two below, the rest dimmer: " + lines.map(l => l[0].replace("kfl ", "") + ":" + l[1]).join(" "));
-  ok(await page.locator("#kfcol rt").count() === 0, "no pinyin on the lines");
+  ok(await page.locator("#kfcol .kpyl").count() === 0, "no pinyin on the lines");
   await page.waitForFunction(() => !$("#kfdots").hidden && $$("#kfdots i:not(.off)").length >= 1, null, { timeout: 2000 });
   const d0 = await page.evaluate(() => [$$("#kfdots i:not(.off)").length, KF.state, $("#kfdots").parentNode.classList.contains("cur")]);
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-lead.png" });
@@ -72,9 +72,11 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(/加入复习/.test(pop) && /点错了/.test(pop), "with 加入复习 Add to review and 点错了 · Mis-tap");
   await page.screenshot({ path: (process.env.KTV_SHOTS || process.env.TEST_OUT || "/tmp") + "/ktv-popup.png" });
   ok(await page.evaluate(() => kfState().ev.length === 1 && kfState().ev[0].k === "还|huán" && kfState().ev[0].s === "Ka" && kfState().ev[0].l === 1), "the stumble is recorded on character + reading (还|huán), in the line it was in");
-  ok(await huan.locator("rt").textContent() === "huán", "the tapped character keeps its pinyin above it");
+  ok(await huan.locator(".kpyl").textContent() === "huán", "the tapped character keeps its pinyin above it");
+  const sz = await page.evaluate(() => { const c = $('.kfl[data-j="0"] .kfc.kx'), o = [...$$('.kfl[data-j="0"] .kfc')].find(x => !x.classList.contains("x")); return [getComputedStyle(c).fontSize, getComputedStyle(o).fontSize, c.getBoundingClientRect().height, o.getBoundingClientRect().height]; });
+  ok(sz[0] === sz[1] && Math.abs(sz[2] - sz[3]) < 1, "…as a label: the character keeps the line's size and height (" + sz.join(", ") + ")");
   await page.locator('.kfl[data-j="1"] .kfc').first().click(); await sleep(150);
-  ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.length === 1) && await page.locator('.kfc.x').count() === 1, "with the popup open, tapping another character only closes it (nothing else selected)");
+  ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.length === 1) && await page.locator('.kfc.kx').count() === 1, "with the popup open, tapping another character only closes it (nothing else selected)");
   await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 3000 });
   const r1 = await page.evaluate(() => [KF.li, KF.aud.currentTime]);
   ok(r1[0] === 1 && r1[1] >= 2.4 && r1[1] < 3.2, "…and the song goes on from 1.5 s before the line it was on (line at 4 s): " + r1[1].toFixed(2));
@@ -84,7 +86,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(await page.locator("#kfpop").count() === 0, "tapping it again while open just closes the popup");
   await page.locator('.kfl[data-j="0"] .kfc', { hasText: "你" }).click(); await page.waitForSelector("#kfpop");
   await page.click("#kfmis"); await sleep(100);
-  ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.filter(e => !e.x).length === 1 && kfState().ev.some(e => e.x && e.k.startsWith("你"))) && await page.locator('.kfc.x').count() === 1, "点错了 un-marks it (kept flagged, so the mis-tap also syncs)");
+  ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.filter(e => !e.x).length === 1 && kfState().ev.some(e => e.x && e.k.startsWith("你"))) && await page.locator('.kfc.kx').count() === 1, "点错了 un-marks it (kept flagged, so the mis-tap also syncs)");
   await huan.click(); await page.waitForSelector("#kfpop"); await page.click("#kfadd"); await sleep(100);
   const bk = await page.evaluate(() => S.bank["还给"]);
   ok(bk && bk.py === "huángěi" && bk.src === "A:Ka" && bk.s === "我还给你自由", "加入复习 saves the word with its line as the sentence: " + JSON.stringify(bk && { py: bk.py, s: bk.s, src: bk.src }));
@@ -126,17 +128,24 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.waitForFunction(() => KF.run.it.id === "Ka" && $(".kfl.cur .kft") && $(".kfl.cur .kft").textContent === "我还给你自由", null, { timeout: 3000 });
   ok(await page.evaluate(() => KF.li === 0 && KF.run.lines.join() === "1,2,3,4,5"), "← goes back to the run just left (same song, same lines), from its first line");
   ok(await page.evaluate(s => (kfState().sg.Kb || [0])[0] === s + 1, sg0), "the song you left counts as played");
-  ok(await page.locator("#kfsp").isDisabled(), "only one run back: ⏮ is then greyed out");
+  ok(await page.locator("#kfsp").isDisabled(), "at the first run of the sitting ⏮ is greyed out");
   await page.keyboard.press("ArrowLeft"); await sleep(200);
   ok(await page.evaluate(() => KF.run.it.id === "Ka" && KF.li === 0), "← again does nothing (says 没有上一首)");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => KF.run.it.id === "Kb", null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.run.lines.join() === "0,1,2,3" && KF.hi === 1 && KF.hist.length === 2), "→ after ← goes forward to the same song B again (not a new one)");
+  for (let k = 0; k < 3; k++) { await page.keyboard.press("ArrowLeft"); await page.waitForFunction(() => KF.run.it.id === "Ka"); await page.keyboard.press("ArrowRight"); await page.waitForFunction(() => KF.run.it.id === "Kb"); }
+  ok(await page.evaluate(() => KF.hist.length === 2 && KF.run.lines.join() === "0,1,2,3"), "back and forth a few times stays between the same two songs");
   await page.click("#kfsn");
-  await page.waitForFunction(() => KF.run.it.id === "Kb" && KF.state !== "gap", null, { timeout: 3000 });
-  ok(await page.locator("#kfsp").isEnabled(), "⏭ goes to the next song (another song), and ⏮ can come back");
+  await page.waitForFunction(() => KF.hist.length === 3 && KF.state !== "gap", null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.run.it.id === "Ka" && KF.hi === 2) && await page.locator("#kfsp").isEnabled(), "⏭ past the newest picks a new song, and ⏮ can come back");
   const hswipe = async (a, b) => page.evaluate(([x0, x1]) => { const el = $("#kfview"), mk = x => new Touch({ identifier: 2, target: el, clientX: x, clientY: 300 }); el.dispatchEvent(new TouchEvent("touchstart", { touches: [mk(x0)], changedTouches: [mk(x0)], bubbles: true })); el.dispatchEvent(new TouchEvent("touchend", { touches: [], changedTouches: [mk(x1)], bubbles: true })); }, [a, b]);
-  await hswipe(300, 100); await page.waitForFunction(() => KF.run.it.id === "Ka", null, { timeout: 3000 });
+  await hswipe(300, 100); await page.waitForFunction(() => KF.run.it.id === "Kb" && KF.hist.length === 4, null, { timeout: 3000 });
   ok(true, "swiping left goes to the next song");
-  await hswipe(100, 300); await page.waitForFunction(() => KF.run.it.id === "Kb", null, { timeout: 3000 });
+  await hswipe(100, 300); await page.waitForFunction(() => KF.run.it.id === "Ka" && KF.hi === 2, null, { timeout: 3000 });
   ok(await page.evaluate(() => KF.li === 0), "swiping right goes back to the previous one");
+  await hswipe(300, 100); await page.waitForFunction(() => KF.run.it.id === "Kb" && KF.hi === 3, null, { timeout: 3000 });
+  ok(await page.evaluate(() => KF.hist.length === 4), "swiping left again goes forward to it, not to a new song");
 
   // ---- 6. runs: 4–8 consecutive lines, then another song ----
   const runs = await page.evaluate(() => { const out = []; KF.lastLine = null; const keep = KF.run; for (let k = 0; k < 40; k++) { KF.run = kfPickRun(); out.push([KF.run.it.id, KF.run.lines]); } KF.run = keep; return out; });
