@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-dleNbmywWwS9FG8tvH4tgfuZF/0KGE2t/O/J/5qmNWo='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-CsxrTNGj3MM1R8vjXRwj4KpqOfBnOLLupwx1PF852jI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -54,7 +54,9 @@ p{margin:0}
 .btn.wide{width:100%}
 .btn:disabled{opacity:.45;cursor:default}
 .chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--ink)}
-.chip.news{background:var(--gold-soft)} .chip.book{background:var(--good-soft)}
+.chip.news{background:var(--gold-soft)} .chip.book{background:var(--good-soft)} .chip.wb{background:var(--bad-soft)}
+.reading.wb p+p{border-left:3px solid var(--line);padding-left:12px;margin-left:2px;font-size:.96em}
+.reading.wb.douyin p:first-of-type{color:var(--muted)}
 /* header */
 .top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
 .top .date{font-size:13px;color:var(--muted)}
@@ -834,7 +836,7 @@ function mergeSettings(m, o) {
    an edit stamps its group in it.uf[group] (touch), so a rename on one device and a timing fix on the other both
    survive. Groups not stamped on either side come from the copy changed last (it.u), as before. */
 const FIELD_GROUPS = { title: ["title"], tags: ["tags"], type: ["type", "typeMan"], timing: ["fix", "tm", "tap"],
-  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
+  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras", "sty", "slang"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
 function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1); const uf = x.uf = Object.assign({}, x.uf); for (const g of groups) uf[g] = x.u; return x; }
 function mergeGenItem(a, b) {
   const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
@@ -1110,7 +1112,7 @@ function indexGen() {
   ((S.gen || {}).mine || []).forEach(x => PSG.set(x.id, x));
   for (const id in QFIX) { const p = PSG.get(id); if (p && p.qs && !p.qs.some(q => q.ex)) p.qs = JSON.parse(JSON.stringify(QFIX[id])); }
 }
-const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎" };
+const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎", wb: "微博·抖音" };
 const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "不在你的词库 Not in your Anki list" };
 /* ---------- CC-CEDICT: full dictionary, every reading kept separately; loaded on first use ---------- */
 let CED = null, CED_P = null;
@@ -3206,7 +3208,7 @@ function renderPassage(main) {
   const paras = [segmentText(p.mine ? mineTitle(p) : p.title, p.gl || {})].concat(passageTokens(p)); // index 0 = title
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>${READ.re ? `<span class="chip">重读 Re-read</span>` : ""}
     <span class="row" style="gap:8px">${p.gen || p.mine ? `<button class="tagc" id="pren" aria-label="改名 Rename">✎</button>` : ""}<label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></span></div>
-    <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""}" id="rd">
+    <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""} ${p.reg === "wb" ? "wb " + (p.sty || "weibo") : ""}" id="rd">
       <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
       ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
     ${READ.re || (p.mine && !(p.qs && p.qs.length)) ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
@@ -3253,7 +3255,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v76 · 11/19 23:16"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v77 · 11/19 23:45"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5626,15 +5628,22 @@ function makeSen(x, id) {
 function makePassage(j, kind, id) {
   if (!j || !Array.isArray(j.paras) || !j.paras.length || !j.paras.every(x => typeof x === "string" && x.includes("|")) || !Array.isArray(j.qs) || j.qs.length < 2) return null;
   const qs = toQs(j.qs); if (qs.length < 2) return null;
-  return { id, title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : PSG_KINDS.includes(kind) ? kind : "xhs", paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" && !Array.isArray(j.gl) ? j.gl : {}, en: String(j.en || ""), qs, gen: true };
+  const p = { id, title: String(j.title || "新短文"), reg: kind === "travel" ? "xhs" : PSG_KINDS.includes(kind) ? kind : "xhs", paras: j.paras.map(String), gl: j.gl && typeof j.gl === "object" && !Array.isArray(j.gl) ? j.gl : {}, en: String(j.en || ""), qs, gen: true };
+  if (p.reg === "wb") { // the style, and the slang it was written to teach (counted for retiring, see slangTargets)
+    p.sty = j.style === "douyin" ? "douyin" : "weibo";
+    const flat = p.paras.join("").replace(/\|/g, "");
+    p.slang = (Array.isArray(j.slang) ? j.slang : []).map(s => String(s).trim()).filter(s => s && s.length <= 12 && flat.includes(s)).slice(0, 8);
+  }
+  return p;
 }
 
 /* ---------- stock up for offline (China) ----------
    forecast() runs the app's real scheduler forward on a copy of your progress (so it follows whatever scheduling
    and exercise types the app has) and counts how many days of practice are left before nothing is due or new.
    The note to Claude asks the daily run for what's short (stock card in Progress). */
-const PSG_KINDS = ["xhs", "news", "travel", "book"];
-const PSG_GENRES = [["xhs", "小红书"], ["news", "新闻"], ["book", "书面"], ["travel", "对话"]];
+// wb (v77) = social media: a Weibo post + replies, or a Douyin video line 【视频：…】 + comments (sty weibo|douyin)
+const PSG_KINDS = ["xhs", "news", "travel", "book", "wb"];
+const PSG_GENRES = [["xhs", "小红书"], ["news", "新闻"], ["book", "书面"], ["travel", "对话"], ["wb", "微博·抖音"]];
 // minutes/day × days, or trip dates (from/to, "YYYY-MM-DD"): with both dates set they decide the number of days
 // average minutes of card time (today's set + extra; not reading, writing or the lyric feed, which the forecast
 // doesn't simulate) on the days you practised cards in the last 2 weeks (never below 15; 30 with no history yet)
@@ -5978,13 +5987,23 @@ function applyRepoPacks() {
 // a seeded order (same all day), so the note doesn't change, and cause a new commit, on every sync
 function dayShuffle(list) { const d = dayKey(); const h = x => { let v = 2166136261; for (const c of d + x) { v ^= c.charCodeAt(0); v = Math.imul(v, 16777619); } v ^= v >>> 15; v = Math.imul(v, 2246822507); v ^= v >>> 13; return v >>> 0; }; return list.slice().sort((a, b) => h(a) - h(b)); }
 // what the next generation should aim at: the same lists the Generate buttons use
+// Slang the social-media posts (wb) were written to teach: a term in OFFER_MAX posts and never saved for review is
+// retired (the daily run stops targeting it; like new words, v66); terms met 1–2 times may come back so they stick.
+function slangTargets() {
+  const n = new Map(), last = new Map();
+  (S.gen.passages || []).forEach((p, i) => { if (p.reg === "wb") for (const s of p.slang || []) { n.set(s, (n.get(s) || 0) + 1); last.set(s, i); } }); // later in the list = newer
+  const saved = s => !!S.bank[s] && !isAutoWord(S.bank[s]), byLast = (a, b) => last.get(b) - last.get(a);
+  const terms = [...n.keys()].filter(s => !saved(s)).sort(byLast);
+  return { active: terms.filter(s => n.get(s) < OFFER_MAX).slice(0, 30), retired: terms.filter(s => n.get(s) >= OFFER_MAX).slice(0, 200), saved: [...n.keys()].filter(saved).sort(byLast).slice(0, 30) };
+}
 function genHints() {
-  const v = vocabTargets();
+  const v = vocabTargets(), sl = slangTargets();
   return {
     missedDrills: [...LADDER.values()].filter(x => { const it = S.items[x.id]; return it && it.n > it.ok; }).slice(0, 15).map(x => ladParts(x).key + " (" + x.en + ")"),
     reviewWords: v.reviewWords, fadingWords: v.fadingWords, newWords: v.newWords,
     misreadStructures: Object.values(S.items).filter(it => it.t === "frag" && it.p).sort((a, b) => (a.due || 0) - (b.due || 0)).map(it => it.p).slice(0, 12),
-    recentDrillsEn: S.gen.ladder.slice(-40).map(x => x.en) // so new drills don't repeat these
+    recentDrillsEn: S.gen.ladder.slice(-40).map(x => x.en), // so new drills don't repeat these
+    slangActive: sl.active, slangRetired: sl.retired, slangSaved: sl.saved // social-media posts (wb, v77)
   };
 }
 // The note to Claude (outbox.json in the private repo): what's short and what to aim at. Computed on this device

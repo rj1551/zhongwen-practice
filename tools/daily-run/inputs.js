@@ -37,7 +37,7 @@ const suspect = s => SUSPECT.find(r => r.test(s));
 const held = [];
 const hold = (rid, why) => held.push({ rid: str(rid, 90), why });
 const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, fwcheck: /^x:[\w.-]{1,40}:[ab]$/, fwtopic: /^wt:[a-z0-9]{1,15}$/, fwdrill: /^wd:[\w.-]{1,40}:[ab]$/, lyrics: /^y:[\w.-]{1,60}$/, pyfix: /^f:[\w.-]{1,60}$/ };
-const GENRES = ["xhs", "news", "book", "travel"];
+const GENRES = ["xhs", "news", "book", "travel", "wb"];
 
 const o = readJson("outbox.json");
 if (!o) { fs.writeFileSync(OUT, JSON.stringify({ ok: false, why: "no outbox.json" })); console.log("no outbox.json → " + OUT); process.exit(0); }
@@ -53,7 +53,7 @@ const note = {
   hints: {}, packsDone: strs(o.packsDone, 80, 70).filter(x => /^[\w.-]{1,60}$/.test(x)),
 };
 const h = o.hints || {};
-for (const [k, n, max] of [["missedDrills", 40, 240], ["forgottenWords", 40, 20], ["reviewWords", 20, 20], ["fadingWords", 30, 20], ["newWords", 50, 20], ["misreadStructures", 20, 30], ["recentDrillsEn", 60, 240]]) {
+for (const [k, n, max] of [["missedDrills", 40, 240], ["forgottenWords", 40, 20], ["reviewWords", 20, 20], ["fadingWords", 30, 20], ["newWords", 50, 20], ["misreadStructures", 20, 30], ["recentDrillsEn", 60, 240], ["slangActive", 40, 12], ["slangRetired", 250, 12], ["slangSaved", 40, 12]]) {
   const list = strs(h[k], n, max), kept = list.filter(x => !suspect(x));
   if (kept.length < list.length) held.push({ rid: "hints." + k, why: `${list.length - kept.length} hint(s) looked like instructions and were left out` });
   if (kept.length || k !== "forgottenWords") note.hints[k] = kept; // forgottenWords: only from notes written by app versions before v66

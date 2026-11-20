@@ -108,8 +108,21 @@ const has = (s, frag) => norm(s).includes(norm(frag));
   p.qs.forEach((q, j) => { if (q.opts.length !== 4) problems.push(`${at}: question ${j + 1} needs 4 options`); if (!q.ex) problems.push(`${at}: question ${j + 1} needs "why" (4 reasons)`); });
   if (!x.en) warn.push(at + ": no English translation");
   if (have.title.has(norm(x.title)) || seen.title.has(norm(x.title))) problems.push(at + ": same title as an existing passage");
+  if (x.kind === "wb") { // social media (v77): style, the slang it teaches, glossed, not retired
+    if (!["weibo", "douyin"].includes(x.style)) problems.push(at + ': wb needs "style": "weibo" or "douyin"');
+    if (x.style === "douyin" && !/^【视频/.test(p.paras[0].replace(/\|/g, ""))) problems.push(at + ": douyin: the first paragraph must be the video line 【视频：…】");
+    if (p.paras.length < 3) problems.push(at + ": wb needs the post (or video line) and at least 2 replies/comments as separate paragraphs");
+    const raw = Array.isArray(x.slang) ? x.slang.map(String) : [];
+    if (!raw.length) problems.push(at + ': wb needs "slang": the 2–5 current slang terms the post teaches');
+    if (raw.length > 8) problems.push(at + ": slang: at most 8 terms");
+    for (const t of raw) { if (!p.slang.includes(t)) problems.push(`${at}: slang "${t}" isn't in the text as written`); else if (!Object.keys(p.gl).some(k => k === t || k.includes(t) || t.includes(k))) problems.push(`${at}: slang "${t}" has no gl entry`); }
+    let ob0 = {}; try { ob0 = readJson(path.join(DATA, "outbox.json")) || {}; } catch (e) {}
+    const retired = new Set((ob0.hints || {}).slangRetired || []);
+    for (const t of p.slang) if (retired.has(t)) problems.push(`${at}: slang "${t}" is retired (in hints.slangRetired): don't target it`);
+  }
   seen.title.add(norm(x.title));
 });
+if ((pk.passages || []).filter(x => x && x.kind === "wb").length > 2) problems.push("passages: at most 2 wb (social-media) posts per pack");
 // ---- answers to requests (4c) ----
 let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
 const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
