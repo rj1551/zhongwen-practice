@@ -119,7 +119,7 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
   ok(kinds === "passage,questions,questions,regrade,sentence", "outbox lists every request: " + kinds);
   ok(ob.requests.find(r => r.kind === "passage").genre === "news" && ob.requests.find(r => r.kind === "passage").topic === "高铁", "passage request carries genre + topic");
   ok(ob.requests.find(r => r.kind === "regrade").en && ob.requests.find(r => r.kind === "regrade").ref.length, "regrade request carries the drill");
-  ok(ob.reading.perDay === 1 && JSON.stringify(ob.reading.genres) === '["xhs","news","travel"]', "reading settings in the note: " + JSON.stringify(ob.reading));
+  ok(ob.reading.perDay === 1 && JSON.stringify(ob.reading.genres) === '["xhs","news","travel","wb"]', "reading settings in the note: " + JSON.stringify(ob.reading));
   ok(!JSON.stringify(ob).includes("高铁很方便"), "transcript not copied into the note (the run reads it from progress)");
   await pg.evaluate(() => setView("home"));
   ok(/waiting for an example sentence/.test(await pg.evaluate(() => document.body.innerText)) && /Waiting for Claude/i.test(await pg.evaluate(() => document.body.innerText)), "home: waiting card");
