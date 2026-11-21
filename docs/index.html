@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-0Dodzvr/WVv9Nvt81onX3gEy5wsvcbQp/XPYCtQ92oo='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-tZO0zp+QtBSn2S5GCh4n423X0rkEvHU298u4znezYzI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3278,7 +3278,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v82 · 11/20 01:23"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v83 · 11/20 20:19"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4778,10 +4778,14 @@ function kfPopOpen(j, k) {
   const it = KF.run.it, i = kfLine(j), c = kfChars(it, i)[k], gl = Object.assign({}, it.gl || {}, lyrGl(it));
   const A = lookupAll(c.w, gl), rd = A ? (A.readings.find(r => pyKey(r.py) === pyKey(c.wpy)) || A.readings[0]) : null;
   const wgl = c.gl || (rd ? rd.gl : "");
+  // a word the dictionary doesn't have (e.g. 陨灭: CC-CEDICT lacks it; Pleco has other dictionaries): each character's
+  // meaning in its reading here, so the popup is never empty
+  const chGl = wgl ? "" : Array.from(c.w).map((ch, k) => { const a = lookupAll(ch), sy = splitPy(Array.from(c.w), c.wpy)[k] || "", r = a && (a.readings.find(x => pyKey(x.py) === pyKey(sy)) || a.readings[0]); return r && r.gl ? `${ch} ${String(r.gl).split(";")[0].slice(0, 40)}` : ""; }).filter(Boolean).join(" · ");
   const inBank = !!S.bank[c.w] && !isAutoWord(S.bank[c.w]);
   const sh = document.createElement("div"); sh.className = "sheet"; sh.id = "kfpop";
   sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:14px;align-items:baseline"><span class="kch zh">${esc(c.c)}</span><span class="kpy">${esc(c.py || "?")}</span></div><button class="x" id="kfcls" aria-label="关闭">×</button></div>
     <div class="kwd small"><span class="zh">${esc(c.wd)}</span> ${esc(c.wpy)}${wgl ? " · " + esc(String(wgl).slice(0, 90)) : ""}</div>
+    ${chGl ? `<div class="kwd small" id="kfchgl">词典里没有这个词 · Not in the dictionary as a word; the characters: ${esc(chGl)}</div>` : ""}
     <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="kfadd" ${inBank ? "disabled" : ""}>${inBank ? "✓ 已在复习中 In review" : "加入复习 Add to review"}</button><button class="btn ghost" id="kfmis">点错了 · Mis-tap</button></div></div>`;
   document.body.append(sh); // (no padding on the page: that shrank the lyric view and moved the lines)
   $("#kfcls", sh).onclick = () => kfPopClose(true);
@@ -4794,7 +4798,7 @@ function kfPopOpen(j, k) {
     const w = c.w;
     if (S.bank[w] && isAutoWord(S.bank[w])) { S.bank[w].saved = true; save(); kfPopClose(true); toast("已在复习中 · Already in your review"); return; }
     if (S.bank[w]) return;
-    S.bank[w] = { zh: w, s: toSimp(it.cues[i][1]), py: c.wpy || (rd ? rd.py : ""), gl: wgl || "", t: now(), src: "A:" + it.id };
+    S.bank[w] = { zh: w, s: toSimp(it.cues[i][1]), py: c.wpy || (rd ? rd.py : ""), gl: wgl || chGl || "", t: now(), src: "A:" + it.id };
     if (it.tags && it.tags.length) S.bank[w].tags = it.tags.slice();
     save(); kfPopClose(true); toastAction("已加入 " + w, "撤销 Undo", () => { removeFromBank(w, false); toast("已撤销 Undone"); });
   };

@@ -99,6 +99,8 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.locator('.kfl[data-j="0"] .kfc', { hasText: "你" }).click(); await page.waitForSelector("#kfpop");
   await page.click("#kfmis"); await sleep(100);
   ok(await page.locator("#kfpop").count() === 0 && await page.evaluate(() => kfState().ev.filter(e => !e.x).length === 1 && kfState().ev.some(e => e.x && e.k.startsWith("你"))) && await page.locator('.kfc.kx').count() === 1, "点错了 un-marks it (kept flagged, so the mis-tap also syncs)");
+  const nogl = await page.evaluate(async () => { await loadCedict(); const ch = kfChars(KF.run.it, kfLine(0)), k = ch.findIndex(c => c.s === "自"); Object.assign(ch[k], { s: "陨", c: "陨", py: "yǔn", w: "陨灭", wd: "陨灭", wpy: "yǔnmiè", gl: "" }); kfPopOpen(0, k); const t = ($("#kfchgl") || {}).textContent || ""; KF_LC.clear(); $("#kfpop").remove(); return t; });
+  ok(/陨 to fall from the sky/.test(nogl) && /灭 /.test(nogl) && /Not in the dictionary/.test(nogl), "a word the dictionary lacks (陨灭) shows each character's meaning instead of nothing: " + nogl);
   await huan.click(); await page.waitForSelector("#kfpop"); await page.click("#kfadd"); await sleep(100);
   const bk = await page.evaluate(() => S.bank["还给"]);
   ok(bk && bk.py === "huángěi" && bk.src === "A:Ka" && bk.s === "我还给你自由", "加入复习 saves the word with its line as the sentence: " + JSON.stringify(bk && { py: bk.py, s: bk.s, src: bk.src }));
