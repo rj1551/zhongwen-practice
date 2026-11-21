@@ -3,8 +3,19 @@
 # Refuses if anything else in the repo changed, if the remote isn't rj1551/zhongwen-data, or if the check fails.
 # Usage: tools/daily-run/push-pack.sh <data dir> "<commit message>" [packs/<id>.json]
 set -euo pipefail
+# Paths may be absolute or relative to where you run it; a relative pack path may also be relative to the data dir
+# (packs/<id>.json). Both are made absolute before the script moves into the data dir (2026-11-21: a relative
+# pack path used to be looked up from inside the data dir and the push was refused).
 DATA="${1:?data dir}"; MSG="${2:?commit message}"; PACK="${3:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+[ -d "$DATA" ] || { echo "REFUSED: data dir not found: $DATA"; exit 1; }
+DATA="$(cd "$DATA" && pwd)"
+if [ -n "$PACK" ]; then
+  if [ -f "$PACK" ]; then PACK="$(cd "$(dirname "$PACK")" && pwd)/$(basename "$PACK")"
+  elif [ -f "$DATA/$PACK" ]; then PACK="$DATA/$PACK"
+  else echo "REFUSED: pack not found: $PACK (looked in $(pwd) and $DATA; nothing pushed)"; exit 1; fi
+  case "$PACK" in "$DATA"/packs/*.json) ;; *) echo "REFUSED: pack is not under $DATA/packs/: $PACK"; exit 1;; esac
+fi
 cd "$DATA"
 url="$(git remote get-url origin)"
 case "$url" in */rj1551/zhongwen-data|*/rj1551/zhongwen-data.git) ;; *) echo "REFUSED: origin is $url, not rj1551/zhongwen-data"; exit 1;; esac
