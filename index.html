@@ -4582,7 +4582,7 @@ async function kfStartAt(j) {
   KF.useAud = ok;
   const go = () => {
     if (tok !== KF.ptok) return;
-    if (KF.useAud) { try { KF.aud.currentTime = Math.max(0, from); } catch (e) {} KF.aud.play().catch(() => {}); }
+    if (KF.useAud) { try { if (Math.abs(KF.aud.currentTime - Math.max(0, from)) > 0.05) KF.aud.currentTime = Math.max(0, from); } catch (e) {} KF.aud.play().catch(() => {}); }
     else { KF.vFrom = Math.max(0, from); KF.vStart = performance.now(); }
     KF.padding = false;
   };
@@ -4642,6 +4642,8 @@ function kfNewRun() {
 function kfPause(byPopup) {
   if (!KF || KF.ended || KF.state === "pause") return;
   kfHush(); KF.state = "pause"; KF.paused = !byPopup; KF.popPaused = !!byPopup; kfClock(false); kfShow();
+  // get the resume point ready now (1.5 s before the line), so going on only has to press play (seeking is the slow part on phones)
+  if (KF.run && KF.aid === KF.run.it.id && !kfMuted()) { try { KF.aud.currentTime = Math.max(0, cueT(KF.run.it, kfLine(KF.li)) - KF_LEAD); } catch (e) {} }
 }
 function kfResume() { if (!KF || KF.ended) return; KF.popPaused = false; kfStartAt(KF.li); } // from 1.5 s before the line
 function kfNoteDraw() { const el = $("#kfnote"); if (el) el.textContent = KF.audMsg || ""; }
@@ -4783,7 +4785,7 @@ function kfPopOpen(j, k) {
   const inBank = !!S.bank[c.w] && !isAutoWord(S.bank[c.w]);
   const sh = document.createElement("div"); sh.className = "sheet"; sh.id = "kfpop";
   sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:14px;align-items:baseline"><span class="kch zh">${esc(c.c)}</span><span class="kpy">${esc(c.py || "?")}</span></div><button class="x" id="kfcls" aria-label="关闭">×</button></div>
-    <div class="kwd small"><span class="zh">${esc(c.wd)}</span> ${esc(c.wpy)}${wgl ? " · " + esc(String(wgl).slice(0, 90)) : ""}</div>
+    <div class="kwd small"><span class="zh">${esc(c.wd)}</span> ${esc(c.wpy)}${wgl ? " · " + esc(String(wgl).slice(0, 400)) : ""}</div>
     ${chGl ? `<div class="kwd small" id="kfchgl">词典里没有这个词 · Not in the dictionary as a word; the characters: ${esc(chGl)}</div>` : ""}
     <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="kfadd" ${inBank ? "disabled" : ""}>${inBank ? "✓ 已在复习中 In review" : "加入复习 Add to review"}</button><button class="btn ghost" id="kfmis">点错了 · Mis-tap</button></div></div>`;
   document.body.append(sh); // (no padding on the page: that shrank the lyric view and moved the lines)

@@ -123,6 +123,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   ok(true, "swiping up skips a line, swiping down goes back");
   await page.keyboard.press("Space"); await sleep(150);
   ok(await page.evaluate(() => KF.aud.paused && KF.state === "pause") && await page.locator("#kfpz").isVisible(), "Space pauses (⏸ 已暂停 shows)");
+  ok(await page.evaluate(() => Math.abs(KF.aud.currentTime - (cueT(KF.run.it, kfLine(KF.li)) - 1.5)) < 0.05), "while paused, the player already waits at the resume point (1.5 s before the line), so going on only presses play");
   await page.click("#kfview", { position: { x: 30, y: 20 } }); await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 3000 });
   ok(await page.evaluate(() => KF.li === 3 && KF.aud.currentTime < 9.3) && await page.locator("#kfpz").isHidden(), "a tap on an empty spot goes on, from 1.5 s before the line");
   await page.click("#kfview", { position: { x: 30, y: 20 } }); await sleep(100);
