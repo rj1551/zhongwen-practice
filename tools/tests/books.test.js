@@ -1,6 +1,6 @@
 // Books, first release (v86): .txt import (UTF-8, GB18030), chapters / parts, traditional shown as simplified with
 // 原文, the shelf, scrolling and page reading with a bookmark that survives reopening, word popup + saving, 目录 jumps
-// with ↩ back, search (button and Ctrl+F; simplified and traditional queries), Aa size / layout, rename, remove.
+// with ↩ back, search (button and Ctrl+F; simplified and traditional queries), Aa size / layout, rename, delete via the bin (v87).
 // Serve docs/ on 8765 first (see README), or use run-all.sh.
 const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const fs = require("fs"), path = require("path");
@@ -193,13 +193,22 @@ function makeBook() {
   await page.click(`[data-bkinfo="${tm.id}"]`); await page.waitForSelector("#bkti");
   await page.fill("#bkti", "冬天"); await page.click("#bktsave"); await page.waitForFunction(() => BOOKS.some(b => b.title === "冬天"));
   await page.click("#bkib"); await page.waitForSelector(".bkrow");
-  ok(/冬天/.test(await page.textContent("#main")), "改名 renames the book on the shelf");
+  ok(/冬天/.test(await page.textContent("#main")) && await page.evaluate(id => bookRec(id).title === "冬天" && bookRec(id).uf.title > 0, tm.id), "改名 renames the book on the shelf (and in the synced record)");
   await page.click(`[data-bkinfo="${tm.id}"]`); await page.waitForSelector("#bkrm");
-  await page.click("#bkrm");
-  ok(/再点一次/.test(await page.textContent("#bkrm")) && await page.evaluate(() => BOOKS.length === 2), "移除 needs a second tap");
   await page.click("#bkrm"); await page.waitForFunction(() => $$(".bkrow").length === 1);
-  const left = await page.evaluate(async id => [BOOKS.length, await bookTextGet(id)], tm.id);
-  ok(left[0] === 1 && left[1] === null && !!(await page.evaluate(() => S.bank["仓库"])), "removed: gone from the shelf and the device's store; saved words stay");
+  const del = await page.evaluate(async id => ({ rec: !!bookRec(id), bin: (S.gen.trash || []).filter(e => e.kind === "book").length, gone: !!S.gone["book:" + id], local: !!(await bookTextGet(id)) }), tm.id);
+  ok(!del.rec && del.bin === 1 && del.gone && del.local && /最近删除/.test(await page.evaluate(() => $$(".toast").map(t => t.textContent).join())), "删除 puts the book in 最近删除 (off the shelf, the text still on this device for a restore): " + JSON.stringify(del));
+  await page.evaluate(() => { const e = S.gen.trash.find(x => x.kind === "book"); restoreTrash(e); render(); });
+  await page.waitForFunction(() => $$(".bkrow").length === 2);
+  ok(true, "restoring from the bin brings it back on the shelf");
+  await page.click(`[data-bkinfo="${tm.id}"]`); await page.click("#bkrm"); await page.waitForFunction(() => $$(".bkrow").length === 1);
+  await page.evaluate(() => setView("me")); await page.waitForSelector("#trashcard");
+  ok(/📚/.test(await page.textContent("#trashcard")) && /书 Book/.test(await page.textContent("#trashcard")), "the bin lists it as 📚 书 Book");
+  await page.click("[data-trx]"); await page.click("[data-trx]");
+  await page.waitForFunction(async id => !(await bookTextGet(id)), tm.id);
+  const left = await page.evaluate(async id => [(S.gen.books || []).length, BOOKS.length, await bookTextGet(id)], tm.id);
+  ok(left[0] === 1 && left[1] === 1 && left[2] === null && !!(await page.evaluate(() => S.bank["仓库"])), "deleted for good from the bin: the device's copy goes too; saved words stay");
+  await page.evaluate(() => setView("read"));
 
   // ---- nothing in the error log, nothing in the progress entry ----
   const misc = await page.evaluate(() => ({ err: localStorage.getItem("zwlgf:errlog"), big: (localStorage.getItem("zwlgf:state:v1") || "").length }));

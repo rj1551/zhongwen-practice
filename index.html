@@ -416,7 +416,7 @@ function bindStoreCard(main) {
 
 let remoteBusy = false, remoteDirty = false, remoteTimer = null;
 const bytesOf = json => json.length + (json.match(/[^\x00-\x7f]/g) || []).length * 2; // UTF-8 estimate
-const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 320, fw: 240 }; // trash: TRASH_MAX purges properly first; this is only a backstop // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
+const GEN_CAP = { ladder: 600, sen: 600, passages: 60, mine: 400, listen: 80, trash: 320, fw: 240, books: 100 }; // trash: TRASH_MAX purges properly first; this is only a backstop // mine = parts of your own texts (also limited by MINE_MAX_CHARS) // generated content kept (all of it travels offline)
 function save() {
   if (SIM) return;
   S.updatedAt = now();
@@ -858,7 +858,7 @@ function mergeSettings(m, o) {
    an edit stamps its group in it.uf[group] (touch), so a rename on one device and a timing fix on the other both
    survive. Groups not stamped on either side come from the copy changed last (it.u), as before. */
 const FIELD_GROUPS = { title: ["title"], tags: ["tags"], type: ["type", "typeMan"], timing: ["fix", "tm", "tap"],
-  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras", "sty", "slang"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
+  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras", "sty", "slang"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], place: ["pos"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
 function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1); const uf = x.uf = Object.assign({}, x.uf); for (const g of groups) uf[g] = x.u; return x; }
 function mergeGenItem(a, b) {
   const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
@@ -966,6 +966,7 @@ function restoreTrash(e) {
   if (!e) return; const d = e.data || {}, t = now(), g = S.gone || {};
   if (e.kind === "listen" && d.it) { const it = Object.assign({}, d.it, { u: t }); if (!S.gen.listen.some(x => x.id === it.id)) S.gen.listen.push(it); if (d.lsn && !(S.lsn || {})[it.id]) (S.lsn = S.lsn || {})[it.id] = d.lsn; delete g["listen:" + it.id]; }
   if (e.kind === "mine") for (const p0 of d.parts || []) { const p = Object.assign({}, p0, { u: t }); if (!S.gen.mine.some(x => x.id === p.id)) { S.gen.mine.push(p); PSG.set(p.id, p); } delete g["mine:" + p.id]; }
+  if (e.kind === "book" && d.rec) { const r = Object.assign({}, d.rec, { u: t }); S.gen.books = S.gen.books || []; if (!S.gen.books.some(x => x.id === r.id)) S.gen.books.push(r); delete g["book:" + r.id]; }
   if (e.kind === "word" && d.b) { const w = e.title; if (!S.bank[w]) S.bank[w] = Object.assign({}, d.b, { u: t }); if (d.item && !S.items["B:" + w]) S.items["B:" + w] = d.item; delete g["bank:" + w]; }
   trashDrop(e); save();
 }
@@ -975,6 +976,10 @@ function purgeTrash(e, quiet) {
   if (e.kind === "listen" && e.data && e.data.it && !S.gen.listen.some(x => x.id === e.data.it.id)) {
     const it = e.data.it; audioDel(it.id);
     if (it.r2 && it.r2.key) { S.r2del = (S.r2del || []).concat([it.r2.key]); setTimeout(r2Kick, 300); }
+  }
+  if (e.kind === "book" && e.data && e.data.rec && !(S.gen.books || []).some(x => x.id === e.data.rec.id)) {
+    const r = e.data.rec; bookDelLocal(r.id);
+    if (r.r2 && r.r2.key) { S.r2del = (S.r2del || []).concat([r.r2.key]); setTimeout(r2Kick, 300); }
   }
   if (!quiet) save();
 }
@@ -989,12 +994,13 @@ async function audioGc() {
   const alive = new Set([...(S.gen.listen || []).map(x => x.id), ...(S.gen.trash || []).filter(e => e.kind === "listen" && e.data && e.data.it).map(e => e.data.it.id)]);
   for (const k of await audioKeys()) if (S.gone["listen:" + k] && !alive.has(k)) audioDel(k);
 }
-function housekeep() { trashExpire(); audioGc().catch(e => noteErr("audio cleanup", e)); }
+function housekeep() { trashExpire(); audioGc().catch(e => noteErr("audio cleanup", e)); bookReconcile().catch(e => noteErr("book cleanup", e)); }
 // used by mergeStates: drop what was deleted (and not changed since), and bin entries emptied anywhere
 function applyGone(st) {
   const g = st.gone || {}, dead = (k, u) => g[k] && (u || 0) <= g[k];
   st.gen.mine = (st.gen.mine || []).filter(p => !dead("mine:" + p.id, p.u || p.t));
   st.gen.listen = (st.gen.listen || []).filter(it => !dead("listen:" + it.id, it.u || it.t));
+  if (st.gen.books) st.gen.books = st.gen.books.filter(r => !dead("book:" + r.id, r.u || r.t));
   for (const w in st.bank || {}) { const b = st.bank[w]; if (dead("bank:" + w, Math.max(b.u || 0, b.t || 0))) delete st.bank[w]; }
   for (const id in st.items || {}) if (id.startsWith("B:") && !(st.bank || {})[id.slice(2)] && g["bank:" + id.slice(2)]) delete st.items[id];
   const td = new Set(st.trashDone || []); st.gen.trash = (st.gen.trash || []).filter(e => !td.has(e.id));
@@ -1003,7 +1009,7 @@ function applyGone(st) {
 function trashCardHtml() {
   const list = (S.gen.trash || []).slice().sort((a, b) => b.t - a.t);
   if (!list.length) return "";
-  const icon = { listen: "🎧", mine: "📄", word: "🔤" }, kindName = { listen: "听力 Listening", mine: "我的文章 Your text", word: "生词 Saved word" };
+  const icon = { listen: "🎧", mine: "📄", word: "🔤", book: "📚" }, kindName = { listen: "听力 Listening", mine: "我的文章 Your text", word: "生词 Saved word", book: "书 Book" };
   return `<div class="card stack" id="trashcard"><span class="label">最近删除 · Recently deleted (${list.length})</span>
     <p class="small muted">删掉的东西在这里放 ${TRASH_DAYS} 天，两台设备都一样，可以找回。<br>Deleted things wait here for ${TRASH_DAYS} days on all your devices, so you can bring them back. Listening audio stays in the cloud until then.</p>
     <div class="stack" style="gap:6px;max-height:min(45vh,360px);overflow-y:auto;overscroll-behavior:contain;padding-right:4px">${list.map(e => { const left = Math.max(1, Math.ceil(TRASH_DAYS - (now() - e.t) / 864e5)); return `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><span class="zh" style="flex:1;min-width:140px">${icon[e.kind] || ""} ${esc(e.title || "无标题")} <span class="small muted">· ${kindName[e.kind] || ""} · 还剩 ${left} 天 ${left} day${left > 1 ? "s" : ""} left</span></span><button class="btn soft" data-trr="${esc(e.id)}">恢复 Restore</button><button class="btn ghost" data-trx="${esc(e.id)}">永久删除 Delete now</button></div>`; }).join("")}</div>
@@ -3538,9 +3544,11 @@ function mineGroups() {
   return Object.values(g).map(parts => parts.sort((a, b) => a.part - b.part)).sort((a, b) => b[0].t - a[0].t);
 }
 let MINE_TAG = "";
-/* ---------- books (v86, first release: .txt books on this device; design claude/design-books.md, provisional) ----------
-   A book lives in its own on-device store (IndexedDB "zwlgf-books": "m" = the shelf record, "t" = the text), never in
-   the progress entry or the repo. Not a passage: no 新/✓, no questions, no speed, never part of today's set.
+/* ---------- books (v86 first release: .txt books; v87: cloud copy + sync; design claude/design-books.md, provisional) ----------
+   A book's text lives in its own on-device store (IndexedDB "zwlgf-books": "m" = this device's record with the
+   chapters, "t" = the text), never in the progress entry. Since v87 a small record per book syncs with progress
+   (S.gen.books: title, size, place…, no text) and the text goes to R2 as books/<id>.json (like listening audio), so
+   another device can download it; deleting goes through 最近删除 like everything else. Not a passage: no 新/✓, no questions, no speed, never part of today's set.
    Paragraphs are the unit: the place is a paragraph index (long lines are split at sentence ends on import).
    Traditional books keep their own text; a simplified copy is made on import and shown by default (原文 shows the
    original). Words are split and looked up on the simplified text, as everywhere else. */
@@ -3632,40 +3640,110 @@ async function bookImport(file) {
   if (!paras.length || han < Math.min(20000, text.length) * 0.1) return toast("这个文件好像不是中文 · This file doesn't look like Chinese text", 4000);
   await booksLoad();
   const title = file.name.replace(/\.[^.]+$/, "").replace(/^《(.*)》$/, "$1").trim() || "书 Book";
-  if (BOOKS.some(b => b.file === file.name && b.chars === chars)) return toast("这本书已经在书架上了 · This book is already on your shelf", 3000);
+  if (BOOKS.some(b => b.file === file.name && b.chars === chars && bookRec(b.id))) return toast("这本书已经在书架上了 · This book is already on your shelf", 3000);
+  const twin = (S.gen.books || []).find(r => r.file === file.name && r.chars === chars && !BOOKS.some(b => b.id === r.id)); // on the shelf from another device: this file becomes its copy here
   if (!ZHC) { try { await loadZhc(); } catch (e) { /* offline the first time: read as written */ } }
   const trad = bookIsTrad(paras);
   const simp = trad ? paras.map(x => toSimp(x)) : null;
-  const meta = { id: "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title, file: file.name, added: now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, trad, orig: false, pos: { p: 0, t: 0 }, lastT: 0 };
+  const meta = { id: twin ? twin.id : "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title: twin ? twin.title : title, file: file.name, added: twin ? twin.t : now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, trad, orig: false, pos: twin && twin.pos ? Object.assign({}, twin.pos) : { p: 0, t: 0 }, lastT: 0 };
   try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: meta.id, paras, simp }, meta.id); t.objectStore("m").put(meta, meta.id); }); }
   catch (e) { noteErr("book save", e); return toast("存不下这本书（设备空间？）· Couldn't store the book on this device", 4000); }
-  BOOKS.push(meta);
-  toast(`已添加《${title}》· ${Math.round(chars / 1000)} 千字 · ${chapters.length} ${chapters.some(c => c.h) ? "章" : "部分"}${trad ? " · 繁体，显示为简体" : ""}`, 3500);
+  BOOKS = BOOKS.filter(b => b.id !== meta.id).concat([meta]);
+  if (!twin) { (S.gen.books = S.gen.books || []).push(bookRecFrom(meta)); save(); setTimeout(r2Kick, 300); }
+  toast(`已添加《${meta.title}》· ${Math.round(chars / 1000)} 千字 · ${chapters.length} ${chapters.some(c => c.h) ? "章" : "部分"}${trad ? " · 繁体，显示为简体" : ""}`, 3500);
   if (VIEW === "read" && !READ) render();
 }
 
-// ---- the shelf (top of 阅读) ----
-const bookPct = m => m.chars ? Math.min(100, Math.round(100 * ((m.pos && m.pos.c) || 0) / m.chars)) : 0;
-const bookDone = m => m.n && m.pos && m.pos.p >= m.n - 1 && m.pos.t;
+// ---- the synced record (S.gen.books) ----
+const bookRec = id => (S.gen.books || []).find(r => r.id === id);
+function bookRecFrom(m) { return touch({ id: m.id, title: m.title, file: m.file, t: m.added, bytes: m.bytes, chars: m.chars, n: m.n, trad: !!m.trad, nch: m.chapters.length, pos: m.pos && m.pos.t ? Object.assign({}, m.pos) : { p: 0, c: 0, t: 0 }, r2want: true }); }
+const bookLocal = id => (BOOKS || []).find(b => b.id === id) || null;
+const bookPos = (r, m) => { const a = (r && r.pos) || null, b = (m && m.pos) || null; return !a ? b : !b ? a : (b.t || 0) > (a.t || 0) ? b : a; }; // the newer place
+// the place goes into progress (and so to the other device) when you leave the book, put the app away, or every 2 min
+function bookPosSync(m) {
+  const r = m && bookRec(m.id); if (!r || !m.pos || !m.pos.t || (r.pos && (r.pos.t || 0) >= m.pos.t)) return;
+  r.pos = Object.assign({}, m.pos); touch(r, "place"); save();
+}
+// books on this device but not (yet) in progress — from v86, before records synced — get a record; copies of books
+// deleted for good (on any device) go from this device too
+async function bookReconcile() {
+  await booksLoad();
+  const g = S.gone || {}, inBin = new Set((S.gen.trash || []).filter(e => e.kind === "book" && e.data && e.data.rec).map(e => e.data.rec.id));
+  let added = false;
+  for (const m of BOOKS.slice()) {
+    if (bookRec(m.id) || inBin.has(m.id)) continue;
+    if (g["book:" + m.id]) { bookDelLocal(m.id); continue; }
+    (S.gen.books = S.gen.books || []).push(bookRecFrom(m)); added = true;
+  }
+  if (added) { save(); setTimeout(r2Kick, 300); }
+}
+async function bookDelLocal(id) {
+  BOOKS = (BOOKS || []).filter(b => b.id !== id); if (BK && BK.id === id) BK = null;
+  try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("m").delete(id); t.objectStore("t").delete(id); }); } catch (e) { noteErr("book remove", e); }
+}
+// to the bin (30 days, both devices); this device's copy and the cloud copy go when the bin entry goes
+function trashBook(r) {
+  S.gen.books = (S.gen.books || []).filter(x => x.id !== r.id); goneMark("book:" + r.id);
+  const e = trashAdd("book", r.title, { rec: r }); save(); return e;
+}
+// the text in the cloud: the extracted book (paragraphs, chapters, simplified copy), not the original file
+async function bookBlob(id) {
+  const m = bookLocal(id), tx = m && await bookTextGet(id); if (!tx) return null;
+  return new Blob([JSON.stringify({ v: 1, title: m.title, file: m.file, chars: m.chars, n: m.n, trad: !!m.trad, chapters: m.chapters, paras: tx.paras, simp: tx.simp || null })], { type: "application/json" });
+}
+async function bookDownload(r) {
+  R2.down[r.id] = 0; r2Draw();
+  try {
+    const blob = await r2Get(r.r2.key, p => { R2.down[r.id] = p; r2Draw(); }, "application/json");
+    const d = JSON.parse(await blob.text());
+    if (!d || !Array.isArray(d.paras) || !d.paras.every(x => typeof x === "string") || !Array.isArray(d.chapters) || (d.simp && (!Array.isArray(d.simp) || d.simp.length !== d.paras.length))) throw new Error("not a book file");
+    const chapters = d.chapters.filter(c => c && typeof c.t === "string" && Number.isInteger(c.p) && c.p >= 0 && c.p < d.paras.length).map(c => Object.assign({ t: c.t, p: c.p }, c.h ? { h: 1 } : {}, typeof c.s === "string" ? { s: c.s } : {}));
+    if (!chapters.length) chapters.push({ t: "第 1 部分", p: 0 });
+    const meta = { id: r.id, title: r.title, file: r.file || d.file || "", added: r.t || now(), bytes: r.bytes || 0, chars: d.paras.reduce((n, x) => n + x.length, 0), n: d.paras.length, chapters, trad: !!d.trad && !!d.simp, orig: false, pos: r.pos ? Object.assign({}, r.pos) : { p: 0, t: 0 }, lastT: 0 };
+    await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: r.id, paras: d.paras, simp: d.simp || null }, r.id); t.objectStore("m").put(meta, r.id); });
+    await booksLoad(); BOOKS = BOOKS.filter(b => b.id !== r.id).concat([meta]);
+    return meta;
+  } finally { delete R2.down[r.id]; r2Draw(); }
+}
+// ---- the shelf (top of 阅读): every book in progress; the ones whose text isn't on this device say where it is ----
+const bookPct = m => m && m.chars ? Math.min(100, Math.round(100 * ((m.pos && m.pos.c) || 0) / m.chars)) : 0;
+const bookDone = m => m && m.n && m.pos && m.pos.p >= m.n - 1 && m.pos.t;
 function bookChTitle(m, c) { return c ? (m.trad && !m.orig && c.s ? c.s : c.t) : ""; }
-function bookChAt(m, p) { let c = null; for (const x of m.chapters || []) { if (x.p <= p) c = x; else break; } return c; }
+function bookChAt(m, p) { let c = null; for (const x of (m && m.chapters) || []) { if (x.p <= p) c = x; else break; } return c; }
+function bookWhere(r) { // a book whose text isn't on this device
+  if (r.r2 && r2Cfg()) return { msg: "☁ 在云端 · In the cloud", go: "下载 Download" };
+  if (r.r2) return { msg: "☁ 在云端。这台设备还没设置云端（进度 → 云端音频）· In the cloud; set up cloud storage on this device first (Progress → 云端音频)" };
+  return { msg: "在另一台设备上，还没上传。那台设备联网并设置了云端就会上传；或者在这里添加同一个文件 · On your other device, not uploaded yet (it uploads once that device is online with cloud storage set up), or add the same file here" };
+}
 function bookShelf() {
-  if (!BOOKS) { booksLoad().then(() => { if (VIEW === "read" && !READ) render(); }); return ""; }
-  const list = BOOKS.slice().sort((a, b) => (!!bookDone(a) - !!bookDone(b)) || ((b.lastT || b.added) - (a.lastT || a.added)));
+  if (!BOOKS) { bookReconcile().then(() => { if (VIEW === "read" && !READ) render(); }); }
+  const list = (S.gen.books || []).map(r => { const m = bookLocal(r.id), pos = bookPos(r, m); return { r, m, v: Object.assign({}, r, { pos }) }; })
+    .sort((a, b) => (!!bookDone(a.v) - !!bookDone(b.v)) || (Math.max(b.v.pos.t || 0, b.r.t || 0) - Math.max(a.v.pos.t || 0, a.r.t || 0)));
   return `<div class="spread"><span class="label">书架 · Books (${list.length})</span><button class="btn soft" id="bkadd" style="min-height:38px;padding:8px 14px">+ 添加书 Add a book</button><input type="file" id="bkfile" accept=".txt,text/plain" hidden></div>
-    ${!list.length ? `<p class="small muted" style="margin-top:-8px">A .txt file of a book (UTF-8 or GBK). It stays on this device; tap any word for its meaning, as in passages. Books don't count toward today's reading or your reading speed.</p>` : ""}
-    ${list.length ? `<div class="plist">${list.map(m => {
-      const pc = bookPct(m), ch = bookChAt(m, m.pos ? m.pos.p : 0), done = bookDone(m);
-      return `<div class="pitem bkrow ${done ? "done" : ""}"><div class="spread"><h3 class="zh">${esc(m.title)}</h3><button class="tagc" data-bkinfo="${esc(m.id)}" aria-label="书的信息 Book info">⋯</button></div>
+    ${!list.length ? `<p class="small muted" style="margin-top:-8px">A .txt file of a book (UTF-8 or GBK). Tap any word for its meaning, as in passages. With cloud storage set up (the same as for listening audio) it's on your other devices too. Books don't count toward today's reading or your reading speed.</p>` : ""}
+    ${list.length ? `<div class="plist">${list.map(({ r, m, v }) => {
+      const pc = bookPct(v), started = v.pos && v.pos.t, done = bookDone(v), ch = m ? bookChAt(m, v.pos.p) : null, w = m ? null : bookWhere(r);
+      return `<div class="pitem bkrow ${done ? "done" : ""}"><div class="spread"><h3 class="zh">${esc(r.title)}</h3><button class="tagc" data-bkinfo="${esc(r.id)}" aria-label="书的信息 Book info">⋯</button></div>
         <div class="bkprog"><i style="width:${pc}%"></i></div>
-        <div class="spread"><span class="small muted">${done ? "读完了 · Finished" : m.pos && m.pos.t ? `${pc}% · <span class="zh">${esc(bookChTitle(m, ch))}</span>` : "还没开始 · Not started"}</span><button class="btn soft" data-bkgo="${esc(m.id)}" style="min-height:38px;padding:8px 14px">${m.pos && m.pos.t ? "继续 Continue" : "开始 Start"}</button></div></div>`;
+        <div class="stack" data-r2p="${esc(r.id)}" hidden></div>
+        ${w ? `<p class="small muted">${esc(w.msg)}</p>` : ""}
+        <div class="spread"><span class="small muted">${done ? "读完了 · Finished" : started ? `${pc}%${ch ? ` · <span class="zh">${esc(bookChTitle(m, ch))}</span>` : ""}` : "还没开始 · Not started"}</span>${!w || w.go ? `<button class="btn soft" data-bkgo="${esc(r.id)}" style="min-height:38px;padding:8px 14px">${w ? w.go : started ? "继续 Continue" : "开始 Start"}</button>` : ""}</div></div>`;
     }).join("")}</div>` : ""}`;
 }
 function bindBookShelf(main) {
   const add = $("#bkadd", main), f = $("#bkfile", main); if (!add || !f) return;
   add.onclick = () => f.click();
   f.onchange = () => { const file = f.files[0]; f.value = ""; if (file) { toast("正在添加… Adding…", 1500); bookImport(file); } };
-  $$("[data-bkgo]", main).forEach(b => b.onclick = () => { READ = { book: b.dataset.bkgo }; render(); });
+  $$("[data-bkgo]", main).forEach(b => b.onclick = async () => {
+    const id = b.dataset.bkgo, r = bookRec(id);
+    if (!bookLocal(id) && r && r.r2) {
+      if (R2.down[id] != null) return;
+      b.disabled = true;
+      try { await bookDownload(r); } catch (e) { noteErr("book download", e); b.disabled = false; return toast((e && e.message) || "下载失败 · Download failed", 4000); }
+      if (VIEW !== "read" || READ) return;
+    }
+    READ = { book: id }; render();
+  });
   $$("[data-bkinfo]", main).forEach(b => b.onclick = () => { READ = { book: b.dataset.bkinfo, sub: "info" }; render(); window.scrollTo(0, 0); });
 }
 
@@ -3673,6 +3751,7 @@ function bindBookShelf(main) {
 async function bookOpen(id) {
   await booksLoad();
   const meta = BOOKS.find(b => b.id === id); if (!meta) throw new Error("no such book");
+  { const r = bookRec(id); if (r && r.title && r.title !== meta.title) meta.title = r.title; const p = bookPos(r, meta); if (p && p !== meta.pos) meta.pos = Object.assign({}, p); } // read on the other device since
   const tx = await bookTextGet(id); if (!tx) throw new Error("book text missing");
   const offs = new Array(tx.paras.length + 1); offs[0] = 0;
   tx.paras.forEach((x, i) => { offs[i + 1] = offs[i] + x.length; });
@@ -3705,17 +3784,19 @@ function bkSetPos(p) {
   BK.pos = p;
   const m = BK.meta; m.pos = { p, c: BK.offs[p], t: now() }; m.lastT = now();
   clearTimeout(BK_SAVE_T); BK_SAVE_T = setTimeout(bkSaveNow, 800);
+  if (now() - (BK.synced || 0) > 2 * MIN) { BK.synced = now(); setTimeout(() => { if (BK) bookPosSync(BK.meta); }, 900); }
 }
 function bkSaveNow() { clearTimeout(BK_SAVE_T); BK_SAVE_T = null; if (BK) bookMetaPut(BK.meta).catch(e => noteErr("book place", e)); }
-document.addEventListener("visibilitychange", () => { if (document.hidden && BK_SAVE_T) bkSaveNow(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden || !BK) return; if (BK_SAVE_T) bkSaveNow(); bookPosSync(BK.meta); });
 function bkJump(p, hit) {
   if (Math.abs(p - BK.pos) > 2) BK.back = BK.pos; // ↩ 回到刚才 after a jump
   BK.hit = hit || null; bkSetPos(p); READ.sub = null; render();
 }
-function bkLeave() { closeSheet(); bkSaveNow(); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
+function bkLeave() { closeSheet(); bkSaveNow(); bookPosSync(BK.meta); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
 
 // ---- the reader ----
 function renderBook(main) {
+  if (READ.sub === "info") return renderBookInfo(main);
   if (!BK || BK.id !== READ.book) {
     main.innerHTML = `<div class="card"><p class="muted">打开中… Opening…</p></div>`;
     const id = READ.book;
@@ -3725,8 +3806,8 @@ function renderBook(main) {
   }
   if (READ.sub === "toc") return renderBookToc(main);
   if (READ.sub === "find") return renderBookFind(main);
-  if (READ.sub === "info") return renderBookInfo(main);
   closeSheet();
+  { const r = bookRec(BK.id), p = bookPos(r, BK.meta); if (p && p !== BK.meta.pos && (p.t || 0) > ((BK.meta.pos || {}).t || 0)) { BK.meta.pos = Object.assign({}, p); BK.pos = Math.min(p.p, BK.paras.length - 1); BK.hit = null; } if (r && r.title) BK.meta.title = r.title; } // read on the other device meanwhile
   const pref = bookPref(), page = pref.mode === "page", m = BK.meta, f = BK.find;
   main.innerHTML = `<div class="bkbar" id="bkbar"><button class="btn ghost" id="bkback" style="min-height:38px;padding:6px 10px">←</button><span class="bkt small muted zh">${esc(m.title)}</span>
       <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button><button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
@@ -3912,22 +3993,31 @@ function renderBookFind(main) {
 }
 // ⋯ book info: rename, remove (this device; your saved words stay)
 function renderBookInfo(main) {
-  const m = BK.meta, simpChars = m.chars;
+  const r = bookRec(READ.book), m = bookLocal(READ.book);
+  if (!r) { READ = null; return render(); }
+  const v = Object.assign({}, r, { pos: bookPos(r, m) }), nch = m ? m.chapters.length : r.nch || 0, hasCh = m ? m.chapters.some(c => c.h) : true;
+  const cloud = r.r2 ? "☁ 云端有一份，你的其他设备打开时会下载 · A copy is in the cloud; your other devices download it when you open it there"
+    : !m ? bookWhere(r).msg
+    : r2Cfg() ? "☁ 等着上传到云端（联网时）· Waiting to upload to the cloud (when online)"
+    : "只在这台设备上。在进度 → 云端音频设置云端后会自动上传，其他设备就能读 · Only on this device. Set up cloud storage (Progress → 云端音频) and it uploads by itself, so your other devices can read it";
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="bkib">← 返回</button></div>
     <div class="card stack"><span class="label">书 · Book</span>
-      <div class="row" style="flex-wrap:nowrap"><input class="zh" id="bkti" value="${esc(m.title)}" style="flex:1;min-width:0;font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)"><button class="btn soft" id="bktsave" style="min-height:44px">改名 Rename</button></div>
-      <p class="small muted">${esc(m.file || "")} · ${Math.round(simpChars / 1000)} 千字 · ${m.chapters.length} ${m.chapters.some(c => c.h) ? "章 chapters" : "部分 parts"}${m.trad ? " · 繁体原文 traditional original" : ""} · ${bookPct(m)}%</p>
-      <p class="small muted">只存在这台设备上 · Kept on this device only (copies on your other devices come in a later version).</p>
-      <button class="btn ghost" id="bkrm">移除这本书 · Remove this book</button></div>`;
+      <div class="row" style="flex-wrap:nowrap"><input class="zh" id="bkti" value="${esc(r.title)}" style="flex:1;min-width:0;font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)"><button class="btn soft" id="bktsave" style="min-height:44px">改名 Rename</button></div>
+      <p class="small muted">${esc(r.file || "")} · ${Math.round((r.chars || 0) / 1000)} 千字${nch ? ` · ${nch} ${hasCh ? "章 chapters" : "部分 parts"}` : ""}${r.trad ? " · 繁体原文 traditional original" : ""} · ${bookPct(v)}%</p>
+      <p class="small muted">${esc(cloud)}</p>
+      <button class="btn ghost" id="bkrm">删除这本书 · Delete this book</button></div>`;
   $("#bkib", main).onclick = () => { READ = null; render(); };
-  $("#bktsave", main).onclick = () => { const v = $("#bkti", main).value.trim(); if (!v) return; m.title = v; BK.p.title = v; bookMetaPut(m).then(() => toast("已改名 · Renamed")).catch(e => noteErr("book rename", e)); };
-  const rm = $("#bkrm", main); let armed = false;
-  rm.onclick = async () => {
-    if (!armed) { armed = true; rm.textContent = "再点一次确定移除 · Tap again to remove"; rm.classList.add("danger"); return; }
-    try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("m").delete(m.id); t.objectStore("t").delete(m.id); }); }
-    catch (e) { noteErr("book remove", e); return toast("没能移除 · Couldn't remove it", 3000); }
-    BOOKS = BOOKS.filter(b => b.id !== m.id); BK = null; READ = null; render();
-    toast("已移除 · Removed (words you saved from it stay in your review)", 3000);
+  $("#bktsave", main).onclick = () => {
+    const t = $("#bkti", main).value.trim(); if (!t) return;
+    r.title = t; touch(r, "title"); save();
+    if (m) { m.title = t; bookMetaPut(m).catch(e => noteErr("book rename", e)); }
+    if (BK && BK.id === r.id) BK.p.title = t;
+    toast("已改名 · Renamed");
+  };
+  $("#bkrm", main).onclick = () => {
+    if (BK && BK.id === r.id) { bkSaveNow(); BK = null; }
+    const e = trashBook(r); READ = null; render(); window.scrollTo(0, 0);
+    toastAction("已删除，可以在“进度 → 最近删除”找回 · Deleted (Progress → Recently deleted)", "撤销 Undo", () => { restoreTrash(e); render(); }, 5000);
   };
 }
 function mineSection() {
@@ -5480,14 +5570,15 @@ async function r2Get(key, onprog, type) {
 }
 const r2Del = key => r2Fetch("DELETE", key);
 async function r2Usage() {
-  let bytes = 0, n = 0, token = "";
+  let bytes = 0, n = 0;
+  for (const pre of ["audio%2F", "books%2F"]) { let token = ""; // the app's two folders in the bucket
   for (let i = 0; i < 20; i++) {
-    const r = await r2Fetch("GET", "", "?list-type=2&prefix=audio%2F" + (token ? "&continuation-token=" + encodeURIComponent(token) : ""));
+    const r = await r2Fetch("GET", "", "?list-type=2&prefix=" + pre + (token ? "&continuation-token=" + encodeURIComponent(token) : ""));
     const xml = new DOMParser().parseFromString(await r.text(), "application/xml");
     for (const sz of xml.getElementsByTagName("Size")) { bytes += +sz.textContent || 0; n++; }
     const tr = xml.getElementsByTagName("IsTruncated")[0], nt = xml.getElementsByTagName("NextContinuationToken")[0];
     if (!tr || tr.textContent !== "true" || !nt) break; token = nt.textContent;
-  }
+  } }
   return { bytes, n };
 }
 const fmtMB = b => !b ? "0 MB" : b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.max(0.1, b / 1e6).toFixed(1) + " MB";
@@ -5526,6 +5617,7 @@ async function r2Kick() {
   R2.busy = true;
   try {
     for (const key of (S.r2del || []).slice()) { try { await r2Del(key); } catch (e) { if (e.code !== "missing") break; } S.r2del = (S.r2del || []).filter(k => k !== key); save(); }
+    const err0 = R2.err; // books go up unless an audio upload just failed
     for (const it of (S.gen.listen || []).slice()) {
       if (it.kind !== "file" || !it.r2want || it.r2 || it.r2gone) continue;
       const blob = await audioGet(it.id); if (!blob) continue; // only the device that has the file can upload it
@@ -5548,6 +5640,23 @@ async function r2Kick() {
       } catch (e) { R2.err = e; delete R2.up[it.id]; r2Draw(); if (VIEW === "listen" || VIEW === "me") render(); break; }
       delete R2.up[it.id]; r2Draw();
       if (VIEW === "listen" && !busyView()) render();
+    }
+    // books (v87): the text of each book this device has, once
+    if (R2.err === err0 || !R2.err) for (const r of (S.gen.books || []).slice()) {
+      if (!r.r2want || r.r2) continue;
+      await booksLoad(); const blob = await bookBlob(r.id); if (!blob) continue; // only a device with the text can upload it
+      let use = null; try { use = await r2UsageFresh(); } catch (e) { noteErr("cloud usage", e); }
+      if (use && use.bytes + blob.size > R2_FREE) { toast("书没上传到云端：会超过 10 GB 免费额度 · The book wasn't uploaded: it would go over the free 10 GB", 6000); break; }
+      const key = `books/${r.id}.json`;
+      R2.up[r.id] = 0; r2Draw();
+      try {
+        await r2Put(key, blob, p => { R2.up[r.id] = p; r2Draw(); });
+        r.r2 = { key, size: blob.size, t: now() }; delete r.r2want; touch(r, "cloud"); R2.err = null; save();
+        if (R2.usage) r2UseSet({ bytes: R2.usage.bytes + blob.size, n: R2.usage.n + 1 });
+        toast(`已上传到云端 · Uploaded: 《${r.title}》`, 2500);
+      } catch (e) { R2.err = e; delete R2.up[r.id]; r2Draw(); noteErr("book upload", e); break; }
+      delete R2.up[r.id]; r2Draw();
+      if (VIEW === "read" && !READ) render();
     }
   } finally { R2.busy = false; }
 }
@@ -5602,14 +5711,15 @@ function r2ItemHtml(it, here) {
 function r2Card() {
   const c = provGet().r2 || {}, ok = r2Cfg();
   return `<span class="label">云端音频 · Cloud audio (Cloudflare R2)</span>
-    <p class="small muted">听力的音频文件放在你的 R2 桶里，别的设备打开时会下载。钥匙存在这台设备上，也跟着 GitHub 同步到其他设备。<br>Listening audio goes to your R2 bucket; your other devices download it when you open an item. The key stays on this device and syncs to your others through GitHub (never in a code).</p>
+    <p class="small muted">听力的音频文件（还有你的书）放在你的 R2 桶里，别的设备打开时会下载。钥匙存在这台设备上，也跟着 GitHub 同步到其他设备。<br>Listening audio (and your books) goes to your R2 bucket; your other devices download it when you open an item. The key stays on this device and syncs to your others through GitHub (never in a code).</p>
     <input class="inp" id="r2acct" placeholder="Account ID" value="${esc(c.account || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2bkt" placeholder="桶名 Bucket name" value="${esc(c.bucket || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2ak" placeholder="Access Key ID" value="${esc(c.akid || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2sk" type="password" placeholder="Secret Access Key" value="${esc(c.secret || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button class="btn soft" id="r2save">保存并测试 Save & test</button>
-    <div id="r2st" class="small">${ok ? r2UseHtml() : ""}${R2.cardErr ? `<span style="color:var(--bad)">${esc(R2.cardErr)}</span>` : ""}</div>`;
+    <div id="r2st" class="small">${r2StHtml(ok)}</div>`;
 }
+const r2StHtml = ok => `${ok ? r2UseHtml() : ""}${R2.cardErr ? `<span style="color:var(--bad)">${esc(R2.cardErr)}</span>` : ""}`;
 function bindR2Card() {
   const card = $("#r2card"); if (!card) return;
   const redraw = () => { const c = $("#r2card"); if (c) { c.innerHTML = r2Card(); bindR2Card(); } };
@@ -5621,7 +5731,9 @@ function bindR2Card() {
     catch (e) { R2.cardErr = e.message || String(e); }
     redraw();
   };
-  if (r2Cfg() && ONLINE && now() - R2.usageAt > 30 * MIN) { R2.usageAt = now(); r2Usage().then(u => { r2UseSet(u); R2.cardErr = ""; redraw(); }).catch(e => { R2.cardErr = e.message; redraw(); }); }
+  // the background check only updates the status line, so it never wipes a key being typed into the fields
+  const stOnly = () => { const st = $("#r2st"); if (st) st.innerHTML = r2StHtml(!!r2Cfg()); };
+  if (r2Cfg() && ONLINE && now() - R2.usageAt > 30 * MIN) { R2.usageAt = now(); r2Usage().then(u => { r2UseSet(u); R2.cardErr = ""; stOnly(); }).catch(e => { R2.cardErr = e.message; stOnly(); }); }
 }
 addEventListener("online", () => setTimeout(r2Kick, 2500));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(r2Kick, 1500); });

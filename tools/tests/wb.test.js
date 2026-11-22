@@ -91,8 +91,8 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
   await page.waitForFunction(() => SLANG && SLANG.terms.length > 0);
   await page.evaluate(() => { S.placed = true; SLANG.updated = dayKey(now() - 20 * DAY); setView("home"); });
   await page.waitForSelector("#slangcard");
-  const card = await page.textContent("#slangcard");
-  ok(/20 天没更新了/.test(card) && /更新热梗表/.test(card), "after 2 weeks the home screen says the slang list is due, with the words to say to Claude: " + card.replace(/\s+/g, " ").slice(0, 80));
+  const card = await page.textContent("#slangcard"), age = await page.evaluate(() => slangAge()); // 19 or 20 depending on the time of day (counted from noon of the update day)
+  ok(age >= 19 && age <= 20 && new RegExp(age + " 天没更新了").test(card) && /更新热梗表/.test(card), "after 2 weeks the home screen says the slang list is due, with the words to say to Claude: " + card.replace(/\s+/g, " ").slice(0, 80));
   await page.click("#slang-later"); await page.waitForFunction(() => !$("#slangcard"));
   ok(await page.evaluate(() => +localStorage.getItem("zwlgf:slangsnooze") > now() + 2.9 * DAY), "过几天再说 · Later puts it off for 3 days on this device");
   await page.evaluate(() => { localStorage.removeItem("zwlgf:slangsnooze"); S.settings = setSettings({ reading: Object.assign({}, (S.settings || {}).reading, { genres: ["news"] }) }); setView("home"); });

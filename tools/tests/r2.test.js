@@ -95,7 +95,7 @@ async function routeR2(ctx) {
     if (m === "PUT") { if (R2S.failPut > 0) { R2S.failPut--; return route.fulfill({ status: 500, headers: H, body: "<Error>InternalError</Error>" }); } R2S.objs.set(key, { body: rq.postDataBuffer(), type: h["content-type"] }); return route.fulfill({ status: 200, headers: Object.assign({ etag: '"x"' }, H), body: "" }); }
     if (m === "DELETE") { R2S.objs.delete(key); return route.fulfill({ status: 204, headers: H }); }
     if (m === "GET" && u.searchParams.get("list-type") === "2") {
-      const items = [...R2S.objs.entries()].filter(([k]) => k.startsWith("audio/"));
+      const pre = u.searchParams.get("prefix") || "", items = [...R2S.objs.entries()].filter(([k]) => k.startsWith(pre));
       return route.fulfill({ status: 200, headers: Object.assign({ "content-type": "application/xml" }, H), body: `<?xml version="1.0"?><ListBucketResult>${items.map(([k, o]) => `<Contents><Key>${k}</Key><Size>${o.size != null ? o.size : o.body.length}</Size></Contents>`).join("")}<IsTruncated>false</IsTruncated></ListBucketResult>` });
     }
     if (m === "GET") { const o = R2S.objs.get(key); if (!o) return route.fulfill({ status: 404, headers: H, body: "<Error>NoSuchKey</Error>" }); return route.fulfill({ status: 200, headers: Object.assign({ "content-type": o.type, "content-length": String(o.body.length) }, H), body: o.body }); }
