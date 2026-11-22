@@ -44,6 +44,15 @@ function makeBook() {
   const parts = await page.evaluate(() => { const r = bookParse(Array(30).fill("　　" + "他走了很久才停下来。".repeat(40)).join("\n")); return r.chapters.map(c => c.t + "@" + c.p).join(" "); });
   ok(/^第 1 部分@0 第 2 部分@\d+ 第 3 部分/.test(parts), "no headings → numbered parts of ~5,000 characters: " + parts);
   ok(await page.evaluate(() => bookDecode(new TextEncoder().encode("﻿你好").buffer) === "你好"), "UTF-8 (with a BOM) decodes");
+  // numbered chapter lines (v88; the learner's 三体 file): "1. 疯狂年代", "2．寂静的春天" (full-width dot)
+  const num = await page.evaluate(() => {
+    const body = "他在河边慢慢地走着，可是谁也没有注意到。".repeat(30);
+    const t = ["三体", "作者：某某", "1. 疯狂年代", body, "抹了口红，也穿上了高跟鞋。", "2．寂静的春天", "两年以后，大兴安岭。" + body, "3. 红岸之一", body, "４．科学边界", body].join("\n");
+    const list = ["开头的一段。" + body, "他列了三件事：", "1．买菜", "2．做饭", "3．洗碗", body, "1. 只有一个编号的标题", body].join("\n");
+    return { a: bookParse(t).chapters.map(c => c.t), b: bookParse(list).chapters.map(c => c.t) };
+  });
+  ok(JSON.stringify(num.a) === JSON.stringify(["开头 · Beginning", "1. 疯狂年代", "2．寂静的春天", "3. 红岸之一", "４．科学边界"]), "numbered chapter lines (1. / 2． / full-width digits) are found when they run 1, 2, 3…: " + num.a.join(" | "));
+  ok(num.b.every(t => /部分/.test(t)), "a short numbered list inside the text isn't taken for chapters: " + num.b.join(" | "));
 
   // ---- the shelf and adding ----
   await page.click('#tabs button[data-tab="read"]'); await page.waitForSelector("#bkadd");

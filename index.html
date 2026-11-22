@@ -858,9 +858,15 @@ function mergeSettings(m, o) {
    an edit stamps its group in it.uf[group] (touch), so a rename on one device and a timing fix on the other both
    survive. Groups not stamped on either side come from the copy changed last (it.u), as before. */
 const FIELD_GROUPS = { title: ["title"], tags: ["tags"], type: ["type", "typeMan"], timing: ["fix", "tm", "tap"],
-  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras", "sty", "slang"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], place: ["pos"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
+  text: ["cues", "trPrev", "trLabel", "qs", "gl", "secs", "qcut", "en", "paras", "sty", "slang"], lyr: ["lyr", "pyf"], cloud: ["r2", "r2want", "r2gone", "r2big"], place: ["pos"], stats: ["rd", "st"], fwa: ["a"], fwb: ["b"], fwd: ["done"] };
 function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1); const uf = x.uf = Object.assign({}, x.uf); for (const g of groups) uf[g] = x.u; return x; }
 function mergeGenItem(a, b) {
+  const out = mergeGenItem0(a, b);
+  // a book's read ranges and reading sittings (v88) are united, so reading on both devices all counts
+  if (a.rd || b.rd || a.st || b.st) return Object.assign({}, out, { rd: rgUnion(a.rd, b.rd), st: stUnion(a.st, b.st) });
+  return out;
+}
+function mergeGenItem0(a, b) {
   const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
   if (!other.uf) return base;
   const out = Object.assign({}, base), uf = Object.assign({}, base.uf);
@@ -1246,7 +1252,7 @@ function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
    listening isn't counted. Kept ~2 years. */
 const LOG_DAYS = 800;
 function devId() { try { let d = localStorage.getItem("zwlgf:dev"); if (!d) { d = "d" + Math.random().toString(36).slice(2, 8); localStorage.setItem("zwlgf:dev", d); } return d; } catch (e) { return "d0"; } }
-const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0) + (v.kt || 0); } return { n, ok, sec }; };
+const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0) + (v.kt || 0) + (v.bk || 0); } return { n, ok, sec }; };
 function logTotals(d) { const b = byTotal(d), o = d.old || { n: 0, ok: 0, sec: 0 }; d.n = o.n + b.n; d.ok = o.ok + b.ok; d.sec = o.sec + b.sec; return d; }
 function logDay(sec, ok, kind = "due") {
   const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 };
@@ -1254,9 +1260,10 @@ function logDay(sec, ok, kind = "due") {
   const v = d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 };
   // fw = free writing (v73): on top of today's set, so it isn't card time and doesn't move the new-item allowance
   // kt = the lyric feed (v74, 刷歌词): KTV practice, not card time either
-  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "ktv" ? "kt" : kind === "extra" ? "extra" : "due";
-  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" || kind === "fw" ? 900 : 240));
-  if (kind !== "read" && kind !== "fw" && kind !== "ktv") { v.n++; v.ok += ok ? 1 : 0; }
+  // bk = reading a book (v88): not card time either
+  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "ktv" ? "kt" : kind === "book" ? "bk" : kind === "extra" ? "extra" : "due";
+  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" || kind === "fw" ? 900 : kind === "book" ? 3600 : 240));
+  if (kind !== "read" && kind !== "fw" && kind !== "ktv" && kind !== "book") { v.n++; v.ok += ok ? 1 : 0; }
   logTotals(d);
 }
 // per-device flags on today's log (synced, merged by OR): done = today's set is done (✓); cd = today's cards are done
@@ -1267,17 +1274,17 @@ function mergeLogDay(x, y) {
   if (!x) return y; if (!y) return x;
   if (!x.by && !y.by) return { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   const m = { by: {} };
-  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, kt: Math.max(w.kt || 0, v.kt || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
+  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, kt: Math.max(w.kt || 0, v.kt || 0) || undefined, bk: Math.max(w.bk || 0, v.bk || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
   // the part from before the split: a day from older code (no by) is its totals minus what's already split
   const b = byTotal(m), legacy = z => z.by ? (z.old || { n: 0, ok: 0, sec: 0 }) : { n: Math.max(0, z.n - b.n), ok: Math.max(0, z.ok - b.ok), sec: Math.max(0, z.sec - b.sec) };
   const lx = legacy(x), ly = legacy(y); m.old = { n: Math.max(lx.n, ly.n), ok: Math.max(lx.ok, ly.ok), sec: Math.max(lx.sec, ly.sec) };
   return logTotals(m);
 }
 function daySplit(d) {
-  const r = { due: 0, extra: 0, rd: 0, fw: 0, kt: 0, old: 0, done: false, cd: false, nr: false };
+  const r = { due: 0, extra: 0, rd: 0, fw: 0, kt: 0, bk: 0, old: 0, done: false, cd: false, nr: false };
   if (!d) return r;
   if (!d.by) { r.old = d.sec || 0; return r; }
-  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; r.fw += v.fw || 0; r.kt += v.kt || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
+  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; r.fw += v.fw || 0; r.kt += v.kt || 0; r.bk += v.bk || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
   r.old = (d.old || {}).sec || 0; return r;
 }
 const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时 ${m % 60 ? (m % 60) + " 分" : ""}`.trim(); };
@@ -1290,27 +1297,27 @@ function timeCardHtml() {
   if (TRANGE === "7" || TRANGE === "30") { const n = +TRANGE; for (let i = n - 1; i >= 0; i--) { const t = now() - i * DAY, dt = new Date(dayKey(t) + "T12:00"); add(n === 7 ? "日一二三四五六"[dt.getDay()] : (i % 5 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : ""), [dayKey(t)], true); } }
   else if (TRANGE === "12w") { const m0 = new Date(midnight(now())); const back = (m0.getDay() + 6) % 7; const mon = midnight(now()) - back * DAY; for (let w = 11; w >= 0; w--) { const s0 = mon - w * 7 * DAY, keys = []; for (let i = 0; i < 7; i++) keys.push(dayKey(s0 + i * DAY + 3 * 3600e3)); const dt = new Date(s0); add(w % 2 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : "", keys); } }
   else { const ks = Object.keys(S.log || {}).sort(), first = ks.length ? new Date(ks[0] + "T12:00") : new Date(); const cur = new Date(dayKey() + "T12:00"); let y = first.getFullYear(), mo = first.getMonth(); const months = []; while (y < cur.getFullYear() || (y === cur.getFullYear() && mo <= cur.getMonth())) { months.push([y, mo]); mo++; if (mo > 11) { mo = 0; y++; } } months.slice(-24).forEach(([y, mo]) => { const pre = `${y}-${String(mo + 1).padStart(2, "0")}`; add(`${mo + 1}月`, ks.filter(k => k.startsWith(pre))); }); }
-  const F = ["due", "extra", "fw", "rd", "kt", "old"], sum = o => F.reduce((a, f) => a + (o[f] || 0), 0);
-  let T = { due: 0, extra: 0, fw: 0, rd: 0, kt: 0, old: 0 }, days = 0, doneDays = 0;
-  B.forEach(b => { b.s = { due: 0, extra: 0, fw: 0, rd: 0, kt: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of F) b.s[f] += sp[f]; if (sum(sp) > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = sum(b.s); for (const f in T) T[f] += b.s[f]; });
+  const F = ["due", "extra", "fw", "rd", "bk", "kt", "old"], sum = o => F.reduce((a, f) => a + (o[f] || 0), 0);
+  let T = { due: 0, extra: 0, fw: 0, rd: 0, bk: 0, kt: 0, old: 0 }, days = 0, doneDays = 0;
+  B.forEach(b => { b.s = { due: 0, extra: 0, fw: 0, rd: 0, bk: 0, kt: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of F) b.s[f] += sp[f]; if (sum(sp) > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = sum(b.s); for (const f in T) T[f] += b.s[f]; });
   const max = Math.max(60, ...B.map(b => b.tot)), all = sum(T);
   const seg = (v, c) => v ? `<i style="height:${v / max * 100}%;background:${c}"></i>` : "";
-  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", fw: "var(--plum)", kt: "var(--gold)", old: "var(--line)" };
+  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", fw: "var(--plum)", kt: "var(--gold)", bk: "color-mix(in srgb, var(--good) 50%, var(--surface))", old: "var(--line)" };
   const today = daySplit(S.log[dayKey()]);
   if (TSEL == null || TSEL >= B.length) TSEL = B.length - 1;
   const sb = B[TSEL], dl = sb.day ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 周${"日一二三四五六"[t.getDay()]}`; })() : TRANGE === "12w" ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 那周 week of`; })() : sb.lab;
-  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.fw ? ` · 写作 ${fmtMinEn(sb.s.fw)}` : ""}${sb.s.kt ? ` · 歌 KTV ${fmtMinEn(sb.s.kt)}` : ""}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
+  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.fw ? ` · 写作 ${fmtMinEn(sb.s.fw)}` : ""}${sb.s.bk ? ` · 书 Books ${fmtMinEn(sb.s.bk)}` : ""}${sb.s.kt ? ` · 歌 KTV ${fmtMinEn(sb.s.kt)}` : ""}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
   return `<span class="label">时间 · Time spent</span>
     <div class="row" style="gap:6px">${TRANGES.map(([k, l]) => `<button class="tagc ${TRANGE === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div>
-    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.kt, C.kt)}${seg(b.s.rd, C.rd)}${seg(b.s.fw, C.fw)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
+    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.kt, C.kt)}${seg(b.s.bk, C.bk)}${seg(b.s.rd, C.rd)}${seg(b.s.fw, C.fw)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
     ${detail}
-    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.fw}"></i>写 Writing</span><span><i style="background:${C.rd}"></i>阅读 Reading</span><span><i style="background:${C.kt}"></i>歌 KTV</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
+    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.fw}"></i>写 Writing</span><span><i style="background:${C.rd}"></i>阅读 Reading</span><span><i style="background:${C.bk}"></i>书 Books</span><span><i style="background:${C.kt}"></i>歌 KTV</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
     <div class="stack small" style="gap:4px">
       <span><b>这段时间 In this period: ${fmtMin(all)}</b> · ${fmtMinEn(all)}${days ? ` · 练了 ${days} 天 on ${days} day${days > 1 ? "s" : ""} (avg ${fmtMinEn(all / days)})` : ""}</span>
       <span>练习 Exercises <b>${fmtMinEn(T.due + T.extra)}</b> = 该做的 today's set ${fmtMinEn(T.due)} + 额外 extra ${fmtMinEn(T.extra)}${doneDays && TRANGE !== "all" ? ` · 做完 set done on ${doneDays} day${doneDays > 1 ? "s" : ""}` : ""}</span>
-      <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
+      <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b> · 书 Books <b>${fmtMinEn(T.bk)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
       <span>写作 Writing <b>${fmtMinEn(T.fw)}</b> · 歌 KTV (刷歌词 lyric feed) <b>${fmtMinEn(T.kt)}</b></span>
-      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.fw ? ` · 写作 ${fmtMinEn(today.fw)}` : ""}${today.kt ? ` · 歌 ${fmtMinEn(today.kt)}` : ""}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 其他听力不算在内 Other listening isn't counted.</span></div>`;
+      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.fw ? ` · 写作 ${fmtMinEn(today.fw)}` : ""}${today.bk ? ` · 书 ${fmtMinEn(today.bk)}` : ""}${today.kt ? ` · 歌 ${fmtMinEn(today.kt)}` : ""}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 其他听力不算在内 Other listening isn't counted.</span></div>`;
 }
 function bindTimeCard(scope) {
   const redraw = () => { $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); };
@@ -3605,21 +3612,41 @@ function bookSplitLong(l) {
   return out;
 }
 function bookParse(text) {
-  const lines = String(text).replace(/\r\n?/g, "\n").split("\n").map(l => l.replace(/^[\s　﻿]+|[\s　]+$/g, "")).filter(Boolean);
-  const paras = [], heads = [];
-  for (const l of lines) {
-    if (Array.from(l).length <= 40 && BOOK_CH_RE.test(l)) { heads.push(paras.length); paras.push(l); continue; }
-    for (const piece of bookSplitLong(l)) paras.push(piece);
-  }
-  let chapters;
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n").map(l => l.replace(/^[\s\u3000\ufeff]+|[\s\u3000]+$/g, "")).filter(Boolean);
+  const paras = []; for (const l of lines) for (const piece of bookSplitLong(l)) paras.push(piece);
+  return { paras, chapters: bookChapters(paras) };
+}
+// Chapters: short lines like 第一章…, 序章, 楔子… (BOOK_CH_RE), and (v88, learner's 三体 file) numbered lines like
+// "1. 疯狂年代" / "2．寂静的春天" — those only when they run 1, 2, 3… at least 3 long with text in between (≥ 300
+// characters), so a numbered list inside the text doesn't count; a run may start again at 1 (a new part).
+// No headings → numbered parts of ~5,000 characters, cut between paragraphs.
+const BOOK_CV = 2; // chapter detection version: books found with an older one are looked at again when opened
+const BOOK_NUM_RE = /^([0-9０-９]{1,3})[ \u3000]*[.．、][ \u3000]*(\S.{0,29})$/;
+const halfDigits = x => x.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+function bookChapters(paras) {
+  const heads = [], runs = []; let run = null, prev = 0, since = 0;
+  paras.forEach((x, i) => {
+    const short = Array.from(x).length <= 40;
+    if (short && BOOK_CH_RE.test(x)) { heads.push(i); since = 0; return; }
+    const m = short && !/[。！？!?，,；;：:…、]$/.test(x) ? x.match(BOOK_NUM_RE) : null;
+    if (m) {
+      const k = +halfDigits(m[1]);
+      if (run && k === prev + 1 && since >= 300) { run.push(i); prev = k; since = 0; return; }
+      if (k === 1) { if (run) runs.push(run); run = [i]; prev = 1; since = 0; return; }
+    }
+    since += x.length;
+  });
+  if (run) runs.push(run);
+  for (const r of runs) if (r.length >= 3) heads.push(...r);
+  heads.sort((a, b) => a - b);
   if (heads.length >= 2) {
-    chapters = heads.map(p => ({ t: paras[p], p, h: 1 }));
-    if (heads[0] > 0) chapters.unshift({ t: "开头 · Beginning", p: 0 });
-  } else { // no headings: numbered parts of ~5,000 characters, cut between paragraphs
-    chapters = []; let acc = BOOK_PART;
-    paras.forEach((x, i) => { if (acc >= BOOK_PART) { chapters.push({ t: `第 ${chapters.length + 1} 部分`, p: i }); acc = 0; } acc += x.length; });
+    const ch = heads.map(p => ({ t: paras[p], p, h: 1 }));
+    if (heads[0] > 0) ch.unshift({ t: "开头 · Beginning", p: 0 });
+    return ch;
   }
-  return { paras, chapters };
+  const ch = []; let acc = BOOK_PART;
+  paras.forEach((x, i) => { if (acc >= BOOK_PART) { ch.push({ t: `第 ${ch.length + 1} 部分`, p: i }); acc = 0; } acc += x.length; });
+  return ch;
 }
 const HAN1 = /\p{Script=Han}/u;
 function bookIsTrad(paras) { // share of characters the 简/繁 table would change, in the first ~30,000
@@ -3645,7 +3672,7 @@ async function bookImport(file) {
   if (!ZHC) { try { await loadZhc(); } catch (e) { /* offline the first time: read as written */ } }
   const trad = bookIsTrad(paras);
   const simp = trad ? paras.map(x => toSimp(x)) : null;
-  const meta = { id: twin ? twin.id : "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title: twin ? twin.title : title, file: file.name, added: twin ? twin.t : now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, trad, orig: false, pos: twin && twin.pos ? Object.assign({}, twin.pos) : { p: 0, t: 0 }, lastT: 0 };
+  const meta = { id: twin ? twin.id : "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title: twin ? twin.title : title, file: file.name, added: twin ? twin.t : now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, cv: BOOK_CV, trad, orig: false, pos: twin && twin.pos ? Object.assign({}, twin.pos) : { p: 0, t: 0 }, lastT: 0 };
   try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: meta.id, paras, simp }, meta.id); t.objectStore("m").put(meta, meta.id); }); }
   catch (e) { noteErr("book save", e); return toast("存不下这本书（设备空间？）· Couldn't store the book on this device", 4000); }
   BOOKS = BOOKS.filter(b => b.id !== meta.id).concat([meta]);
@@ -3689,7 +3716,7 @@ function trashBook(r) {
 // the text in the cloud: the extracted book (paragraphs, chapters, simplified copy), not the original file
 async function bookBlob(id) {
   const m = bookLocal(id), tx = m && await bookTextGet(id); if (!tx) return null;
-  return new Blob([JSON.stringify({ v: 1, title: m.title, file: m.file, chars: m.chars, n: m.n, trad: !!m.trad, chapters: m.chapters, paras: tx.paras, simp: tx.simp || null })], { type: "application/json" });
+  return new Blob([JSON.stringify({ v: 1, cv: m.cv || 1, title: m.title, file: m.file, chars: m.chars, n: m.n, trad: !!m.trad, chapters: m.chapters, paras: tx.paras, simp: tx.simp || null })], { type: "application/json" });
 }
 async function bookDownload(r) {
   R2.down[r.id] = 0; r2Draw();
@@ -3699,11 +3726,79 @@ async function bookDownload(r) {
     if (!d || !Array.isArray(d.paras) || !d.paras.every(x => typeof x === "string") || !Array.isArray(d.chapters) || (d.simp && (!Array.isArray(d.simp) || d.simp.length !== d.paras.length))) throw new Error("not a book file");
     const chapters = d.chapters.filter(c => c && typeof c.t === "string" && Number.isInteger(c.p) && c.p >= 0 && c.p < d.paras.length).map(c => Object.assign({ t: c.t, p: c.p }, c.h ? { h: 1 } : {}, typeof c.s === "string" ? { s: c.s } : {}));
     if (!chapters.length) chapters.push({ t: "第 1 部分", p: 0 });
-    const meta = { id: r.id, title: r.title, file: r.file || d.file || "", added: r.t || now(), bytes: r.bytes || 0, chars: d.paras.reduce((n, x) => n + x.length, 0), n: d.paras.length, chapters, trad: !!d.trad && !!d.simp, orig: false, pos: r.pos ? Object.assign({}, r.pos) : { p: 0, t: 0 }, lastT: 0 };
+    const meta = { id: r.id, title: r.title, file: r.file || d.file || "", added: r.t || now(), bytes: r.bytes || 0, chars: d.paras.reduce((n, x) => n + x.length, 0), n: d.paras.length, chapters, cv: d.cv || 1, trad: !!d.trad && !!d.simp, orig: false, pos: r.pos ? Object.assign({}, r.pos) : { p: 0, t: 0 }, lastT: 0 };
     await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: r.id, paras: d.paras, simp: d.simp || null }, r.id); t.objectStore("m").put(meta, r.id); });
     await booksLoad(); BOOKS = BOOKS.filter(b => b.id !== r.id).concat([meta]);
     return meta;
   } finally { delete R2.down[r.id]; r2Draw(); }
+}
+// ---- reading stats (v88): which paragraphs have been read (ranges [a, b)), sittings {t, s (seconds of first-time
+// reading), c (new characters), k (distinct words looked up)}, both in the synced record and united on merge ----
+const BOOK_SKIM = 1500, BOOK_SLOW = 15, BOOK_MAXGAP = 600, BOOK_ST_MAX = 400; // chars/min above = skimming; below = interrupted; s
+function rgAdd(rs, a, b) {
+  if (!(b > a)) return (rs || []).slice();
+  const out = []; let lo = a, hi = b, placed = false;
+  for (const [x, y] of rs || []) {
+    if (y < lo) out.push([x, y]);
+    else if (x > hi) { if (!placed) { out.push([lo, hi]); placed = true; } out.push([x, y]); }
+    else { lo = Math.min(lo, x); hi = Math.max(hi, y); }
+  }
+  if (!placed) out.push([lo, hi]);
+  return out;
+}
+const rgUnion = (a, b) => (b || []).reduce((acc, r) => rgAdd(acc, r[0], r[1]), (a || []).slice());
+const rgChars = (rs, offs) => (rs || []).reduce((n, [x, y]) => n + (offs[Math.min(y, offs.length - 1)] - offs[Math.min(x, offs.length - 1)]), 0);
+function rgFresh(rs, a, b, offs) { let n = offs[b] - offs[a]; for (const [x, y] of rs || []) { const lo = Math.max(a, x), hi = Math.min(b, y); if (hi > lo) n -= offs[hi] - offs[lo]; } return n; }
+function stUnion(a, b) { const m = new Map(); for (const e of [...(a || []), ...(b || [])]) { const o = m.get(e.t); if (!o || (e.s || 0) > (o.s || 0)) m.set(e.t, e); } return [...m.values()].sort((x, y) => x.t - y.t).slice(-BOOK_ST_MAX); }
+// speed (chars/min of first-time reading) and lookups per 1,000 characters, over sittings since `from`
+function bookStats(r, from = 0) {
+  let s = 0, c = 0, k = 0, n = 0;
+  for (const e of (r && r.st) || []) { if (e.t < from) continue; s += e.s || 0; if (e.c > 0) { c += e.c; k += e.k || 0; } n++; }
+  return { sec: s, chars: c, cpm: c >= 500 && s >= 60 ? Math.round(c / (s / 60)) : null, look: c >= 500 ? +(k / c * 1000).toFixed(1) : null, n };
+}
+function bkSit() { return BK.sit || (BK.sit = { t: now(), s: 0, c: 0, k: new Set() }); }
+// the place moved: if forward through new text at a reading pace, that's reading (time for the Time card, and for
+// speed when it's first-time reading); jumps (目录, search, ↩) and skimming don't count
+function bkTrack(p, jump) {
+  const t = now(), L = BK.lastAt; BK.lastAt = { p, t };
+  if (jump || !L || document.hidden) return;
+  const dt = (t - L.t) / 1000; if (p <= L.p || dt <= 0) { if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; return; }
+  const ch = BK.offs[p] - BK.offs[L.p], cpm = ch / Math.max(dt, 0.5) * 60;
+  if (cpm > BOOK_SKIM) return;
+  const fresh = rgFresh(BK.rd, L.p, p, BK.offs);
+  BK.rd = rgAdd(BK.rd, L.p, p);
+  if (cpm < BOOK_SLOW || dt > BOOK_MAXGAP) return; // put down / interrupted: the text counts as read, the time doesn't
+  BK.pend = (BK.pend || 0) + dt;
+  if (fresh >= ch * 0.5) { const st = bkSit(); st.s += dt; st.c += fresh; }
+}
+// into progress: the day's book time, read ranges, this sitting, the place (on leaving, app put away, every 2 min)
+function bkFlush(final) {
+  if (!BK) return;
+  if (final && BK.lastAt && !document.hidden) { const dt = (now() - BK.lastAt.t) / 1000; if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; BK.lastAt = null; }
+  const r = bookRec(BK.id); let changed = false;
+  if (BK.pend >= 1) { logDay(BK.pend, true, "book"); BK.pend = 0; changed = true; }
+  if (r) {
+    const rd = rgUnion(r.rd, BK.rd);
+    const st = BK.sit && (BK.sit.s >= 10 || BK.sit.c > 0 || BK.sit.k.size) ? stUnion((r.st || []).filter(e => e.t !== BK.sit.t), [{ t: BK.sit.t, s: Math.round(BK.sit.s), c: BK.sit.c, k: BK.sit.k.size }]) : r.st;
+    if (JSON.stringify(rd) !== JSON.stringify(r.rd || []) || st !== r.st) { r.rd = rd; if (st) r.st = st; touch(r, "stats"); changed = true; }
+  }
+  if (final) BK.sit = null;
+  if (changed) save();
+  bookPosSync(BK.meta);
+}
+// 读书速度 · Book speed etc.: shown in 进度 and on a book's ⋯ screen, never while reading
+function bookStatsLine(r) {
+  const all = bookStats(r), wk = bookStats(r, now() - 7 * DAY);
+  if (!all.n) return "";
+  const sp = x => x.cpm != null ? `<b>${x.cpm}</b> 字/分` : "—";
+  return `读书速度 Book speed ${sp(all)}${wk.cpm != null && wk.n < all.n ? ` · 最近 7 天 last 7 days ${sp(wk)}` : ""} · 查词 Lookups ${all.look != null ? `<b>${all.look}</b> / 千字 per 1,000 characters` : "—"} · 读了 Read ${fmtMinEn(all.sec)}, ${all.chars.toLocaleString()} 新字 new characters`;
+}
+function bookStatsCard() {
+  const rs = (S.gen.books || []).filter(r => (r.st || []).length);
+  if (!rs.length) return "";
+  return `<div class="card stack" id="bookstats"><span class="label">读书 · Books</span>
+    <p class="small muted">只算第一次读到的地方，按你在读的时间；跳过去的、快速划过的、放下不动的都不算。查词 = 每读一千个新字点了几个词。和「阅读」的文章速度分开算。<br>Counts only text read for the first time, while you're reading; jumps, fast scrolling and long stops don't count. Lookups = words tapped per 1,000 new characters. Separate from the passage speed.</p>
+    ${rs.map(r => `<div class="stack" style="gap:2px"><b class="zh">${esc(r.title)}</b><span class="small">${bookStatsLine(r) || "—"}</span></div>`).join("")}</div>`;
 }
 // ---- the shelf (top of 阅读): every book in progress; the ones whose text isn't on this device say where it is ----
 const bookPct = m => m && m.chars ? Math.min(100, Math.round(100 * ((m.pos && m.pos.c) || 0) / m.chars)) : 0;
@@ -3712,7 +3807,7 @@ function bookChTitle(m, c) { return c ? (m.trad && !m.orig && c.s ? c.s : c.t) :
 function bookChAt(m, p) { let c = null; for (const x of (m && m.chapters) || []) { if (x.p <= p) c = x; else break; } return c; }
 function bookWhere(r) { // a book whose text isn't on this device
   if (r.r2 && r2Cfg()) return { msg: "☁ 在云端 · In the cloud", go: "下载 Download" };
-  if (r.r2) return { msg: "☁ 在云端。这台设备还没设置云端（进度 → 云端音频）· In the cloud; set up cloud storage on this device first (Progress → 云端音频)" };
+  if (r.r2) return { msg: "☁ 在云端。这台设备还没设置云端（进度 → 云端存储）· In the cloud; set up cloud storage on this device first (Progress → 云端存储)" };
   return { msg: "在另一台设备上，还没上传。那台设备联网并设置了云端就会上传；或者在这里添加同一个文件 · On your other device, not uploaded yet (it uploads once that device is online with cloud storage set up), or add the same file here" };
 }
 function bookShelf() {
@@ -3753,12 +3848,18 @@ async function bookOpen(id) {
   const meta = BOOKS.find(b => b.id === id); if (!meta) throw new Error("no such book");
   { const r = bookRec(id); if (r && r.title && r.title !== meta.title) meta.title = r.title; const p = bookPos(r, meta); if (p && p !== meta.pos) meta.pos = Object.assign({}, p); } // read on the other device since
   const tx = await bookTextGet(id); if (!tx) throw new Error("book text missing");
+  if ((meta.cv || 1) < BOOK_CV) { // added before the current chapter detection: look again (the text itself is unchanged)
+    const ch = bookChapters(tx.paras);
+    meta.chapters = meta.trad && ZHC ? ch.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : ch; meta.cv = BOOK_CV;
+    bookMetaPut(meta).catch(e => noteErr("book chapters", e));
+    const r = bookRec(id); if (r && r.nch !== ch.length) { r.nch = ch.length; save(); }
+  }
   const offs = new Array(tx.paras.length + 1); offs[0] = 0;
   tx.paras.forEach((x, i) => { offs[i + 1] = offs[i] + x.length; });
   const heads = new Set(meta.chapters.filter(c => c.h).map(c => c.p)), starts = new Set(meta.chapters.map(c => c.p));
   const chunks = [0]; let acc = 0; // fixed chunks of ~5,000 characters, starting at chapters where possible (pages are laid out per chunk)
   tx.paras.forEach((x, i) => { if (i && ((starts.has(i) && acc >= 1000) || acc >= BOOK_CHUNK)) { chunks.push(i); acc = 0; } acc += x.length; });
-  BK = { id, meta, paras: tx.paras, simp: tx.simp, offs, heads, chunks, toks: [], looked: new Set(), p: { id: "book:" + id, gl: {}, trad: meta.trad, title: meta.title }, pos: Math.min(meta.pos ? meta.pos.p : 0, tx.paras.length - 1), back: null, hit: null, find: null };
+  BK = { id, meta, paras: tx.paras, simp: tx.simp, offs, heads, chunks, toks: [], looked: new Set(), p: { id: "book:" + id, gl: {}, trad: meta.trad, title: meta.title }, pos: Math.min(meta.pos ? meta.pos.p : 0, tx.paras.length - 1), back: null, hit: null, find: null, rd: ((bookRec(id) || {}).rd || []).slice(), sit: null, lastAt: null, pend: 0 };
   if (!CED) loadCedict().then(() => { if (BK && BK.id === id) { BK.toks = []; if (VIEW === "read" && READ && READ.book === id && !READ.sub) render(); } }).catch(() => {});
 }
 const bkOrig = () => !!(BK.meta.trad && BK.meta.orig && BK.simp);
@@ -3779,20 +3880,26 @@ function bkParaHtml(i) {
 }
 function bkRange(a, b) { const s = BK.chunks[a], e = b + 1 < BK.chunks.length ? BK.chunks[b + 1] : BK.paras.length; let h = ""; for (let i = s; i < e; i++) h += bkParaHtml(i); return h; }
 let BK_SAVE_T = null;
-function bkSetPos(p) {
+function bkSetPos(p, jump) {
   if (!BK || p == null) return;
+  bkTrack(p, jump);
   BK.pos = p;
   const m = BK.meta; m.pos = { p, c: BK.offs[p], t: now() }; m.lastT = now();
   clearTimeout(BK_SAVE_T); BK_SAVE_T = setTimeout(bkSaveNow, 800);
-  if (now() - (BK.synced || 0) > 2 * MIN) { BK.synced = now(); setTimeout(() => { if (BK) bookPosSync(BK.meta); }, 900); }
+  if (now() - (BK.synced || 0) > 2 * MIN) { BK.synced = now(); setTimeout(() => { if (BK) bkFlush(false); }, 900); }
 }
 function bkSaveNow() { clearTimeout(BK_SAVE_T); BK_SAVE_T = null; if (BK) bookMetaPut(BK.meta).catch(e => noteErr("book place", e)); }
-document.addEventListener("visibilitychange", () => { if (!document.hidden || !BK) return; if (BK_SAVE_T) bkSaveNow(); bookPosSync(BK.meta); });
+document.addEventListener("visibilitychange", () => {
+  if (!BK) return;
+  if (!document.hidden) { if (VIEW === "read" && READ && READ.book === BK.id && !READ.sub) BK.lastAt = { p: BK.pos, t: now() }; return; } // back: the clock starts again here
+  if (BK.lastAt) { const dt = (now() - BK.lastAt.t) / 1000; if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; BK.lastAt = null; }
+  if (BK_SAVE_T) bkSaveNow(); bkFlush(false);
+});
 function bkJump(p, hit) {
   if (Math.abs(p - BK.pos) > 2) BK.back = BK.pos; // ↩ 回到刚才 after a jump
-  BK.hit = hit || null; bkSetPos(p); READ.sub = null; render();
+  BK.hit = hit || null; bkSetPos(p, true); READ.sub = null; render();
 }
-function bkLeave() { closeSheet(); bkSaveNow(); bookPosSync(BK.meta); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
+function bkLeave() { closeSheet(); bkSaveNow(); bkFlush(true); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
 
 // ---- the reader ----
 function renderBook(main) {
@@ -3807,7 +3914,8 @@ function renderBook(main) {
   if (READ.sub === "toc") return renderBookToc(main);
   if (READ.sub === "find") return renderBookFind(main);
   closeSheet();
-  { const r = bookRec(BK.id), p = bookPos(r, BK.meta); if (p && p !== BK.meta.pos && (p.t || 0) > ((BK.meta.pos || {}).t || 0)) { BK.meta.pos = Object.assign({}, p); BK.pos = Math.min(p.p, BK.paras.length - 1); BK.hit = null; } if (r && r.title) BK.meta.title = r.title; } // read on the other device meanwhile
+  { const r = bookRec(BK.id), p = bookPos(r, BK.meta); if (p && p !== BK.meta.pos && (p.t || 0) > ((BK.meta.pos || {}).t || 0)) { BK.meta.pos = Object.assign({}, p); BK.pos = Math.min(p.p, BK.paras.length - 1); BK.hit = null; } if (r && r.title) BK.meta.title = r.title; if (r && r.rd) BK.rd = rgUnion(BK.rd, r.rd); } // read on the other device meanwhile
+  if (!BK.lastAt || BK.lastAt.p !== BK.pos) BK.lastAt = { p: BK.pos, t: now() };
   const pref = bookPref(), page = pref.mode === "page", m = BK.meta, f = BK.find;
   main.innerHTML = `<div class="bkbar" id="bkbar"><button class="btn ghost" id="bkback" style="min-height:38px;padding:6px 10px">←</button><span class="bkt small muted zh">${esc(m.title)}</span>
       <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button><button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
@@ -3818,9 +3926,9 @@ function renderBook(main) {
   $("#bktoc", main).onclick = () => { closeSheet(); READ.sub = "toc"; render(); };
   $("#bkfind", main).onclick = () => { closeSheet(); READ.sub = "find"; render(); };
   $("#bkaa", main).onclick = e => { e.stopPropagation(); bookAa(e.currentTarget); };
-  const rb = $("#bkret", main); if (rb) rb.onclick = () => { const p = BK.back; BK.back = null; BK.hit = null; bkSetPos(p); render(); };
+  const rb = $("#bkret", main); if (rb) rb.onclick = () => { const p = BK.back; BK.back = null; BK.hit = null; bkSetPos(p, true); render(); };
   if (f && f.res.length) {
-    const go = d => { f.i = (f.i + d + f.res.length) % f.res.length; const r = f.res[f.i]; BK.hit = { p: r.p, a: r.a, n: f.n }; bkSetPos(r.p); render(); };
+    const go = d => { f.i = (f.i + d + f.res.length) % f.res.length; const r = f.res[f.i]; BK.hit = { p: r.p, a: r.a, n: f.n }; bkSetPos(r.p, true); render(); };
     $("#bkfp", main).onclick = () => go(-1); $("#bkfx", main).onclick = () => go(1);
     $("#bkfc", main).onclick = () => { BK.find = null; BK.hit = null; render(); };
   }
@@ -3828,6 +3936,7 @@ function renderBook(main) {
     const s = e.target.closest(".tk"); if (!s) return;
     const [pi, ti] = s.dataset.k.split(":").map(Number);
     BK.looked.add(s.dataset.k); s.classList.add("looked");
+    bkSit().k.add(((BK.toks[pi] || [])[ti] || "").replace(/\//g, ""));
     openSheet(BK.p, BK.toks, pi, ti, s);
   });
   if (page) bkPageInit(main); else bkScrollInit();
@@ -3999,11 +4108,12 @@ function renderBookInfo(main) {
   const cloud = r.r2 ? "☁ 云端有一份，你的其他设备打开时会下载 · A copy is in the cloud; your other devices download it when you open it there"
     : !m ? bookWhere(r).msg
     : r2Cfg() ? "☁ 等着上传到云端（联网时）· Waiting to upload to the cloud (when online)"
-    : "只在这台设备上。在进度 → 云端音频设置云端后会自动上传，其他设备就能读 · Only on this device. Set up cloud storage (Progress → 云端音频) and it uploads by itself, so your other devices can read it";
+    : "只在这台设备上。在进度 → 云端存储设置云端后会自动上传，其他设备就能读 · Only on this device. Set up cloud storage (Progress → 云端存储) and it uploads by itself, so your other devices can read it";
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="bkib">← 返回</button></div>
     <div class="card stack"><span class="label">书 · Book</span>
       <div class="row" style="flex-wrap:nowrap"><input class="zh" id="bkti" value="${esc(r.title)}" style="flex:1;min-width:0;font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)"><button class="btn soft" id="bktsave" style="min-height:44px">改名 Rename</button></div>
       <p class="small muted">${esc(r.file || "")} · ${Math.round((r.chars || 0) / 1000)} 千字${nch ? ` · ${nch} ${hasCh ? "章 chapters" : "部分 parts"}` : ""}${r.trad ? " · 繁体原文 traditional original" : ""} · ${bookPct(v)}%</p>
+      ${bookStatsLine(r) ? `<p class="small">${bookStatsLine(r)}</p>` : ""}
       <p class="small muted">${esc(cloud)}</p>
       <button class="btn ghost" id="bkrm">删除这本书 · Delete this book</button></div>`;
   $("#bkib", main).onclick = () => { READ = null; render(); };
@@ -4453,16 +4563,10 @@ function renderListen(main) {
     ${plSongs().length && LFILT !== "talk" ? `<div class="row" style="gap:6px"><button class="btn soft" id="plall" style="flex:1">▶ 连播全部歌 · Play all songs (${plSongs().length})</button><button class="tagc ${plShuffle() ? "on" : ""}" id="plshuf0">🔀 随机 Shuffle</button></div>` : ""}
     ${kfSongs().length && LFILT !== "talk" ? `<button class="btn soft wide" id="kfopen">🎤 刷歌词 · Lyric feed</button>` : ""}
     ${hasSong && hasTalk ? `<div class="row" style="gap:6px">${[["all", "全部 All"], ["song", "🎵 歌 Songs"], ["talk", "🎙 谈 Talk"]].map(([k, l]) => `<button class="tagc ${LFILT === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>` : ""}
-    <div id="r2list"></div>
     ${list.length ? `<div class="plist">${list.map(it => { const h = (S.lsn || {})[it.id] || []; return `<button class="pitem ${h.length ? "done" : ""}" data-l="${esc(it.id)}"><div class="row"><span class="chip">${itemType(it) === "song" ? "🎵" : "🎙"} ${it.kind === "link" ? "🔗 链接 Link" : "🎧 文件 File"}</span>${!h.length ? `<span class="chip new">新 New</span>` : ""}<span class="small muted">${it.cues && it.cues.length ? (isTimed(it) ? "有字幕时间 timed transcript" : "有文字 transcript") : "没有文字 no transcript"}${it.qs && it.qs.length ? " · 有问题" : ""}${h.length ? ` · 听过 ${h.length} 次` : ""}</span>${(it.tags || []).map(t => `<span class="tagc">${esc(t)}</span>`).join("")}</div><h3>${esc(it.title)}</h3></button>`; }).join("")}</div>`
       : `<div class="card"><p class="small muted">还没有音频 · Nothing yet. Add a podcast episode you've downloaded (with its transcript if it has one), or a link to a video. Transcripts with timings (.srt, .vtt or .lrc files) unlock line-by-line follow and replay.</p></div>`}`;
   $("#ladd", main).onclick = () => { LST = { add: true, kind: "file" }; render(); };
-  if (list.some(it => it.kind === "file")) audioKeys().then(have => {
-    const box = $("#r2list"); if (!box || VIEW !== "listen" || LST) return;
-    box.innerHTML = r2ListHtml(list, have); r2Draw();
-    const dl = $("#r2dl"); if (dl) dl.onclick = r2DownloadAll;
-    const ua = $("#r2upall"); if (ua) ua.onclick = () => { list.filter(it => it.kind === "file" && !it.r2 && !it.r2gone && have.has(it.id)).forEach(it => { it.r2want = true; touch(it, "cloud"); }); save(); render(); r2Kick(); };
-  });
+
   $$("[data-lf]", main).forEach(b => b.onclick = () => { LFILT = b.dataset.lf; render(); });
   const pa = $("#plall", main); if (pa) pa.onclick = () => plStart();
   const kfo = $("#kfopen", main); if (kfo) kfo.onclick = openFeed;
@@ -5114,12 +5218,13 @@ function kfTick(tok) {
   if (j !== KF.li) { for (let k = KF.li; k < j; k++) kfLineDone(k); KF.li = j; kfShow(); }
   if (t >= kfEnd(it, kfLine(last)) || (KF.useAud && KF.aud.ended)) kfRunEnd();
 }
+const KF_GAP = 300; // ms between runs (learner 2026-11-22: 0.7 s felt slow next to ⏭)
 function kfRunEnd() { // the run's last line is over: a short breath, then the next song (with its own lead-in)
   kfHush(); kfLineDone(KF.li);
   kfPlayed(KF.run);
   KF.state = "gap"; save();
   const tok = KF.ptok;
-  KF.padT = setTimeout(() => { if (!KF || tok !== KF.ptok || KF.ended) return; kfNewRun(); }, 700);
+  KF.padT = setTimeout(() => { if (!KF || tok !== KF.ptok || KF.ended) return; kfNewRun(); }, KF_GAP);
 }
 function kfPlayed(run) { const sg = kfState().sg, s = sg[run.it.id] || [0, 0]; sg[run.it.id] = [(s[0] || 0) + 1, now()]; }
 // ⏭ / swipe left / →: the next song now; ⏮ / swipe right / ←: back to the run just left (one run back), from its start
@@ -5540,7 +5645,7 @@ const R2_FREE = 10e9; // Cloudflare's free tier: 10 GB (decimal, to be safe) of 
 const r2Err = (status, text) => status === 403 || status === 401 ? { code: "auth", message: "R2 不接受这把钥匙（或它不能用这个桶）· R2 refused the key (or it isn't allowed for this bucket)." } : status === 404 ? { code: "missing", message: "云端没有这个文件 · Not in the cloud (removed?)" } : { code: "http", message: "R2 出错 · R2 error " + status + (text ? ": " + String(text).replace(/<[^>]+>/g, " ").trim().slice(0, 120) : "") };
 const R2_NET = { code: "network", message: "连不上 R2 · Can't reach R2 (offline, or the bucket's CORS policy doesn't allow this site yet)" };
 async function r2Fetch(method, key, qs, extra) {
-  const c = r2Cfg(); if (!c) throw { code: "nocfg", message: "还没设置云端音频 · Cloud audio isn't set up (Progress → 云端音频)." };
+  const c = r2Cfg(); if (!c) throw { code: "nocfg", message: "还没设置云端存储 · Cloud storage isn't set up (Progress → 云端存储)." };
   const url = r2Url(c, key, qs), headers = await sigv4({ method, url, akid: c.akid, secret: c.secret });
   let r; try { r = await fetch(url, Object.assign({ method, headers, cache: "no-store" }, extra)); } catch (e) { throw R2_NET; }
   if (!r.ok) { let t = ""; try { t = await r.text(); } catch (e) {} throw r2Err(r.status, t); }
@@ -5658,7 +5763,7 @@ async function r2Kick() {
       delete R2.up[r.id]; r2Draw();
       if (VIEW === "read" && !READ) render();
     }
-  } finally { R2.busy = false; }
+  } finally { R2.busy = false; r2FilesDraw(); }
 }
 // download one item's audio to this device (on open, or Download all)
 async function r2Fetch1(it) {
@@ -5672,29 +5777,38 @@ async function r2RemoveCloud(it) {
   const sz = it.r2.size || 0; it.r2 = null; it.r2gone = true; delete it.r2want; touch(it, "cloud"); save();
   if (R2.usage) r2UseSet({ bytes: Math.max(0, R2.usage.bytes - sz), n: Math.max(0, R2.usage.n - 1) }); toast("已从云端删除，这台设备上还在 · Removed from the cloud; still on this device", 3500); return true;
 }
-let R2_DL = null; // Download all: {n, done, bytes}
+let R2_DL = null; // Download all: {n, done}
+// 进度 → 云端存储: everything in the cloud onto this device (audio and books), e.g. before a trip
 async function r2DownloadAll() {
   if (R2_DL) return;
-  const have = await audioKeys(), todo = (S.gen.listen || []).filter(it => it.kind === "file" && it.r2 && !have.has(it.id));
-  R2_DL = { n: todo.length, done: 0 }; if (VIEW === "listen") render();
+  const have = await audioKeys(); await booksLoad();
+  const todo = [...(S.gen.listen || []).filter(it => it.kind === "file" && it.r2 && !have.has(it.id)).map(it => () => r2Fetch1(it)),
+    ...(S.gen.books || []).filter(r => r.r2 && !bookLocal(r.id)).map(r => () => bookDownload(r))];
+  R2_DL = { n: todo.length, done: 0 }; r2FilesDraw();
   let failed = null;
-  for (const it of todo) { try { await r2Fetch1(it); } catch (e) { failed = e; break; } R2_DL.done++; if (VIEW === "listen" && !busyView()) render(); }
-  R2_DL = null; if (VIEW === "listen" && !busyView()) render();
-  toast(failed ? failed.message : "全部下载好了 · All audio is on this device", failed ? 6000 : 3000);
+  for (const f of todo) { try { await f(); } catch (e) { failed = e; noteErr("download all", e); break; } R2_DL.done++; r2FilesDraw(); }
+  R2_DL = null; r2FilesDraw();
+  toast(failed ? failed.message || String(failed) : "全部下载好了 · Everything is on this device", failed ? 6000 : 3000);
 }
-// the 听 tab: cloud status line + Upload all / Download all
-function r2ListHtml(list, have) {
-  const files = list.filter(it => it.kind === "file");
-  if (!files.length) return "";
-  if (!r2Cfg()) return `<p class="small muted">☁ 云端音频还没设置：其他设备听不到这里的文件 · Cloud audio isn't set up, so your other devices can't play these files. Progress → 云端音频.</p>`;
-  const toDown = files.filter(it => it.r2 && have && !have.has(it.id)), toUp = files.filter(it => !it.r2 && !it.r2gone && !it.r2want && !it.r2big && have && have.has(it.id));
-  const dlBytes = toDown.reduce((a, it) => a + (it.r2.size || 0), 0);
-  if (ONLINE && !R2.usageBusy && now() - R2.usageAt > 30 * MIN) { R2.usageBusy = true; r2UsageFresh(30 * MIN).then(() => { if (VIEW === "listen" && !LST && !busyView()) render(); }).catch(() => {}).finally(() => { R2.usageBusy = false; }); }
-  return `<div class="card stack" style="gap:6px"><span class="label">☁ 云端音频 · Cloud audio</span>
-    ${r2UseHtml()}
-    ${R2_DL ? `<p class="small"><span class="spin"></span> 下载中 Downloading ${R2_DL.done}/${R2_DL.n}</p>` : toDown.length ? `<button class="btn soft" id="r2dl">下载全部音频 · Download all audio (${toDown.length}, ${fmtMB(dlBytes)})</button><span class="small muted">出门前（特别是去中国前）先下载，离线也能听 · Do this before a trip so everything plays offline.</span>` : `<span class="small">✓ 云端的音频都在这台设备上 · Everything in the cloud is on this device.</span>`}
-    ${toUp.length ? `<button class="btn ghost" id="r2upall">上传到云端 · Upload ${toUp.length} file${toUp.length > 1 ? "s" : ""} from this device</button>` : ""}
-    ${R2.err ? `<span class="small" style="color:var(--bad)">${esc(R2.err.message)}</span>` : ""}</div>`;
+// what's in the cloud vs on this device, with Download all / Upload (in the 云端存储 card)
+function r2FilesHtml(have) {
+  const files = (S.gen.listen || []).filter(it => it.kind === "file"), books = S.gen.books || [];
+  const toDown = files.filter(it => it.r2 && !have.has(it.id)), toUp = files.filter(it => !it.r2 && !it.r2gone && !it.r2want && !it.r2big && have.has(it.id));
+  const bDown = books.filter(r => r.r2 && !bookLocal(r.id));
+  const n = toDown.length + bDown.length, bytes = toDown.reduce((a, it) => a + (it.r2.size || 0), 0) + bDown.reduce((a, r) => a + (r.r2.size || 0), 0);
+  if (!files.length && !books.length) return "";
+  return `${R2_DL ? `<p class="small"><span class="spin"></span> 下载中 Downloading ${R2_DL.done}/${R2_DL.n}</p>` : n ? `<button class="btn soft" id="r2dl">全部下载到这台设备 · Download all (${toDown.length ? toDown.length + " 音频 audio" : ""}${toDown.length && bDown.length ? " + " : ""}${bDown.length ? bDown.length + " 书 book" + (bDown.length > 1 ? "s" : "") : ""}, ${fmtMB(bytes)})</button><span class="small muted">出门前（特别是去中国前）先下载，离线也能用 · Do this before a trip so everything works offline.</span>` : `<span class="small">✓ 云端的东西都在这台设备上 · Everything in the cloud is on this device.</span>`}
+    ${toUp.length ? `<button class="btn ghost" id="r2upall">上传到云端 · Upload ${toUp.length} audio file${toUp.length > 1 ? "s" : ""} from this device</button>` : ""}
+    ${R2.err ? `<span class="small" style="color:var(--bad)">${esc(R2.err.message)}</span>` : ""}`;
+}
+function r2FilesDraw() {
+  const box = $("#r2files"); if (!box || !r2Cfg()) return;
+  Promise.all([audioKeys(), booksLoad()]).then(([have]) => {
+    const b = $("#r2files"); if (!b) return;
+    b.innerHTML = r2FilesHtml(have); b.hidden = !b.innerHTML.trim();
+    const dl = $("#r2dl", b); if (dl) dl.onclick = r2DownloadAll;
+    const ua = $("#r2upall", b); if (ua) ua.onclick = () => { (S.gen.listen || []).filter(it => it.kind === "file" && !it.r2 && !it.r2gone && have.has(it.id)).forEach(it => { it.r2want = true; touch(it, "cloud"); }); save(); r2FilesDraw(); r2Kick().then(r2FilesDraw); };
+  });
 }
 // item page: where this item's audio is, with the matching button
 function r2ItemHtml(it, here) {
@@ -5707,27 +5821,30 @@ function r2ItemHtml(it, here) {
   if (it.r2want || R2.up[it.id] != null) return `${bar}<span class="small muted">☁ 等着上传 · Waiting to upload${R2.err ? `: ${esc(R2.err.message)}` : ""}</span>`;
   return here ? `${bar}<button class="btn ghost" id="r2up1">上传到云端 · Upload to the cloud</button>` : bar;
 }
-// Progress → 云端音频 · Cloud audio
+// Progress → 云端存储 · Cloud storage (was 云端音频 until v88; audio and books)
 function r2Card() {
   const c = provGet().r2 || {}, ok = r2Cfg();
-  return `<span class="label">云端音频 · Cloud audio (Cloudflare R2)</span>
-    <p class="small muted">听力的音频文件（还有你的书）放在你的 R2 桶里，别的设备打开时会下载。钥匙存在这台设备上，也跟着 GitHub 同步到其他设备。<br>Listening audio (and your books) goes to your R2 bucket; your other devices download it when you open an item. The key stays on this device and syncs to your others through GitHub (never in a code).</p>
+  return `<span class="label">☁ 云端存储 · Cloud storage (Cloudflare R2)</span>
+    <p class="small muted">听力的音频和你的书放在你的 R2 桶里，别的设备打开时会下载。钥匙存在这台设备上，也跟着 GitHub 同步到其他设备。<br>Listening audio and your books go to your R2 bucket; your other devices download them when you open one. The key stays on this device and syncs to your others through GitHub (never in a code).</p>
+    <div id="r2st" class="small">${r2StHtml(ok)}</div>
+    ${ok ? `<div id="r2files" class="stack" style="gap:6px" hidden></div>` : ""}
+    <details class="r2keys" ${ok ? "" : "open"}><summary class="small">钥匙 · Keys</summary><div class="stack" style="gap:8px;margin-top:8px">
     <input class="inp" id="r2acct" placeholder="Account ID" value="${esc(c.account || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2bkt" placeholder="桶名 Bucket name" value="${esc(c.bucket || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2ak" placeholder="Access Key ID" value="${esc(c.akid || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
     <input class="inp" id="r2sk" type="password" placeholder="Secret Access Key" value="${esc(c.secret || "")}" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <button class="btn soft" id="r2save">保存并测试 Save & test</button>
-    <div id="r2st" class="small">${r2StHtml(ok)}</div>`;
+    <button class="btn soft" id="r2save">保存并测试 Save & test</button></div></details>`;
 }
 const r2StHtml = ok => `${ok ? r2UseHtml() : ""}${R2.cardErr ? `<span style="color:var(--bad)">${esc(R2.cardErr)}</span>` : ""}`;
 function bindR2Card() {
   const card = $("#r2card"); if (!card) return;
+  r2FilesDraw();
   const redraw = () => { const c = $("#r2card"); if (c) { c.innerHTML = r2Card(); bindR2Card(); } };
   $("#r2save").onclick = async () => {
     const p = provGet(); p.r2 = { account: $("#r2acct").value.trim(), bucket: $("#r2bkt").value.trim(), akid: $("#r2ak").value.trim(), secret: $("#r2sk").value.trim() };
     if (!p.r2.account || !p.r2.bucket || !p.r2.akid || !p.r2.secret) { R2.cardErr = "四个都要填 · Fill in all four."; return redraw(); }
     provSet(p); R2.cardErr = ""; $("#r2st").innerHTML = `<span class="spin"></span> 测试中 Testing…`;
-    try { r2UseSet(await r2Usage()); R2.err = null; toast("云端音频可以用了 · Cloud audio works", 2500); r2Kick(); }
+    try { r2UseSet(await r2Usage()); R2.err = null; toast("云端存储可以用了 · Cloud storage works", 2500); r2Kick(); }
     catch (e) { R2.cardErr = e.message || String(e); }
     redraw();
   };
@@ -6044,6 +6161,7 @@ function renderMe(main) {
     <div class="mix" style="background:var(--line)"><i style="width:${LADDER.size ? ready / LADDER.size * 100 : 0}%;background:var(--accent)"></i></div>
     <div class="stats3"><div class="stat"><b>${fixed}</b><span>顽固词记住一周以上 · leeches held 7+ days</span></div><div class="stat"><b>${Object.values(S.bank).filter(b => !isAutoWord(b)).length}</b><span>阅读生词</span></div><div class="stat"><b>${S.best.combo || 0}</b><span>最高连对</span></div></div></div>
   <div class="card stack" id="timecard">${timeCardHtml()}</div>
+  ${bookStatsCard()}
   <div class="card"><span class="label">技能 · Skills</span>
     ${S.skills ? `<div class="bars">${Object.keys(names).map(k => `<div class="bar"><span>${names[k]}</span><span class="t"><i style="width:${pct(skillVal(k))}"></i></span><span class="v">${pct(skillVal(k))}</span></div>`).join("")}</div>` : `<p class="muted">还没测试 — take the placement test to fill these in.</p>`}
     <button class="btn ghost" id="replace">重新做水平测试 Retake placement test</button></div>

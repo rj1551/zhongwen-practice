@@ -132,8 +132,11 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   // ---- 5. end of the run → the next song, with its own lead-in ----
   const cards0 = await page.evaluate(() => KF.cards);
   await page.click('.kfl[data-j="4"] .kfre'); await page.waitForFunction(() => KF.li === 4, null, { timeout: 3000 });
+  await page.evaluate(() => { window.__gap = null; const o = kfRunEnd, n = kfNewRun; kfRunEnd = (...a) => { window.__gapAt = performance.now(); return o(...a); }; kfNewRun = (...a) => { if (window.__gapAt != null && window.__gap == null) window.__gap = performance.now() - window.__gapAt; return n(...a); }; });
   await page.keyboard.press("ArrowDown");
   await page.waitForFunction(() => KF.run && KF.run.it.id === "Kb" && $(".kfl.cur") && $(".kfl.cur .kft").textContent === "把心还给我吧", null, { timeout: 4000 });
+  const gap = await page.evaluate(() => window.__gap);
+  ok(gap != null && gap >= 250 && gap < 600, "the pause between a run's end and the next run is ~0.3 s (" + Math.round(gap) + " ms; was 0.7 s)");
   ok(/歌二/.test(await page.textContent(".kfsong")) && await page.locator("#kfcol .kfl").count() === 4, "after the run's last line the next song's run follows by itself");
   const sw = await page.evaluate(async () => { const t0 = performance.now(); while (KF.aud.paused && performance.now() - t0 < 3000) await new Promise(r => setTimeout(r, 10)); return [Math.round(performance.now() - t0), KF.aid, KF.sbId]; });
   ok(sw[0] < 400 && sw[1] === "Kb" && sw[2] === "Ka", "the prepared player takes over: the next song plays at once (" + sw[0] + " ms after its run appears), the last one stays ready on the other");

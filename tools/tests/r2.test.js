@@ -151,8 +151,10 @@ let browser;
   // second device: only the GitHub token; R2 keys come through sync
   const B = await dev(g, null); await connect(B.page); await sleep(1000);
   ok(await B.page.evaluate(() => !!r2Cfg() && r2Cfg().bucket === "zhongwen-audio"), "device B: R2 settings arrived through the keys file");
-  await B.page.evaluate(() => setView("listen")); await sleep(800);
-  ok(/Download all audio \(2, 0\.6 MB\)/.test(await B.page.evaluate(() => document.body.innerText)), "device B: 'Download all audio (2, 0.6 MB)'");
+  await B.page.evaluate(() => setView("me")); await B.page.waitForSelector("#r2dl");
+  ok(/Download all \(2 音频 audio, 0\.6 MB\)/.test(await B.page.evaluate(() => document.body.innerText)) && await B.page.evaluate(() => /云端存储 · Cloud storage/.test($("#r2card").textContent)), "device B: 进度 → 云端存储 · Cloud storage: 'Download all (2 audio, 0.6 MB)'");
+  await B.page.evaluate(() => setView("listen"));
+  ok(await B.page.evaluate(() => !/Download all|云端用了/.test($("#main").innerText)), "the 听 tab no longer has a cloud block (it moved to 进度)");
   await B.page.screenshot({ path: require("path").join(process.env.TEST_OUT || require("os").tmpdir(), "r2-list.png") });
   // open one: it downloads with a bar, then plays from this device
   await B.page.evaluate(() => { window.__maxDown = 0; setInterval(() => { for (const k in R2.down) window.__maxDown = Math.max(window.__maxDown, R2.down[k] + 0.0001); }, 2); });
@@ -160,7 +162,7 @@ let browser;
   await B.page.waitForFunction(id => AUD_ID === id, id1, { timeout: 10000 });
   ok(await B.page.evaluate(async id => { const b = await audioGet(id); return b && b.size; }, id1) === MP3.length, "device B: opening the item downloaded it and it plays from this device");
   ok(await B.page.evaluate(() => window.__maxDown > 0), "download showed a progress bar");
-  await B.page.evaluate(() => { stopAudio(); LST = null; setView("listen"); }); await sleep(600);
+  await B.page.evaluate(() => { stopAudio(); LST = null; setView("me"); }); await B.page.waitForSelector("#r2dl");
   await B.page.click("#r2dl");
   for (let i = 0; i < 60 && !(await B.page.evaluate(async id => !!(await audioGet(id)) && !R2_DL, id2)); i++) await sleep(250);
   ok(await B.page.evaluate(async id => !!(await audioGet(id)), id2), "Download all: the other file is on device B too");
@@ -186,8 +188,11 @@ let browser;
   R2S.deny = false; await A.page.evaluate(() => r2Kick()); await sleep(800);
   ok(!R2S.objs.has(key3) && await A.page.evaluate(() => !(S.r2del || []).length), "…and goes through on the next try");
   // usage shown, and an upload that would go over the free 10 GB isn't sent (kept on this device), with Upload anyway
-  await A.page.evaluate(() => { R2.usageAt = 0; setView("listen"); }); await sleep(1500);
-  ok(/云端用了 Used:/.test(await A.page.evaluate(() => document.body.innerText)), "the 听 tab shows how much of the free 10 GB the bucket uses");
+  const lists0 = R2S.log.filter(l => /list-type=2/.test(l)).length;
+  await A.page.evaluate(() => { R2.usageAt = 0; setView("me"); });
+  ok(await A.page.waitForFunction(() => /云端用了 Used:/.test($("#r2st").innerText), null, { timeout: 5000 }).then(() => true, () => false), "进度 → 云端存储 shows how much of the free 10 GB the bucket uses");
+  for (let i = 0; i < 50 && R2S.log.filter(l => /list-type=2/.test(l)).length < lists0 + 2; i++) await sleep(100); // its fresh check (audio/ + books/) has finished
+  await sleep(200);
   R2S.objs.set("audio/huge.mp3", { body: Buffer.from("x"), type: "audio/mpeg", size: 9999990000 });
   await A.page.evaluate(() => { R2.usageAt = 0; });
   const id4 = await addAudio(A.page, "太大了"); await sleep(2500);
@@ -199,7 +204,7 @@ let browser;
   ok(await A.page.evaluate(id => !!S.gen.listen.find(x => x.id === id).r2, id4), "Upload anyway uploads it");
   R2S.objs.delete("audio/huge.mp3"); await A.page.evaluate(() => { R2.usageAt = 0; LST = null; });
   // wrong key → clear message
-  await A.page.evaluate(() => setView("me")); await A.page.fill("#r2sk", "WRONG"); await A.page.click("#r2save");
+  await A.page.evaluate(() => setView("me")); ok(await A.page.evaluate(() => !$("#r2card details.r2keys").open), "once set up, the keys are folded away under 钥匙 · Keys"); await A.page.click("#r2card details.r2keys summary"); await A.page.fill("#r2sk", "WRONG"); await A.page.click("#r2save");
   // wait for the message rather than a fixed time (tests now run side by side, so timing varies)
   const refused = await A.page.waitForFunction(() => /refused the key/.test((document.querySelector("#r2st") || {}).textContent || ""), null, { timeout: 10000 }).then(() => true, () => false);
   ok(refused, "wrong secret → 'R2 refused the key'");
