@@ -4714,6 +4714,16 @@ function kfShow() {
   const pz = $("#kfpz"); if (pz) pz.hidden = !(KF.state === "pause" && KF.paused);
   const pos = $("#kfpos"); if (pos) pos.textContent = `${li + 1}/${KF.run.lines.length}`;
 }
+// one line of the feed in the current script (简/繁); tapped characters keep their pinyin label
+function kfLineHtml(it, i, j) { const ch = kfChars(it, i); return `<div class="kfl" data-j="${j}"><button class="kfre" data-re="${j}" aria-label="从这句开始 Start from this line">↺</button><span class="kft">${ch.map((c, k) => c.han ? `<span class="kfc ${KF.tapped.has(j + ":" + k) ? "kx" : ""}" data-kc="${k}">${esc(c.c)}${KF.tapped.has(j + ":" + k) ? `<span class="kpyl">${esc(c.py)}</span>` : ""}</span>` : `<span class="kfp">${esc(c.c)}</span>`).join("")}</span></div>`; }
+// switch 简/繁 without touching the audio: redraw the lines in place (same setting as the KTV screen's Aa → 字)
+function kfScript() {
+  const col = $("#kfcol"), view = $("#kfview"), b = $("#kfscr"); if (!col || !KF || !KF.run) return;
+  const dots = $("#kfdots"); if (dots && view) view.append(dots); // the lead-in dots sit inside the current line: keep them
+  col.innerHTML = KF.run.lines.map((i, j) => kfLineHtml(KF.run.it, i, j)).join("");
+  if (b) b.textContent = cuePref().tr ? "繁" : "简";
+  kfShow();
+}
 function renderFeed(main) {
   if (!KF) KF = { cards: 0, looked: 0, sec: 0, acc: 0, since: null, run: null, li: 0, tapped: new Map(), ended: false, hist: [], hi: -1 };
   if (KF.ended) {
@@ -4731,11 +4741,10 @@ function renderFeed(main) {
     $("#kfback", main).onclick = () => { KF = null; LST = null; render(); }; return;
   }
   const it = KF.run.it, muted = kfMuted(), fresh = KF.drawn !== KF.run;
-  const lineHtml = (i, j) => { const ch = kfChars(it, i); return `<div class="kfl" data-j="${j}"><button class="kfre" data-re="${j}" aria-label="从这句开始 Start from this line">↺</button><span class="kft">${ch.map((c, k) => c.han ? `<span class="kfc ${KF.tapped.has(j + ":" + k) ? "kx" : ""}" data-kc="${k}">${esc(c.c)}${KF.tapped.has(j + ":" + k) ? `<span class="kpyl">${esc(c.py)}</span>` : ""}</span>` : `<span class="kfp">${esc(c.c)}</span>`).join("")}</span></div>`; };
   main.innerHTML = `<div class="kf" id="kf">
     <div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button><span class="small muted kfsong">🎵 ${esc(it.title || "")} · <span id="kfpos"></span></span>
-      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.hi > 0 ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
-    <div class="kfview" id="kfview"><div class="kfcol" id="kfcol">${KF.run.lines.map(lineHtml).join("")}</div>
+      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.hi > 0 ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc" id="kfscr" aria-label="简体 / 繁體 Simplified / traditional">${cuePref().tr ? "繁" : "简"}</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
+    <div class="kfview" id="kfview"><div class="kfcol" id="kfcol">${KF.run.lines.map((i, j) => kfLineHtml(it, i, j)).join("")}</div>
       <div class="kfdots" id="kfdots" hidden><i></i><i></i><i></i></div>
       <div class="kfpz" id="kfpz" hidden>⏸ 已暂停 · Paused<br><span class="small">点一下继续 · Tap to go on</span></div></div>
     <p class="small muted kfnote" id="kfnote">${esc(KF.audMsg || "")}</p>
@@ -4743,6 +4752,10 @@ function renderFeed(main) {
   KF.drawn = KF.run;
   $("#kfquit", main).onclick = kfStop;
   $("#kfsp", main).onclick = () => kfSong(-1); $("#kfsn", main).onclick = () => kfSong(1);
+  $("#kfscr", main).onclick = async () => {
+    if (!ZHC) { try { await loadZhc(); } catch (e) { return toast("简繁字表要联网下载一次 · The simplified/traditional table needs to download once (go online)", 4000); } }
+    kfPopClose(); setCuePref({ tr: !cuePref().tr }); kfScript();
+  };
   $("#kfmute", main).onclick = () => { try { localStorage.setItem("zwlgf:kfmute", muted ? "0" : "1"); } catch (e) {} kfHush(); render(); };
   const view = $("#kfview", main);
   view.addEventListener("click", e => {

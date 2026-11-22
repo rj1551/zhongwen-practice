@@ -209,6 +209,20 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.click("#kfmute"); await page.waitForFunction(() => !KF.aud.paused, null, { timeout: 4000 });
   ok(true, "unmuting plays again (from 1.5 s before the current line)");
 
+  // ---- 9b. 简/繁 button in the feed (v85): switches the lines in place, the song keeps playing ----
+  await page.evaluate(async () => { setCuePref({ tr: false }); await loadZhc(); });
+  await page.waitForFunction(() => KF.state === "play" || KF.state === "lead", null, { timeout: 4000 });
+  const sb0 = await page.evaluate(() => [$("#kfscr").textContent, $$("#kfcol .kfl .kft").map(e => e.textContent).join("/"), $$("#kfcol .kx").length, $$("#kfcol .kfl.off").length]);
+  const drawn0 = await page.evaluate(() => KF.drawn);
+  await page.click("#kfscr");
+  const sb1 = await page.evaluate(() => [$("#kfscr").textContent, $$("#kfcol .kfl .kft").map(e => e.textContent).join("/"), $$("#kfcol .kx").length, $$("#kfcol .kfl.off").length, cuePref().tr, !!$("#kfdots"), KF.state]);
+  ok(sb0[0] === "简" && sb1[0] === "繁" && sb1[4] === true, "the 简 button switches to 繁 and saves the setting (shared with the KTV screen): " + sb0[0] + " → " + sb1[0]);
+  ok(/[還樣著]/.test(sb1[1]) && !/[還樣著]/.test(sb0[1]), "the lines are now in traditional characters: " + sb1[1]);
+  ok(sb1[2] === sb0[2] && sb1[3] === sb0[3] && sb1[5], "tapped marks, the page and the lead-in dots survive the switch");
+  await sleep(300);
+  ok(await page.evaluate(() => (KF.state === "play" && !KF.aud.paused) || KF.state === "lead"), "the song isn't restarted or paused by the switch (" + sb1[6] + ")");
+  await page.click("#kfscr");
+  ok(await page.evaluate(() => $("#kfscr").textContent === "简" && cuePref().tr === false && !/[還樣著]/.test($$("#kfcol .kft").map(e => e.textContent).join(""))), "tapping again goes back to simplified");
   // ---- 10. traditional ----
   await page.evaluate(async () => { setCuePref({ tr: true }); await loadZhc(); KF.run = { it: S.gen.listen.find(x => x.id === "Kb"), lines: [1], why: null }; KF.li = 0; KF.tapped = new Map(); render(); });
   await page.waitForSelector("#kfcol .kfl.cur");
