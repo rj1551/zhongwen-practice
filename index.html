@@ -3620,24 +3620,34 @@ function bookParse(text) {
 // "1. 疯狂年代" / "2．寂静的春天" — those only when they run 1, 2, 3… at least 3 long with text in between (≥ 300
 // characters), so a numbered list inside the text doesn't count; a run may start again at 1 (a new part).
 // No headings → numbered parts of ~5,000 characters, cut between paragraphs.
-const BOOK_CV = 2; // chapter detection version: books found with an older one are looked at again when opened
-const BOOK_NUM_RE = /^([0-9０-９]{1,3})[ \u3000]*[.．、][ \u3000]*(\S.{0,29})$/;
+const BOOK_CV = 3; // chapter detection version: .txt books found with an older one are looked at again when opened (v89: forgiving numbered lines)
+// a number, then a dot-like mark (. ． 。 、 : ： ·) and/or a space of any kind, then an optional short title
+const BOOK_NUM_RE = /^([0-9０-９]{1,3})(?:\s*[.．。、:：·・﹒․]\s*(.{0,30})|\s+(\S.{0,29}))$/;
 const halfDigits = x => x.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
 function bookChapters(paras) {
-  const heads = [], runs = []; let run = null, prev = 0, since = 0;
+  // numbered lines (v89, learner's 三体 file) are forgiving: a bare "14．", any kind of space or dot, end punctuation on a
+  // short title ("4．三十八年后。"), and a skipped or garbled number (the run carries on at the next one, up to 3 ahead);
+  // still only as a run 1, 2, 3… with ≥ 300 characters of text since the last numbered heading, so a numbered list
+  // inside the text doesn't count
+  // runs are followed side by side (a list "1. 2. 3." inside a chapter, or a new part starting again at 1, opens its own
+  // run without ending the chapters' run); each run: {ps, prev, since}
+  const heads = [], runs = [];
   paras.forEach((x, i) => {
     const short = Array.from(x).length <= 40;
-    if (short && BOOK_CH_RE.test(x)) { heads.push(i); since = 0; return; }
-    const m = short && !/[。！？!?，,；;：:…、]$/.test(x) ? x.match(BOOK_NUM_RE) : null;
-    if (m) {
+    if (short && BOOK_CH_RE.test(x)) { heads.push(i); return; } // (doesn't hold back the next numbered heading)
+    const m = short ? x.replace(/[  -​  ﻿]/g, " ").trim().match(BOOK_NUM_RE) : null;
+    const title = m ? (m[2] != null ? m[2] : m[3] || "").trim() : "";
+    if (m && (!/[。！？!?，,；;：:…、]$/.test(title) || Array.from(title).length <= 15)) {
       const k = +halfDigits(m[1]);
-      if (run && k === prev + 1 && since >= 300) { run.push(i); prev = k; since = 0; return; }
-      if (k === 1) { if (run) runs.push(run); run = [i]; prev = 1; since = 0; return; }
+      const r = runs.filter(r => k > r.prev && k <= r.prev + 3 && r.since >= 300).sort((a, b) => b.ps.length - a.ps.length)[0];
+      if (r) { r.ps.push(i); r.prev = k; r.since = 0; return; }
+      if (k === 1) { runs.push({ ps: [i], prev: 1, since: 0 }); return; }
     }
-    since += x.length;
+    for (const r of runs) r.since += x.length;
   });
-  if (run) runs.push(run);
-  for (const r of runs) if (r.length >= 3) heads.push(...r);
+  const used = new Set();
+  for (const r of runs) if (r.ps.length >= 3) for (const p of r.ps) used.add(p);
+  heads.push(...used);
   heads.sort((a, b) => a - b);
   if (heads.length >= 2) {
     const ch = heads.map(p => ({ t: paras[p], p, h: 1 }));

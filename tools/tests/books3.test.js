@@ -104,7 +104,7 @@ function makeBook() { // 10 chapters × 20 paragraphs of 100 characters
   });
   await page.click('[data-bkgo="bkold"]'); await page.waitForSelector("#bkc p");
   const ch = await page.evaluate(async () => { const m = (await bdbDo("m", "readonly", (t, set) => { const r = t.objectStore("m").get("bkold"); r.onsuccess = () => set(r.result); })); return { t: BK.meta.chapters.map(c => c.t), cv: m.cv, h: $$("#bkc p.bkh").length, nch: bookRec("bkold").nch }; });
-  ok(JSON.stringify(ch.t) === JSON.stringify(["开头 · Beginning", "1. 疯狂年代", "2．寂静的春天", "3. 红岸之一"]) && ch.cv === 2 && ch.h === 3 && ch.nch === 4, "a book added before v88 gets its 1. / 2． chapters on opening (saved): " + JSON.stringify(ch));
+  ok(JSON.stringify(ch.t) === JSON.stringify(["开头 · Beginning", "1. 疯狂年代", "2．寂静的春天", "3. 红岸之一"]) && ch.cv === 3 && ch.h === 3 && ch.nch === 4, "a book added before v88 gets its 1. / 2． chapters on opening (saved): " + JSON.stringify(ch));
   const err = await page.evaluate(() => localStorage.getItem("zwlgf:errlog"));
   ok(!err || err === "[]", "nothing in the error log: " + err);
   await browser.close();

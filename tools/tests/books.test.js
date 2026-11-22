@@ -53,6 +53,22 @@ function makeBook() {
   });
   ok(JSON.stringify(num.a) === JSON.stringify(["开头 · Beginning", "1. 疯狂年代", "2．寂静的春天", "3. 红岸之一", "４．科学边界"]), "numbered chapter lines (1. / 2． / full-width digits) are found when they run 1, 2, 3…: " + num.a.join(" | "));
   ok(num.b.every(t => /部分/.test(t)), "a short numbered list inside the text isn't taken for chapters: " + num.b.join(" | "));
+  // forgiving numbered lines (v89): a bare "4．", end punctuation on a short title, a non-breaking space, a skipped
+  // number, a named heading line just before a numbered one, a list "1. 2. 3." inside a chapter
+  const fz = await page.evaluate(() => {
+    const body = "他在河边慢慢地走着，可是谁也没有注意到。".repeat(30), L = ["书名"];
+    for (let i = 1; i <= 3; i++) L.push(i + "．标题" + i, body);
+    L.push("4．", "后来的事情。" + body);            // bare number
+    L.push("5．后来。", body);                        // short title ending in 。
+    L.push("6. 标题六", body);                    // non-breaking space
+    L.push("七．看不清的标题", body);                  // garbled number (skipped)
+    L.push("前言", "【一份文件】短短几行。", "8. 标题八", body); // named heading just before
+    L.push("9．标题九", "他列了三件事：", "1．买菜", "2．做饭", "3．洗碗", body); // a list inside chapter 9
+    L.push("10．标题十", body);
+    return bookChapters(L).map(c => c.t);
+  });
+  ok(["4．", "5．后来。", "6. 标题六", "8. 标题八", "9．标题九", "10．标题十"].every(t => fz.includes(t)), "forgiving numbered chapters: bare number, short title with 。, odd space, after a skipped number and after a heading-like line: " + fz.join(" | "));
+  ok(!fz.some(t => /买菜|做饭|洗碗/.test(t)), "a numbered list inside a chapter still isn't taken for chapters");
 
   // ---- the shelf and adding ----
   await page.click('#tabs button[data-tab="read"]'); await page.waitForSelector("#bkadd");
