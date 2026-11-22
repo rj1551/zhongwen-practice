@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-S3+zDDi7n+NL19YcbxztVN6JZ2R5BQpn9V8EntzDuxI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-/8YVkS/DxYyXjnohiVT/nSK0vS4NjE0sfEDQQbe1oOY='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3314,7 +3314,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v91 · 11/22 12:23"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v92 · 11/22 12:33"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -3621,7 +3621,7 @@ function bookParse(text) {
 // "1. 疯狂年代" / "2．寂静的春天" — those only when they run 1, 2, 3… at least 3 long with text in between (≥ 300
 // characters), so a numbered list inside the text doesn't count; a run may start again at 1 (a new part).
 // No headings → numbered parts of ~5,000 characters, cut between paragraphs.
-const BOOK_CV = 3; // chapter detection version: .txt books found with an older one are looked at again when opened (v89: forgiving numbered lines)
+const BOOK_CV = 4; // (v92: numbered runs never overlap) // chapter detection version: .txt books found with an older one are looked at again when opened (v89: forgiving numbered lines)
 // a number, then a dot-like mark (. ． 。 、 : ： ·) and/or a space of any kind, then an optional short title
 const BOOK_NUM_RE = /^([0-9０-９]{1,3})(?:\s*[.．。、:：·・﹒․]\s*(.{0,30})|\s+(\S.{0,29}))$/;
 const halfDigits = x => x.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
@@ -3646,9 +3646,14 @@ function bookChapters(paras) {
     }
     for (const r of runs) r.since += x.length;
   });
-  const used = new Set();
-  for (const r of runs) if (r.ps.length >= 3) for (const p of r.ps) used.add(p);
-  heads.push(...used);
+  // runs never overlap (v92): the longest is kept first, then others only if they lie wholly outside the kept ones —
+  // a book in parts (1–20, then 1–15) keeps both, a numbered list inside a chapter (between chapters 13 and 14) is dropped
+  const kept = [];
+  for (const r of runs.filter(r => r.ps.length >= 3).sort((a, b) => b.ps.length - a.ps.length || a.ps[0] - b.ps[0])) {
+    const a0 = r.ps[0], a1 = r.ps[r.ps.length - 1];
+    if (kept.every(k => a1 < k.ps[0] || a0 > k.ps[k.ps.length - 1])) kept.push(r);
+  }
+  for (const r of kept) heads.push(...r.ps);
   heads.sort((a, b) => a - b);
   if (heads.length >= 2) {
     const ch = heads.map(p => ({ t: paras[p], p, h: 1 }));

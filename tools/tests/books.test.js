@@ -69,6 +69,20 @@ function makeBook() {
   });
   ok(["4．", "5．后来。", "6. 标题六", "8. 标题八", "9．标题九", "10．标题十"].every(t => fz.includes(t)), "forgiving numbered chapters: bare number, short title with 。, odd space, after a skipped number and after a heading-like line: " + fz.join(" | "));
   ok(!fz.some(t => /买菜|做饭|洗碗/.test(t)), "a numbered list inside a chapter still isn't taken for chapters");
+  // runs never overlap (v92): a long numbered list inside a chapter (each item ≥ 300 characters, like a report quoted in
+  // the text) is dropped; a book in two parts that each start again at 1 keeps both
+  const ov = await page.evaluate(() => {
+    const body = "他在河边慢慢地走着，可是谁也没有注意到。".repeat(30), L = ["书名"];
+    for (let i = 1; i <= 13; i++) L.push(i + ". 标题" + i, body);
+    for (const x of ["1、第一项", "1、第一项的下面", "2、第二项", "3、第三项", "3、另一份的第三项", "4、第四项"]) L.push(x, body);
+    L.push("14. 标题14", body, "15. 标题15", body);
+    const P = ["书名"];
+    for (let i = 1; i <= 5; i++) P.push(i + "．上部" + i, body);
+    for (let i = 1; i <= 4; i++) P.push(i + "．下部" + i, body);
+    return { a: bookChapters(L).map(c => c.t), b: bookChapters(P).map(c => c.t) };
+  });
+  ok(!ov.a.some(t => /项/.test(t)) && ov.a.includes("13. 标题13") && ov.a.includes("14. 标题14") && ov.a.includes("15. 标题15"), "a long numbered list inside a chapter isn't taken for chapters; the chapters around it are: " + ov.a.slice(-4).join(" | "));
+  ok(ov.b.filter(t => /上部/.test(t)).length === 5 && ov.b.filter(t => /下部/.test(t)).length === 4, "a book in two parts, each starting again at 1, keeps both: " + ov.b.slice(1).join(" | "));
 
   // ---- the shelf and adding ----
   await page.click('#tabs button[data-tab="read"]'); await page.waitForSelector("#bkadd");
