@@ -154,6 +154,25 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .kfsong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .kfview{position:relative;flex:1;overflow:hidden;display:flex;align-items:center}
 .kfcol{width:100%}
+html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100%} html.bklock main{padding-bottom:8px}
+.bkbar{position:sticky;top:0;z-index:6;background:var(--bg);display:flex;align-items:center;gap:8px;padding:8px 0;margin-bottom:-8px}
+.bkbar .bkt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bkfb{position:sticky;top:54px;z-index:5;background:var(--accent-soft);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;margin-bottom:-8px}
+.bk{font-family:var(--f-zh);line-height:2}
+.bk p{margin:0 0 .8em;text-indent:2em;overflow-wrap:anywhere}
+.bk p.bkh{text-indent:0;font-weight:700;font-size:1.12em;text-align:center;margin:1.4em 0 .9em}
+.bk .tk.hit{background:var(--gold-soft);box-shadow:0 0 0 2px var(--gold)}
+.bkpw{overflow:hidden;touch-action:pan-y}
+.bkpi{column-fill:auto;transition:transform .2s ease}
+.bkpb{display:flex;justify-content:space-between;align-items:center;gap:8px;padding-bottom:env(safe-area-inset-bottom,0px)}
+.bkpb button{font-size:26px;line-height:1;padding:6px 22px;border-radius:12px;border:1px solid var(--line);background:var(--surface)} .bkpb button:disabled{opacity:.35}
+.bkprog{height:5px;border-radius:3px;background:var(--line);overflow:hidden} .bkprog i{display:block;height:100%;background:var(--accent)}
+.bkrow h3{font-size:17px} .bkrow{gap:10px}
+.bktoc,.bkres{display:flex;flex-direction:column;gap:6px}
+.bktoc button,.bkres button{text-align:left;display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
+.bkres button{flex-direction:column;gap:2px} .bktoc button.on{border-color:var(--accent);background:var(--accent-soft)}
+.bkres mark{background:var(--gold-soft);color:inherit;border-radius:3px}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
 html.kflock,html.kflock body{overflow:hidden;overscroll-behavior:none;height:100%}
 .kf{touch-action:none;overscroll-behavior:none}
 .kfcol.turn .kfl:not(.off){animation:kfin .3s ease}
@@ -1686,12 +1705,13 @@ function candidates(cat, done = doneToday()) {
 /* ============ views ============ */
 let VIEW = "home";
 let SESSION = null, PLACE = null, READ = null;
-const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && READ.pid) || (VIEW === "listen" && LST && (LST.play || LST.review || (LST.feed && KF && !KF.ended)));
+const busyView = () => VIEW === "session" || VIEW === "place" || (VIEW === "read" && READ && (READ.pid || READ.book)) || (VIEW === "listen" && LST && (LST.play || LST.review || (LST.feed && KF && !KF.ended)));
 function setView(v) { VIEW = v; render(); window.scrollTo(0, 0); }
 function render() {
   const main = $("#main");
   dropBar(); // the listening player bar belongs to an item's page only; drawPlayer puts it back
-  $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place" || (VIEW === "listen" && LST && LST.feed && KF && !KF.ended);
+  $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place" || (VIEW === "listen" && LST && LST.feed && KF && !KF.ended) || (VIEW === "read" && !!READ && !!READ.book && READ.sub !== "info");
+  document.documentElement.classList.toggle("bklock", !!(VIEW === "read" && READ && READ.book && !READ.sub && bookPref().mode === "page")); // book in pages: the page itself never scrolls
   document.documentElement.classList.toggle("kflock", !!(VIEW === "listen" && LST && LST.feed && KF && !KF.ended)); // lyric feed: the page itself never scrolls
   $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
   if (VIEW === "home") renderHome(main);
@@ -3185,6 +3205,7 @@ const REREAD_GAP = 2 * DAY; // re-reading sooner mostly measures memory
 function renderRead(main) {
   loadCedict();
   if (READ && READ.pid) return renderPassage(main);
+  if (READ && READ.book) return renderBook(main);
   if (READ && READ.add) return renderMineAdd(main);
   if (READ && READ.grp) return renderMineText(main);
   const all = [...PSG.values()].filter(p => !p.mine);
@@ -3202,11 +3223,13 @@ function renderRead(main) {
     return `<button class="pitem ${r ? "done" : ""}" data-p="${esc(p.id)}"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span>${!r ? `<span class="chip new">新 New</span>` : ""}${p.gen ? `<span class="chip">AI</span>` : ""}<span class="small muted">已知词 ${pct(coverage(p))}</span>${r ? `<span class="small muted">· ✓ ${r.cpm} 字/分 · ${r.score}/3${r.re ? " · 重读 " + r.re : ""}</span>` : ""}</div><h3>${esc(p.title)}</h3></button>`;
   };
   main.innerHTML = `<div class="top"><div><h1>阅读</h1><p class="date">Tap any word for meaning. Turn on 分词 to see chunk boundaries.</p></div></div>
+    ${bookShelf()}
     ${mineSection()}
     ${fresh.length ? `<span class="label">没读过 · New (${fresh.length})</span><div class="plist">${fresh.map(item).join("")}</div>` : ""}
     ${ready.length ? `<span class="label">可以重读 · Ready to re-read (${ready.length})</span><p class="small muted" style="margin-top:-8px">读过两天以上了。再读一遍练速度，不答题。 It's been 2+ days: read it again for speed, no questions.</p><div class="plist">${ready.map(rItem).join("")}</div>` : ""}
     ${done.length ? `<span class="label">最近读过 · Read recently (${done.length})</span><div class="plist">${done.map(item).join("")}</div>` : ""}`;
   $$("[data-p]", main).forEach(b => b.onclick = () => { READ = { pid: b.dataset.p, timer: makeTimer(), looked: new Set(), spaced: false, re: !!S.reads[b.dataset.p] }; render(); window.scrollTo(0, 0); });
+  bindBookShelf(main);
   bindMineSection(main);
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
@@ -3515,6 +3538,398 @@ function mineGroups() {
   return Object.values(g).map(parts => parts.sort((a, b) => a.part - b.part)).sort((a, b) => b[0].t - a[0].t);
 }
 let MINE_TAG = "";
+/* ---------- books (v86, first release: .txt books on this device; design claude/design-books.md, provisional) ----------
+   A book lives in its own on-device store (IndexedDB "zwlgf-books": "m" = the shelf record, "t" = the text), never in
+   the progress entry or the repo. Not a passage: no 新/✓, no questions, no speed, never part of today's set.
+   Paragraphs are the unit: the place is a paragraph index (long lines are split at sentence ends on import).
+   Traditional books keep their own text; a simplified copy is made on import and shown by default (原文 shows the
+   original). Words are split and looked up on the simplified text, as everywhere else. */
+const BOOK_MAX_BYTES = 10 * 1024 * 1024, BOOK_PARA_MAX = 600, BOOK_CHUNK = 5000, BOOK_PART = 5000, BOOK_FIND_MAX = 300;
+const BOOK_FS = [17, 19, 21, 23, 26, 29];
+const BOOK_CH_RE = /^(第[0-9０-９零〇一二三四五六七八九十百千万两兩]+[章回节節卷部集篇幕]|序[章言幕]?$|序[：:\s　]|楔子|引子|尾声|尾聲|后记|後記|番外|前言|终章|終章|chapter\s*\d+)/i;
+let BOOKS = null, BOOKS_P = null; // shelf records on this device
+let BK = null; // the open book
+let BDB_P = null;
+function bdb() {
+  if (BDB_P) return BDB_P;
+  BDB_P = new Promise((res, rej) => {
+    try { const r = indexedDB.open("zwlgf-books", 1); r.onupgradeneeded = () => { r.result.createObjectStore("m"); r.result.createObjectStore("t"); }; r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }
+    catch (e) { rej(e); }
+  }).catch(e => { BDB_P = null; throw e; });
+  return BDB_P;
+}
+async function bdbDo(stores, mode, fn) {
+  const db = await bdb();
+  return new Promise((res, rej) => {
+    const t = db.transaction(stores, mode); let out;
+    Promise.resolve(fn(t, v => { out = v; })).catch(rej);
+    t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error("aborted"));
+  });
+}
+function booksLoad() {
+  if (BOOKS) return Promise.resolve(BOOKS);
+  if (BOOKS_P) return BOOKS_P;
+  BOOKS_P = bdbDo("m", "readonly", (t, set) => { const r = t.objectStore("m").getAll(); r.onsuccess = () => set(r.result || []); })
+    .then(l => (BOOKS = l)).catch(e => { noteErr("books load", e); return (BOOKS = []); }).finally(() => { BOOKS_P = null; });
+  return BOOKS_P;
+}
+const bookMetaPut = m => bdbDo("m", "readwrite", t => { t.objectStore("m").put(m, m.id); });
+const bookTextGet = id => bdbDo("t", "readonly", (t, set) => { const r = t.objectStore("t").get(id); r.onsuccess = () => set(r.result || null); });
+function bookPref() { try { return Object.assign({ fs: 2, mode: "scroll" }, JSON.parse(localStorage.getItem("zwlgf:bookpref") || "{}")); } catch (e) { return { fs: 2, mode: "scroll" }; } }
+function setBookPref(o) { try { localStorage.setItem("zwlgf:bookpref", JSON.stringify(Object.assign(bookPref(), o))); } catch (e) {} }
+
+// ---- importing a .txt ----
+function bookDecode(buf) {
+  const u = new Uint8Array(buf);
+  if (u[0] === 0xFF && u[1] === 0xFE) return new TextDecoder("utf-16le").decode(u);
+  if (u[0] === 0xFE && u[1] === 0xFF) return new TextDecoder("utf-16be").decode(u);
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(u); } catch (e) { return new TextDecoder("gb18030").decode(u); }
+}
+// a very long line → pieces of ~300–600 characters, cut after a sentence end (or, failing that, at 900)
+function bookSplitLong(l) {
+  const a = Array.from(l); if (a.length <= BOOK_PARA_MAX) return [l];
+  const out = []; let s = 0;
+  for (let i = 0; i < a.length; i++) {
+    const n = i - s + 1;
+    if ((n >= 300 && /[。！？!?…]/.test(a[i]) && !/[”」』’"）)]/.test(a[i + 1] || "")) || (n >= 300 && /[”」』]/.test(a[i]) && /[。！？!?…]/.test(a[i - 1])) || n >= 900) { out.push(a.slice(s, i + 1).join("")); s = i + 1; }
+  }
+  if (s < a.length) { const rest = a.slice(s).join(""); if (out.length && a.length - s < 60) out[out.length - 1] += rest; else out.push(rest); }
+  return out;
+}
+function bookParse(text) {
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n").map(l => l.replace(/^[\s　﻿]+|[\s　]+$/g, "")).filter(Boolean);
+  const paras = [], heads = [];
+  for (const l of lines) {
+    if (Array.from(l).length <= 40 && BOOK_CH_RE.test(l)) { heads.push(paras.length); paras.push(l); continue; }
+    for (const piece of bookSplitLong(l)) paras.push(piece);
+  }
+  let chapters;
+  if (heads.length >= 2) {
+    chapters = heads.map(p => ({ t: paras[p], p, h: 1 }));
+    if (heads[0] > 0) chapters.unshift({ t: "开头 · Beginning", p: 0 });
+  } else { // no headings: numbered parts of ~5,000 characters, cut between paragraphs
+    chapters = []; let acc = BOOK_PART;
+    paras.forEach((x, i) => { if (acc >= BOOK_PART) { chapters.push({ t: `第 ${chapters.length + 1} 部分`, p: i }); acc = 0; } acc += x.length; });
+  }
+  return { paras, chapters };
+}
+const HAN1 = /\p{Script=Han}/u;
+function bookIsTrad(paras) { // share of characters the 简/繁 table would change, in the first ~30,000
+  if (!ZHC) return false;
+  let han = 0, tr = 0;
+  for (const x of paras) { for (const c of x) { if (!HAN1.test(c)) continue; han++; const v = ZHC.t2s.get(c); if (v && v !== c) tr++; } if (han > 30000) break; }
+  return han > 0 && tr / han > 0.05;
+}
+async function bookImport(file) {
+  if (!file) return;
+  if (file.size > BOOK_MAX_BYTES) return toast("文件太大了（最多 10 MB）· The file is too big (10 MB at most)", 4000);
+  if (!/\.txt$/i.test(file.name) && file.type && file.type !== "text/plain") return toast("现在只能添加 .txt 文件 · Only .txt files for now (epub comes later)", 4000);
+  let text;
+  try { text = bookDecode(await file.arrayBuffer()); } catch (e) { noteErr("book read", e); return toast("这个文件读不出来 · Couldn't read this file", 4000); }
+  const { paras, chapters } = bookParse(text);
+  const chars = paras.reduce((n, x) => n + x.length, 0);
+  let han = 0; for (const c of text.slice(0, 20000)) if (HAN1.test(c)) han++;
+  if (!paras.length || han < Math.min(20000, text.length) * 0.1) return toast("这个文件好像不是中文 · This file doesn't look like Chinese text", 4000);
+  await booksLoad();
+  const title = file.name.replace(/\.[^.]+$/, "").replace(/^《(.*)》$/, "$1").trim() || "书 Book";
+  if (BOOKS.some(b => b.file === file.name && b.chars === chars)) return toast("这本书已经在书架上了 · This book is already on your shelf", 3000);
+  if (!ZHC) { try { await loadZhc(); } catch (e) { /* offline the first time: read as written */ } }
+  const trad = bookIsTrad(paras);
+  const simp = trad ? paras.map(x => toSimp(x)) : null;
+  const meta = { id: "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title, file: file.name, added: now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, trad, orig: false, pos: { p: 0, t: 0 }, lastT: 0 };
+  try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: meta.id, paras, simp }, meta.id); t.objectStore("m").put(meta, meta.id); }); }
+  catch (e) { noteErr("book save", e); return toast("存不下这本书（设备空间？）· Couldn't store the book on this device", 4000); }
+  BOOKS.push(meta);
+  toast(`已添加《${title}》· ${Math.round(chars / 1000)} 千字 · ${chapters.length} ${chapters.some(c => c.h) ? "章" : "部分"}${trad ? " · 繁体，显示为简体" : ""}`, 3500);
+  if (VIEW === "read" && !READ) render();
+}
+
+// ---- the shelf (top of 阅读) ----
+const bookPct = m => m.chars ? Math.min(100, Math.round(100 * ((m.pos && m.pos.c) || 0) / m.chars)) : 0;
+const bookDone = m => m.n && m.pos && m.pos.p >= m.n - 1 && m.pos.t;
+function bookChTitle(m, c) { return c ? (m.trad && !m.orig && c.s ? c.s : c.t) : ""; }
+function bookChAt(m, p) { let c = null; for (const x of m.chapters || []) { if (x.p <= p) c = x; else break; } return c; }
+function bookShelf() {
+  if (!BOOKS) { booksLoad().then(() => { if (VIEW === "read" && !READ) render(); }); return ""; }
+  const list = BOOKS.slice().sort((a, b) => (!!bookDone(a) - !!bookDone(b)) || ((b.lastT || b.added) - (a.lastT || a.added)));
+  return `<div class="spread"><span class="label">书架 · Books (${list.length})</span><button class="btn soft" id="bkadd" style="min-height:38px;padding:8px 14px">+ 添加书 Add a book</button><input type="file" id="bkfile" accept=".txt,text/plain" hidden></div>
+    ${!list.length ? `<p class="small muted" style="margin-top:-8px">A .txt file of a book (UTF-8 or GBK). It stays on this device; tap any word for its meaning, as in passages. Books don't count toward today's reading or your reading speed.</p>` : ""}
+    ${list.length ? `<div class="plist">${list.map(m => {
+      const pc = bookPct(m), ch = bookChAt(m, m.pos ? m.pos.p : 0), done = bookDone(m);
+      return `<div class="pitem bkrow ${done ? "done" : ""}"><div class="spread"><h3 class="zh">${esc(m.title)}</h3><button class="tagc" data-bkinfo="${esc(m.id)}" aria-label="书的信息 Book info">⋯</button></div>
+        <div class="bkprog"><i style="width:${pc}%"></i></div>
+        <div class="spread"><span class="small muted">${done ? "读完了 · Finished" : m.pos && m.pos.t ? `${pc}% · <span class="zh">${esc(bookChTitle(m, ch))}</span>` : "还没开始 · Not started"}</span><button class="btn soft" data-bkgo="${esc(m.id)}" style="min-height:38px;padding:8px 14px">${m.pos && m.pos.t ? "继续 Continue" : "开始 Start"}</button></div></div>`;
+    }).join("")}</div>` : ""}`;
+}
+function bindBookShelf(main) {
+  const add = $("#bkadd", main), f = $("#bkfile", main); if (!add || !f) return;
+  add.onclick = () => f.click();
+  f.onchange = () => { const file = f.files[0]; f.value = ""; if (file) { toast("正在添加… Adding…", 1500); bookImport(file); } };
+  $$("[data-bkgo]", main).forEach(b => b.onclick = () => { READ = { book: b.dataset.bkgo }; render(); });
+  $$("[data-bkinfo]", main).forEach(b => b.onclick = () => { READ = { book: b.dataset.bkinfo, sub: "info" }; render(); window.scrollTo(0, 0); });
+}
+
+// ---- opening a book ----
+async function bookOpen(id) {
+  await booksLoad();
+  const meta = BOOKS.find(b => b.id === id); if (!meta) throw new Error("no such book");
+  const tx = await bookTextGet(id); if (!tx) throw new Error("book text missing");
+  const offs = new Array(tx.paras.length + 1); offs[0] = 0;
+  tx.paras.forEach((x, i) => { offs[i + 1] = offs[i] + x.length; });
+  const heads = new Set(meta.chapters.filter(c => c.h).map(c => c.p)), starts = new Set(meta.chapters.map(c => c.p));
+  const chunks = [0]; let acc = 0; // fixed chunks of ~5,000 characters, starting at chapters where possible (pages are laid out per chunk)
+  tx.paras.forEach((x, i) => { if (i && ((starts.has(i) && acc >= 1000) || acc >= BOOK_CHUNK)) { chunks.push(i); acc = 0; } acc += x.length; });
+  BK = { id, meta, paras: tx.paras, simp: tx.simp, offs, heads, chunks, toks: [], looked: new Set(), p: { id: "book:" + id, gl: {}, trad: meta.trad, title: meta.title }, pos: Math.min(meta.pos ? meta.pos.p : 0, tx.paras.length - 1), back: null, hit: null, find: null };
+  if (!CED) loadCedict().then(() => { if (BK && BK.id === id) { BK.toks = []; if (VIEW === "read" && READ && READ.book === id && !READ.sub) render(); } }).catch(() => {});
+}
+const bkOrig = () => !!(BK.meta.trad && BK.meta.orig && BK.simp);
+const bkSimp = i => BK.simp ? BK.simp[i] : BK.paras[i];
+const bkToks = i => BK.toks[i] || (BK.toks[i] = segmentText(bkSimp(i)));
+const bkChunkOf = p => { let c = 0; for (let k = 0; k < BK.chunks.length; k++) if (BK.chunks[k] <= p) c = k; else break; return c; };
+function bkParaHtml(i) {
+  const toks = bkToks(i), sa = Array.from(bkSimp(i)), oa = bkOrig() ? Array.from(BK.paras[i]) : null, useO = oa && oa.length === sa.length;
+  const hit = BK.hit && BK.hit.p === i ? BK.hit : null;
+  let off = 0, h = "";
+  toks.forEach((t, ti) => {
+    const n = Array.from(t).length, show = useO ? oa.slice(off, off + n).join("") : t, a = off; off += n;
+    if (!/\S/.test(t) || Array.from(t).every(isPunct)) { h += esc(show); return; }
+    const k = i + ":" + ti, isHit = hit && a < hit.a + hit.n && a + n > hit.a;
+    h += `<span class="tk${BK.looked.has(k) ? " looked" : ""}${isHit ? " hit" : ""}" data-k="${k}">${esc(show)}</span>`;
+  });
+  return `<p class="${BK.heads.has(i) ? "bkh" : ""}" data-pi="${i}">${h}</p>`;
+}
+function bkRange(a, b) { const s = BK.chunks[a], e = b + 1 < BK.chunks.length ? BK.chunks[b + 1] : BK.paras.length; let h = ""; for (let i = s; i < e; i++) h += bkParaHtml(i); return h; }
+let BK_SAVE_T = null;
+function bkSetPos(p) {
+  if (!BK || p == null) return;
+  BK.pos = p;
+  const m = BK.meta; m.pos = { p, c: BK.offs[p], t: now() }; m.lastT = now();
+  clearTimeout(BK_SAVE_T); BK_SAVE_T = setTimeout(bkSaveNow, 800);
+}
+function bkSaveNow() { clearTimeout(BK_SAVE_T); BK_SAVE_T = null; if (BK) bookMetaPut(BK.meta).catch(e => noteErr("book place", e)); }
+document.addEventListener("visibilitychange", () => { if (document.hidden && BK_SAVE_T) bkSaveNow(); });
+function bkJump(p, hit) {
+  if (Math.abs(p - BK.pos) > 2) BK.back = BK.pos; // ↩ 回到刚才 after a jump
+  BK.hit = hit || null; bkSetPos(p); READ.sub = null; render();
+}
+function bkLeave() { closeSheet(); bkSaveNow(); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
+
+// ---- the reader ----
+function renderBook(main) {
+  if (!BK || BK.id !== READ.book) {
+    main.innerHTML = `<div class="card"><p class="muted">打开中… Opening…</p></div>`;
+    const id = READ.book;
+    bookOpen(id).then(() => { if (VIEW === "read" && READ && READ.book === id) render(); })
+      .catch(e => { noteErr("book open", e); toast("这本书打不开 · Couldn't open this book", 3000); if (READ && READ.book === id) { READ = null; render(); } });
+    return;
+  }
+  if (READ.sub === "toc") return renderBookToc(main);
+  if (READ.sub === "find") return renderBookFind(main);
+  if (READ.sub === "info") return renderBookInfo(main);
+  closeSheet();
+  const pref = bookPref(), page = pref.mode === "page", m = BK.meta, f = BK.find;
+  main.innerHTML = `<div class="bkbar" id="bkbar"><button class="btn ghost" id="bkback" style="min-height:38px;padding:6px 10px">←</button><span class="bkt small muted zh">${esc(m.title)}</span>
+      <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button><button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
+    ${f && f.res.length ? `<div class="bkfb" id="bkfb"><span class="small zh">「${esc(f.q)}」</span><span class="row" style="gap:6px;flex-wrap:nowrap"><button class="tagc" id="bkfp" aria-label="上一个 Previous">‹</button><span class="small muted" id="bkfn">${f.i + 1}/${f.res.length}${f.more ? "+" : ""}</span><button class="tagc" id="bkfx" aria-label="下一个 Next">›</button><button class="tagc" id="bkfc" aria-label="关闭搜索 Close search">✕</button></span></div>` : ""}
+    <div class="bk ${page ? "page" : "scroll"}" id="bk" style="font-size:${BOOK_FS[pref.fs] || 21}px">${page ? `<div class="bkpw" id="bkpw"><div class="bkpi" id="bkpi"></div></div>` : `<div id="bkc"></div>`}</div>
+    ${page ? `<div class="bkpb"><button id="bkprev" aria-label="上一页 Previous page">‹</button><span class="small muted" id="bkpct"></span><button id="bknext" aria-label="下一页 Next page">›</button></div>` : ""}`;
+  $("#bkback", main).onclick = bkLeave;
+  $("#bktoc", main).onclick = () => { closeSheet(); READ.sub = "toc"; render(); };
+  $("#bkfind", main).onclick = () => { closeSheet(); READ.sub = "find"; render(); };
+  $("#bkaa", main).onclick = e => { e.stopPropagation(); bookAa(e.currentTarget); };
+  const rb = $("#bkret", main); if (rb) rb.onclick = () => { const p = BK.back; BK.back = null; BK.hit = null; bkSetPos(p); render(); };
+  if (f && f.res.length) {
+    const go = d => { f.i = (f.i + d + f.res.length) % f.res.length; const r = f.res[f.i]; BK.hit = { p: r.p, a: r.a, n: f.n }; bkSetPos(r.p); render(); };
+    $("#bkfp", main).onclick = () => go(-1); $("#bkfx", main).onclick = () => go(1);
+    $("#bkfc", main).onclick = () => { BK.find = null; BK.hit = null; render(); };
+  }
+  $("#bk", main).addEventListener("click", e => {
+    const s = e.target.closest(".tk"); if (!s) return;
+    const [pi, ti] = s.dataset.k.split(":").map(Number);
+    BK.looked.add(s.dataset.k); s.classList.add("looked");
+    openSheet(BK.p, BK.toks, pi, ti, s);
+  });
+  if (page) bkPageInit(main); else bkScrollInit();
+}
+// scroll: a few chunks around the place; more are added as you near either end (at most ~5 drawn at once)
+function bkBarH() { const b = $("#bkbar"), fb = $("#bkfb"); return (b ? b.offsetHeight : 0) + (fb ? fb.offsetHeight : 0); }
+function bkScrollInit() {
+  const box = $("#bkc"), p = BK.pos, c = bkChunkOf(p);
+  BK.ca = Math.max(0, c - 1); BK.cb = Math.min(BK.chunks.length - 1, c + 1);
+  box.innerHTML = bkRange(BK.ca, BK.cb);
+  const tgt = $("#bkc .tk.hit") || $(`#bkc p[data-pi="${p}"]`);
+  BK.lock = true; // the jump itself mustn't move the bookmark
+  if (tgt) window.scrollTo(0, Math.max(0, tgt.getBoundingClientRect().top + scrollY - bkBarH() - (tgt.classList.contains("tk") ? innerHeight * 0.3 : 8)));
+  requestAnimationFrame(() => { BK.lock = false; bkOnScroll(); });
+}
+let BK_RAF = 0;
+addEventListener("scroll", () => { if (BK_RAF || !$("#bkc")) return; BK_RAF = requestAnimationFrame(() => { BK_RAF = 0; bkOnScroll(); }); }, { passive: true });
+function bkOnScroll() {
+  const box = $("#bkc"); if (!box || !BK) return;
+  const vh = innerHeight, r = box.getBoundingClientRect();
+  if (r.bottom - vh < vh * 1.5 && BK.cb < BK.chunks.length - 1) {
+    BK.cb++; box.insertAdjacentHTML("beforeend", bkRange(BK.cb, BK.cb));
+    if (BK.cb - BK.ca > 4) { const h0 = box.offsetHeight, e = BK.chunks[BK.ca + 1]; $$("#bkc p", box).forEach(x => { if (+x.dataset.pi < e) x.remove(); }); BK.ca++; window.scrollBy(0, box.offsetHeight - h0); }
+  } else if (r.top > -vh * 1.5 && BK.ca > 0) {
+    const h0 = box.offsetHeight; BK.ca--; box.insertAdjacentHTML("afterbegin", bkRange(BK.ca, BK.ca)); window.scrollBy(0, box.offsetHeight - h0);
+    if (BK.cb - BK.ca > 4) { const s = BK.chunks[BK.cb]; $$("#bkc p", box).forEach(x => { if (+x.dataset.pi >= s) x.remove(); }); BK.cb--; }
+  }
+  if (BK.lock) return;
+  const top = bkBarH() + 4; // the bookmark: the first paragraph still showing under the bar
+  for (const x of box.children) { if (x.getBoundingClientRect().bottom > top) { const p = +x.dataset.pi; if (p !== BK.pos) bkSetPos(p); break; } }
+  const end = box.lastElementChild; // the last paragraph fully read → finished
+  if (end && BK.cb === BK.chunks.length - 1 && end.getBoundingClientRect().bottom <= vh && BK.pos !== BK.paras.length - 1 && scrollY > 0 && innerHeight + scrollY >= document.documentElement.scrollHeight - 2) bkSetPos(BK.paras.length - 1);
+}
+// pages: one chunk laid out in columns as wide as the screen; turning past its last page loads the next chunk
+const BK_GAP = 48;
+function bkPageInit(main) {
+  bkPageLayout(bkChunkOf(BK.pos), { p: BK.pos });
+  const pw = $("#bkpw", main);
+  let x0 = null, y0 = null;
+  pw.addEventListener("touchstart", e => { if (e.touches.length === 1) { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; } }, { passive: true });
+  pw.addEventListener("touchend", e => { if (x0 == null) return; const t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0; x0 = null; if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) bkTurn(dx < 0 ? 1 : -1); });
+  $("#bkprev", main).onclick = () => bkTurn(-1); $("#bknext", main).onclick = () => bkTurn(1);
+}
+function bkPageLayout(c, at) { // at: {p} (the page holding paragraph p, or the search hit), {last: true}, or {pg}
+  const pw = $("#bkpw"), pi = $("#bkpi"); if (!pw || !pi) return;
+  BK.pc = c;
+  const bar = $(".bkpb"), H = Math.max(200, innerHeight - pw.getBoundingClientRect().top - (bar ? bar.offsetHeight : 44) - 12);
+  pw.style.height = H + "px";
+  const W = pw.clientWidth;
+  pi.style.transition = "none"; pi.style.transform = "none";
+  pi.style.width = W + "px"; pi.style.height = H + "px"; pi.style.columnWidth = W + "px"; pi.style.columnGap = BK_GAP + "px";
+  pi.innerHTML = bkRange(c, c);
+  BK.pW = W + BK_GAP;
+  const base = pi.getBoundingClientRect().left;
+  let last = 0; for (const x of pi.children) for (const r of x.getClientRects()) last = Math.max(last, Math.floor((r.left - base + 1) / BK.pW));
+  BK.pages = last + 1;
+  let pg = 0;
+  if (at && at.last) pg = BK.pages - 1;
+  else if (at && at.pg != null) pg = at.pg;
+  else if (at && at.p != null) { const el = pi.querySelector(".tk.hit") || pi.querySelector(`p[data-pi="${at.p}"]`); const r = el && el.getClientRects()[0]; if (r) pg = Math.floor((r.left - base + 1) / BK.pW); }
+  bkPageShow(Math.max(0, Math.min(BK.pages - 1, pg)), true);
+  requestAnimationFrame(() => { pi.style.transition = ""; });
+}
+function bkPageShow(pg, quiet) { // quiet = just laid out for a jump: the place stays what was jumped to
+  const pi = $("#bkpi"); if (!pi) return;
+  BK.pg = pg; pi.style.transform = `translateX(${-pg * BK.pW}px)`;
+  // the bookmark: the first paragraph that starts on this page (else the long one running across it), so reopening
+  // lands on this same page
+  const lb = pi.getBoundingClientRect().left; let starts = null, covers = null;
+  for (const x of pi.children) {
+    const rs = x.getClientRects(); if (!rs.length) continue;
+    const cols = [...rs].map(r => Math.floor((r.left - lb + 1) / BK.pW));
+    if (cols[0] === pg) { starts = +x.dataset.pi; break; }
+    if (covers == null && cols.includes(pg)) covers = +x.dataset.pi;
+    if (cols[0] > pg) break;
+  }
+  const first = starts != null ? starts : covers;
+  const atEnd = BK.pc === BK.chunks.length - 1 && pg === BK.pages - 1;
+  if (!quiet) { if (atEnd) bkSetPos(BK.paras.length - 1); else if (first != null && first !== BK.pos) bkSetPos(first); }
+  const pct = $("#bkpct"); if (pct) { const p = atEnd ? BK.paras.length - 1 : first != null ? first : BK.pos, ch = bookChAt(BK.meta, p); pct.innerHTML = `<span class="zh">${esc(bookChTitle(BK.meta, ch))}</span> · ${atEnd ? 100 : Math.round(100 * BK.offs[p] / (BK.meta.chars || 1))}%`; }
+  const pv = $("#bkprev"), nx = $("#bknext"); if (pv) pv.disabled = BK.pc === 0 && pg === 0; if (nx) nx.disabled = atEnd;
+}
+function bkTurn(d) {
+  if (!$("#bkpi")) return;
+  closeSheet(); BK.hit = null; $$("#bkpi .tk.hit").forEach(x => x.classList.remove("hit"));
+  const pg = BK.pg + d;
+  if (pg >= 0 && pg < BK.pages) return bkPageShow(pg);
+  if (pg < 0 && BK.pc > 0) return bkPageLayout(BK.pc - 1, { last: true });
+  if (pg >= BK.pages && BK.pc < BK.chunks.length - 1) return bkPageLayout(BK.pc + 1, { pg: 0 });
+}
+addEventListener("resize", () => { if (BK && $("#bkpi")) bkPageLayout(bkChunkOf(BK.pos), { p: BK.pos }); });
+document.addEventListener("keydown", e => {
+  if (VIEW !== "read" || !READ || !READ.book || !BK) return;
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") { e.preventDefault(); closeSheet(); if (READ.sub !== "find") { READ.sub = "find"; render(); } else { const q = $("#bkq"); if (q) q.select(); } return; }
+  if (READ.sub || /^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || "")) return;
+  if (!$("#bkpi")) return;
+  if (["ArrowRight", "PageDown", " "].includes(e.key)) { e.preventDefault(); bkTurn(1); }
+  else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); bkTurn(-1); }
+});
+// Aa: size, scroll / pages, 简体 / 原文 (per device; 原文 per book)
+function bookAa(btn) {
+  let pop = $("#aapop"); if (pop) { pop.remove(); btn.classList.remove("on"); return; }
+  pop = document.createElement("div"); pop.id = "aapop"; pop.className = "aapop bkaa"; document.body.append(pop); btn.classList.add("on");
+  const draw = () => {
+    const p = bookPref(), m = BK.meta;
+    pop.innerHTML = `<div class="aarow"><span>大小 Size</span><span class="row" style="gap:4px"><button class="tagc" data-bfs="-1" ${p.fs <= 0 ? "disabled" : ""}>字 −</button><button class="tagc" data-bfs="1" ${p.fs >= BOOK_FS.length - 1 ? "disabled" : ""}>字 +</button></span></div>
+      <div class="aarow"><span>翻看 Layout</span><span class="row" style="gap:4px"><button class="tagc ${p.mode !== "page" ? "on" : ""}" data-bmode="scroll">滚动 Scroll</button><button class="tagc ${p.mode === "page" ? "on" : ""}" data-bmode="page">翻页 Pages</button></span></div>
+      ${m.trad && BK.simp ? `<div class="aarow"><span>字 Script</span><span class="row" style="gap:4px"><button class="tagc ${m.orig ? "" : "on"}" data-borig="0">简体</button><button class="tagc ${m.orig ? "on" : ""}" data-borig="1">原文 Original</button></span></div>` : ""}`;
+    const r = btn.getBoundingClientRect(), w = Math.min(320, innerWidth - 24);
+    pop.style.width = w + "px"; pop.style.top = (r.bottom + 6) + "px"; pop.style.left = Math.max(12, Math.min(r.right - w, innerWidth - w - 12)) + "px";
+    const redraw = () => { const keep = $("#aapop"); render(); if (keep) document.body.append(keep); const nb = $("#bkaa"); if (nb) { nb.classList.add("on"); btn = nb; } draw(); };
+    $$("[data-bfs]", pop).forEach(b => b.onclick = () => { setBookPref({ fs: Math.max(0, Math.min(BOOK_FS.length - 1, bookPref().fs + +b.dataset.bfs)) }); redraw(); });
+    $$("[data-bmode]", pop).forEach(b => b.onclick = () => { setBookPref({ mode: b.dataset.bmode }); redraw(); });
+    $$("[data-borig]", pop).forEach(b => b.onclick = () => { m.orig = b.dataset.borig === "1"; bookMetaPut(m).catch(e => noteErr("book orig", e)); redraw(); });
+  };
+  draw();
+}
+document.addEventListener("click", e => { const p = $("#aapop.bkaa"); if (p && e.target.isConnected && !p.contains(e.target) && !e.target.closest("#bkaa")) { p.remove(); const b = $("#bkaa"); if (b) b.classList.remove("on"); } });
+// 目录 · Chapters
+function renderBookToc(main) {
+  const m = BK.meta, cur = bookChAt(m, BK.pos);
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="bktb">← 返回</button><span class="small muted zh">${esc(m.title)}</span></div>
+    <span class="label">目录 · Chapters (${m.chapters.length})</span>
+    <div class="bktoc">${m.chapters.map((c, k) => `<button class="${c === cur ? "on" : ""}" data-bkch="${k}"><span class="zh">${esc(bookChTitle(m, c))}</span><span class="small muted">${Math.round(100 * BK.offs[c.p] / (m.chars || 1))}%</span></button>`).join("")}</div>`;
+  $("#bktb", main).onclick = () => { READ.sub = null; render(); };
+  $$("[data-bkch]", main).forEach(b => b.onclick = () => { BK.find = null; bkJump(m.chapters[+b.dataset.bkch].p); });
+  const on = $(".bktoc .on", main); if (on) on.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
+}
+// 🔍 搜索 · Search the whole book (simplified and traditional both match)
+function bookFind(q) {
+  const qs = ZHC ? toSimp(q) : q, res = []; let more = false;
+  if (!qs) return { q, n: 0, res, more };
+  const hay = BK.simp || BK.paras, n = qs.length;
+  for (let i = 0; i < hay.length && !more; i++) { let a = hay[i].indexOf(qs); while (a >= 0) { if (res.length >= BOOK_FIND_MAX) { more = true; break; } res.push({ p: i, a }); a = hay[i].indexOf(qs, a + n); } }
+  // also the original characters as typed (a traditional book shown in its original)
+  if (BK.simp && qs !== q) for (let i = 0; i < BK.paras.length && res.length < BOOK_FIND_MAX; i++) { let a = BK.paras[i].indexOf(q); while (a >= 0 && res.length < BOOK_FIND_MAX) { if (!res.some(r => r.p === i && r.a === a)) res.push({ p: i, a }); a = BK.paras[i].indexOf(q, a + q.length); } }
+  res.sort((x, y) => x.p - y.p || x.a - y.a);
+  return { q, n, res, more };
+}
+function bkSnippet(r, n) {
+  const src = bkOrig() && BK.paras[r.p].length === bkSimp(r.p).length ? BK.paras[r.p] : bkSimp(r.p);
+  const a = Math.max(0, r.a - 14), b = Math.min(src.length, r.a + n + 24);
+  return `${a > 0 ? "…" : ""}${esc(src.slice(a, r.a))}<mark>${esc(src.slice(r.a, r.a + n))}</mark>${esc(src.slice(r.a + n, b))}${b < src.length ? "…" : ""}`;
+}
+function renderBookFind(main) {
+  const m = BK.meta, f = BK.findDraft || BK.find;
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="bkfb0">← 返回</button><span class="small muted zh">${esc(m.title)}</span></div>
+    <div class="row" style="flex-wrap:nowrap"><input class="zh" id="bkq" type="search" enterkeyhint="search" placeholder="搜索这本书 · Search this book" value="${esc(f ? f.q : "")}" style="flex:1;min-width:0;font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)"><button class="btn" id="bkqgo" style="min-height:44px">搜 Go</button></div>
+    <div id="bkres"></div>`;
+  const inp = $("#bkq", main), out = $("#bkres", main);
+  const show = r => {
+    if (!r) { out.innerHTML = ""; return; }
+    if (!r.res.length) { out.innerHTML = `<p class="muted">没找到 · Not found</p>`; return; }
+    out.innerHTML = `<p class="small muted">${r.res.length}${r.more ? "+" : ""} 处 · ${r.res.length}${r.more ? "+" : ""} match${r.res.length === 1 ? "" : "es"}${r.more ? ` (只显示前 ${BOOK_FIND_MAX} 处 · showing the first ${BOOK_FIND_MAX})` : ""}</p>
+      <div class="bkres">${r.res.map((x, k) => `<button data-bkr="${k}"><span class="small muted zh">${esc(bookChTitle(m, bookChAt(m, x.p)))}</span><span class="zh">${bkSnippet(x, r.n)}</span></button>`).join("")}</div>`;
+    $$("[data-bkr]", out).forEach(b => b.onclick = () => { const k = +b.dataset.bkr, x = r.res[k]; BK.find = Object.assign(r, { i: k }); BK.findDraft = null; bkJump(x.p, { p: x.p, a: x.a, n: r.n }); });
+  };
+  const go = () => { const q = inp.value.trim(); BK.findDraft = q ? bookFind(q) : null; show(BK.findDraft); };
+  $("#bkqgo", main).onclick = go;
+  inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); go(); } });
+  $("#bkfb0", main).onclick = () => { BK.findDraft = null; READ.sub = null; render(); };
+  show(f); window.scrollTo(0, 0); inp.focus(); if (f) inp.select();
+}
+// ⋯ book info: rename, remove (this device; your saved words stay)
+function renderBookInfo(main) {
+  const m = BK.meta, simpChars = m.chars;
+  main.innerHTML = `<div class="spread"><button class="btn ghost" id="bkib">← 返回</button></div>
+    <div class="card stack"><span class="label">书 · Book</span>
+      <div class="row" style="flex-wrap:nowrap"><input class="zh" id="bkti" value="${esc(m.title)}" style="flex:1;min-width:0;font-size:17px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)"><button class="btn soft" id="bktsave" style="min-height:44px">改名 Rename</button></div>
+      <p class="small muted">${esc(m.file || "")} · ${Math.round(simpChars / 1000)} 千字 · ${m.chapters.length} ${m.chapters.some(c => c.h) ? "章 chapters" : "部分 parts"}${m.trad ? " · 繁体原文 traditional original" : ""} · ${bookPct(m)}%</p>
+      <p class="small muted">只存在这台设备上 · Kept on this device only (copies on your other devices come in a later version).</p>
+      <button class="btn ghost" id="bkrm">移除这本书 · Remove this book</button></div>`;
+  $("#bkib", main).onclick = () => { READ = null; render(); };
+  $("#bktsave", main).onclick = () => { const v = $("#bkti", main).value.trim(); if (!v) return; m.title = v; BK.p.title = v; bookMetaPut(m).then(() => toast("已改名 · Renamed")).catch(e => noteErr("book rename", e)); };
+  const rm = $("#bkrm", main); let armed = false;
+  rm.onclick = async () => {
+    if (!armed) { armed = true; rm.textContent = "再点一次确定移除 · Tap again to remove"; rm.classList.add("danger"); return; }
+    try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("m").delete(m.id); t.objectStore("t").delete(m.id); }); }
+    catch (e) { noteErr("book remove", e); return toast("没能移除 · Couldn't remove it", 3000); }
+    BOOKS = BOOKS.filter(b => b.id !== m.id); BK = null; READ = null; render();
+    toast("已移除 · Removed (words you saved from it stay in your review)", 3000);
+  };
+}
 function mineSection() {
   const groups = mineGroups(), tags = [...new Set(groups.flatMap(g => g[0].tags || []))];
   const shown = MINE_TAG ? groups.filter(g => (g[0].tags || []).includes(MINE_TAG)) : groups;
