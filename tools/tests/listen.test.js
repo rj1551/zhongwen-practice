@@ -257,7 +257,9 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await sleep(300);
   ok(await page.locator(".plrow").count() === 1 && (await page.locator(".plrow").textContent()).includes("1/4"), "the first song opens and plays; the bar shows 连播 1/4 with ⏮ ⏭ 🔀 ✕");
   await page.waitForFunction(() => AUD_ID === "P2" && !AUD.paused, null, { timeout: 6000 });
-  ok(await page.evaluate(() => LST.id) === "P2" && await page.locator("h2").first().textContent() === "歌P2", "when it ends the next song opens and plays");
+  // the page is redrawn just after the audio starts: wait for it rather than reading it at once (flaked on GitHub, 2026-11-22)
+  const nextOk = await page.waitForFunction(() => LST && LST.id === "P2" && ($("h2") || {}).textContent === "歌P2", null, { timeout: 3000 }).then(() => true, () => false);
+  ok(nextOk, "when it ends the next song opens and plays");
   await page.evaluate(() => setView("home")); await sleep(200);
   await page.waitForFunction(() => AUD_ID === "P4" && !AUD.paused, null, { timeout: 6000 });
   ok(await page.evaluate(() => VIEW) === "home", "on another tab it keeps going to the next song without changing your page, skipping one whose audio isn't here (P3)");
