@@ -3655,24 +3655,140 @@ function bookIsTrad(paras) { // share of characters the 简/繁 table would chan
   for (const x of paras) { for (const c of x) { if (!HAN1.test(c)) continue; han++; const v = ZHC.t2s.get(c); if (v && v !== c) tr++; } if (han > 30000) break; }
   return han > 0 && tr / han > 0.05;
 }
+// ---- .epub (v89): a zip of XHTML pages. Unzipped with the browser's own DecompressionStream (no library), read in the
+// book's reading order (OPF spine); chapters from its table of contents (EPUB 3 nav or EPUB 2 NCX), else its headings,
+// else the .txt rules. Images, styles and ruby annotations (rt) are left out. Copy-protected (DRM) books can't be read.
+const EPUB_MAX_BYTES = 60 * 1024 * 1024;
+function zipEntries(buf) {
+  const u = new Uint8Array(buf), dv = new DataView(buf);
+  let e = -1; for (let i = u.length - 22; i >= Math.max(0, u.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error("not a zip");
+  const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true);
+  const out = new Map(), dec = new TextDecoder("utf-8");
+  for (let k = 0; k < n; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("bad zip directory");
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = dec.decode(u.subarray(p + 46, p + 46 + nl));
+    out.set(name, { method, csize, lo }); p += 46 + nl + xl + cl;
+  }
+  return { u, dv, out };
+}
+async function zipRead(z, name) {
+  const e = z.out.get(name); if (!e) return null;
+  const st = e.lo + 30 + z.dv.getUint16(e.lo + 26, true) + z.dv.getUint16(e.lo + 28, true), raw = z.u.subarray(st, st + e.csize);
+  if (e.method === 0) return raw;
+  if (e.method !== 8) throw new Error("unsupported zip compression");
+  const s = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+const zipText = async (z, name) => { const b = await zipRead(z, name); return b ? new TextDecoder("utf-8").decode(b) : null; };
+const xmlDoc = (t, type = "application/xml") => { const d = new DOMParser().parseFromString(t, type); return d.getElementsByTagName("parsererror").length ? null : d; };
+const byLocal = (root, name) => [...root.getElementsByTagName("*")].filter(el => el.localName === name);
+function pathJoin(base, href) { // href relative to the folder of `base`
+  const parts = base.split("/").slice(0, -1);
+  for (const seg of decodeURIComponent(href).split("/")) { if (seg === "..") parts.pop(); else if (seg && seg !== ".") parts.push(seg); }
+  return parts.join("/");
+}
+const EPUB_BLOCK = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "section", "article", "header", "footer", "aside", "pre", "dd", "dt", "tr", "td", "th", "table", "ul", "ol", "dl", "figure", "figcaption", "nav", "hr", "main", "body"]);
+const EPUB_SKIP = new Set(["script", "style", "rt", "rp", "head", "title", "svg", "math", "img", "image", "audio", "video", "object"]);
+const CJKP = "\\p{Script=Han}，。！？、；：“”‘’「」『』（）《》〈〉…—";
+// whitespace from the file's own line breaks (a newline and indentation) between Chinese characters goes; a plain
+// space (第一章 雪夜) stays, as one space
+const tidyLine = t => t.replace(new RegExp(`(?<=[${CJKP}])[ \\t]*[\\r\\n]\\s*(?=[${CJKP}])`, "gu"), "").replace(/\s+/g, " ").replace(/^[\s\u3000\ufeff]+|[\s\u3000]+$/g, "");
+// one XHTML page → paragraphs; ids → the paragraph they start at; headings marked
+function epubPage(doc, path, paras, ids, heads) {
+  let buf = "", hd = false;
+  const flush = () => { for (const l of buf.split("\u2028")) { const t = tidyLine(l); if (!t) continue; if (hd && Array.from(t).length <= 40) heads.add(paras.length); for (const x of bookSplitLong(t)) paras.push(x); } buf = ""; };
+  const walk = el => {
+    for (const c of el.childNodes) {
+      if (c.nodeType === 3) { buf += c.nodeValue; continue; }
+      if (c.nodeType !== 1) continue;
+      const tag = c.localName.toLowerCase();
+      if (EPUB_SKIP.has(tag)) continue;
+      if (tag === "br") { buf += "\u2028"; continue; } // a line break of the page (the file's own newlines are just spaces)
+      const block = EPUB_BLOCK.has(tag); if (block) flush(); // an anchor points at the paragraph it starts (or sits in)
+      const id = c.getAttribute("id") || (tag === "a" && c.getAttribute("name")); if (id && !ids.has(path + "#" + id)) ids.set(path + "#" + id, paras.length);
+      if (block) { const was = hd; hd = /^h[1-6]$/.test(tag); walk(c); flush(); hd = was; }
+      else walk(c);
+    }
+  };
+  const body = doc.getElementsByTagName("body")[0] || doc.documentElement; walk(body); flush();
+}
+// table of contents → [{t, href}] in order (all levels)
+function epubToc(navDoc, ncxDoc) {
+  const out = [];
+  if (navDoc) {
+    const navs = byLocal(navDoc, "nav"), toc = navs.find(n => /toc/.test(n.getAttribute("epub:type") || n.getAttributeNS("http://www.idpf.org/2007/ops", "type") || "")) || navs[0];
+    if (toc) for (const a of byLocal(toc, "a")) { const h = a.getAttribute("href"); if (h) out.push({ t: tidyLine(a.textContent), href: h }); }
+  }
+  if (!out.length && ncxDoc) for (const np of byLocal(ncxDoc, "navPoint")) {
+    const lab = byLocal(np, "text")[0], ct = byLocal(np, "content")[0];
+    if (ct && ct.getAttribute("src")) out.push({ t: tidyLine(lab ? lab.textContent : ""), href: ct.getAttribute("src") });
+  }
+  return out.filter(x => x.t);
+}
+async function epubRead(buf) {
+  if (typeof DecompressionStream === "undefined") throw new Error("这台设备的浏览器打不开 epub（太旧）· This browser can't open epub files (too old)");
+  const z = zipEntries(buf);
+  const cont = await zipText(z, "META-INF/container.xml"), cd = cont && xmlDoc(cont);
+  const rf = cd && byLocal(cd, "rootfile")[0], opfPath = rf && rf.getAttribute("full-path");
+  if (!opfPath) throw new Error("not an epub");
+  const opf = xmlDoc(await zipText(z, opfPath) || ""); if (!opf) throw new Error("not an epub");
+  const man = new Map(); for (const it of byLocal(opf, "item")) man.set(it.getAttribute("id"), { path: pathJoin(opfPath, it.getAttribute("href") || ""), type: it.getAttribute("media-type") || "", props: it.getAttribute("properties") || "" });
+  const spineEl = byLocal(opf, "spine")[0];
+  const spine = byLocal(opf, "itemref").map(r => man.get(r.getAttribute("idref"))).filter(x => x && /html|xml/.test(x.type));
+  // DRM: content files encrypted with anything other than the font-hiding schemes
+  const enc = await zipText(z, "META-INF/encryption.xml"), ed = enc && xmlDoc(enc);
+  if (ed) {
+    const docs = new Set(spine.map(x => x.path));
+    for (const d of byLocal(ed, "EncryptedData")) {
+      const alg = (byLocal(d, "EncryptionMethod")[0] || { getAttribute: () => "" }).getAttribute("Algorithm") || "", ref = byLocal(d, "CipherReference")[0], uri = ref && decodeURIComponent(ref.getAttribute("URI") || "");
+      if (!/idpf\.org\/2008\/embedding|ns\.adobe\.com\/pdf\/enc#RC/.test(alg) && uri && docs.has(uri)) throw new Error("这本书有版权保护（DRM），打不开 · This book is copy-protected (DRM) and can't be opened");
+    }
+  }
+  const paras = [], ids = new Map(), heads = new Set(), starts = new Map();
+  for (const it of spine) {
+    const t = await zipText(z, it.path); if (t == null) continue;
+    const doc = xmlDoc(t, "application/xhtml+xml") || new DOMParser().parseFromString(t, "text/html");
+    starts.set(it.path, paras.length); epubPage(doc, it.path, paras, ids, heads);
+  }
+  const dcTitle = byLocal(opf, "title")[0];
+  const navItem = [...man.values()].find(x => /\bnav\b/.test(x.props)), ncxItem = man.get(spineEl && spineEl.getAttribute("toc")) || [...man.values()].find(x => /ncx/.test(x.type));
+  const navDoc = navItem ? xmlDoc(await zipText(z, navItem.path) || "", "application/xhtml+xml") : null, ncxDoc = ncxItem ? xmlDoc(await zipText(z, ncxItem.path) || "") : null;
+  const tocBase = navItem && navDoc ? navItem.path : ncxItem ? ncxItem.path : opfPath;
+  const seen = new Set(), chapters = [];
+  for (const e of epubToc(navDoc, ncxDoc)) {
+    const [f, frag] = e.href.split("#"), path = pathJoin(tocBase, f), p = frag ? (ids.get(path + "#" + decodeURIComponent(frag)) ?? starts.get(path)) : starts.get(path);
+    if (p == null || p >= paras.length || seen.has(p)) continue;
+    seen.add(p); chapters.push(Object.assign({ t: e.t, p }, Array.from(paras[p]).length <= 40 ? { h: 1 } : {}));
+  }
+  chapters.sort((a, b) => a.p - b.p);
+  let ch = chapters;
+  if (ch.length < 2) { const hs = [...heads].sort((a, b) => a - b); ch = hs.length >= 2 ? hs.map(p => ({ t: paras[p], p, h: 1 })) : null; }
+  if (ch && ch[0].p > 0) ch.unshift({ t: "开头 · Beginning", p: 0 });
+  return { paras, chapters: ch || bookChapters(paras), title: dcTitle ? tidyLine(dcTitle.textContent) : "" };
+}
 async function bookImport(file) {
   if (!file) return;
-  if (file.size > BOOK_MAX_BYTES) return toast("文件太大了（最多 10 MB）· The file is too big (10 MB at most)", 4000);
-  if (!/\.txt$/i.test(file.name) && file.type && file.type !== "text/plain") return toast("现在只能添加 .txt 文件 · Only .txt files for now (epub comes later)", 4000);
-  let text;
-  try { text = bookDecode(await file.arrayBuffer()); } catch (e) { noteErr("book read", e); return toast("这个文件读不出来 · Couldn't read this file", 4000); }
-  const { paras, chapters } = bookParse(text);
+  const epub = /\.epub$/i.test(file.name) || file.type === "application/epub+zip";
+  if (!epub && !/\.txt$/i.test(file.name) && file.type && file.type !== "text/plain") return toast("只能添加 .txt 或 .epub 文件 · Only .txt and .epub files (PDF / Kindle: convert to epub first, e.g. with Calibre)", 5000);
+  if (file.size > (epub ? EPUB_MAX_BYTES : BOOK_MAX_BYTES)) return toast(`文件太大了（最多 ${epub ? 60 : 10} MB）· The file is too big (${epub ? 60 : 10} MB at most)`, 4000);
+  let paras, chapters, etitle = "";
+  try {
+    if (epub) ({ paras, chapters, title: etitle } = await epubRead(await file.arrayBuffer()));
+    else ({ paras, chapters } = bookParse(bookDecode(await file.arrayBuffer())));
+  } catch (e) { noteErr("book read", e); return toast(/[一-鿿]/.test((e && e.message) || "") ? e.message : "这个文件读不出来 · Couldn't read this file" + (e && e.message ? ` (${e.message})` : ""), 5000); }
   const chars = paras.reduce((n, x) => n + x.length, 0);
-  let han = 0; for (const c of text.slice(0, 20000)) if (HAN1.test(c)) han++;
-  if (!paras.length || han < Math.min(20000, text.length) * 0.1) return toast("这个文件好像不是中文 · This file doesn't look like Chinese text", 4000);
+  let han = 0, seen = 0; for (const x of paras) { for (const c of x) { seen++; if (HAN1.test(c)) han++; } if (seen > 20000) break; }
+  if (!paras.length || han < seen * 0.1) return toast("这个文件好像不是中文 · This file doesn't look like Chinese text", 4000);
   await booksLoad();
-  const title = file.name.replace(/\.[^.]+$/, "").replace(/^《(.*)》$/, "$1").trim() || "书 Book";
+  const title = etitle || file.name.replace(/\.[^.]+$/, "").replace(/^《(.*)》$/, "$1").trim() || "书 Book";
   if (BOOKS.some(b => b.file === file.name && b.chars === chars && bookRec(b.id))) return toast("这本书已经在书架上了 · This book is already on your shelf", 3000);
   const twin = (S.gen.books || []).find(r => r.file === file.name && r.chars === chars && !BOOKS.some(b => b.id === r.id)); // on the shelf from another device: this file becomes its copy here
   if (!ZHC) { try { await loadZhc(); } catch (e) { /* offline the first time: read as written */ } }
   const trad = bookIsTrad(paras);
   const simp = trad ? paras.map(x => toSimp(x)) : null;
-  const meta = { id: twin ? twin.id : "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title: twin ? twin.title : title, file: file.name, added: twin ? twin.t : now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, cv: BOOK_CV, trad, orig: false, pos: twin && twin.pos ? Object.assign({}, twin.pos) : { p: 0, t: 0 }, lastT: 0 };
+  const meta = { id: twin ? twin.id : "bk" + now().toString(36) + Math.random().toString(36).slice(2, 6), title: twin ? twin.title : title, file: file.name, added: twin ? twin.t : now(), bytes: file.size, chars, n: paras.length, chapters: trad ? chapters.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : chapters, cv: BOOK_CV, fmt: epub ? "epub" : "txt", trad, orig: false, pos: twin && twin.pos ? Object.assign({}, twin.pos) : { p: 0, t: 0 }, lastT: 0 };
   try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: meta.id, paras, simp }, meta.id); t.objectStore("m").put(meta, meta.id); }); }
   catch (e) { noteErr("book save", e); return toast("存不下这本书（设备空间？）· Couldn't store the book on this device", 4000); }
   BOOKS = BOOKS.filter(b => b.id !== meta.id).concat([meta]);
@@ -3716,7 +3832,7 @@ function trashBook(r) {
 // the text in the cloud: the extracted book (paragraphs, chapters, simplified copy), not the original file
 async function bookBlob(id) {
   const m = bookLocal(id), tx = m && await bookTextGet(id); if (!tx) return null;
-  return new Blob([JSON.stringify({ v: 1, cv: m.cv || 1, title: m.title, file: m.file, chars: m.chars, n: m.n, trad: !!m.trad, chapters: m.chapters, paras: tx.paras, simp: tx.simp || null })], { type: "application/json" });
+  return new Blob([JSON.stringify({ v: 1, cv: m.cv || 1, fmt: m.fmt || "txt", title: m.title, file: m.file, chars: m.chars, n: m.n, trad: !!m.trad, chapters: m.chapters, paras: tx.paras, simp: tx.simp || null })], { type: "application/json" });
 }
 async function bookDownload(r) {
   R2.down[r.id] = 0; r2Draw();
@@ -3726,7 +3842,7 @@ async function bookDownload(r) {
     if (!d || !Array.isArray(d.paras) || !d.paras.every(x => typeof x === "string") || !Array.isArray(d.chapters) || (d.simp && (!Array.isArray(d.simp) || d.simp.length !== d.paras.length))) throw new Error("not a book file");
     const chapters = d.chapters.filter(c => c && typeof c.t === "string" && Number.isInteger(c.p) && c.p >= 0 && c.p < d.paras.length).map(c => Object.assign({ t: c.t, p: c.p }, c.h ? { h: 1 } : {}, typeof c.s === "string" ? { s: c.s } : {}));
     if (!chapters.length) chapters.push({ t: "第 1 部分", p: 0 });
-    const meta = { id: r.id, title: r.title, file: r.file || d.file || "", added: r.t || now(), bytes: r.bytes || 0, chars: d.paras.reduce((n, x) => n + x.length, 0), n: d.paras.length, chapters, cv: d.cv || 1, trad: !!d.trad && !!d.simp, orig: false, pos: r.pos ? Object.assign({}, r.pos) : { p: 0, t: 0 }, lastT: 0 };
+    const meta = { id: r.id, title: r.title, file: r.file || d.file || "", added: r.t || now(), bytes: r.bytes || 0, chars: d.paras.reduce((n, x) => n + x.length, 0), n: d.paras.length, chapters, cv: d.cv || 1, fmt: d.fmt === "epub" ? "epub" : "txt", trad: !!d.trad && !!d.simp, orig: false, pos: r.pos ? Object.assign({}, r.pos) : { p: 0, t: 0 }, lastT: 0 };
     await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("t").put({ id: r.id, paras: d.paras, simp: d.simp || null }, r.id); t.objectStore("m").put(meta, r.id); });
     await booksLoad(); BOOKS = BOOKS.filter(b => b.id !== r.id).concat([meta]);
     return meta;
@@ -3814,8 +3930,8 @@ function bookShelf() {
   if (!BOOKS) { bookReconcile().then(() => { if (VIEW === "read" && !READ) render(); }); }
   const list = (S.gen.books || []).map(r => { const m = bookLocal(r.id), pos = bookPos(r, m); return { r, m, v: Object.assign({}, r, { pos }) }; })
     .sort((a, b) => (!!bookDone(a.v) - !!bookDone(b.v)) || (Math.max(b.v.pos.t || 0, b.r.t || 0) - Math.max(a.v.pos.t || 0, a.r.t || 0)));
-  return `<div class="spread"><span class="label">书架 · Books (${list.length})</span><button class="btn soft" id="bkadd" style="min-height:38px;padding:8px 14px">+ 添加书 Add a book</button><input type="file" id="bkfile" accept=".txt,text/plain" hidden></div>
-    ${!list.length ? `<p class="small muted" style="margin-top:-8px">A .txt file of a book (UTF-8 or GBK). Tap any word for its meaning, as in passages. With cloud storage set up (the same as for listening audio) it's on your other devices too. Books don't count toward today's reading or your reading speed.</p>` : ""}
+  return `<div class="spread"><span class="label">书架 · Books (${list.length})</span><button class="btn soft" id="bkadd" style="min-height:38px;padding:8px 14px">+ 添加书 Add a book</button><input type="file" id="bkfile" accept=".txt,.epub,text/plain,application/epub+zip" hidden></div>
+    ${!list.length ? `<p class="small muted" style="margin-top:-8px">A .txt (UTF-8 or GBK) or .epub file of a book; copy-protected store books can't be opened. Tap any word for its meaning, as in passages. With cloud storage set up (the same as for listening audio) it's on your other devices too. Books don't count toward today's reading or your reading speed.</p>` : ""}
     ${list.length ? `<div class="plist">${list.map(({ r, m, v }) => {
       const pc = bookPct(v), started = v.pos && v.pos.t, done = bookDone(v), ch = m ? bookChAt(m, v.pos.p) : null, w = m ? null : bookWhere(r);
       return `<div class="pitem bkrow ${done ? "done" : ""}"><div class="spread"><h3 class="zh">${esc(r.title)}</h3><button class="tagc" data-bkinfo="${esc(r.id)}" aria-label="书的信息 Book info">⋯</button></div>
@@ -3848,7 +3964,7 @@ async function bookOpen(id) {
   const meta = BOOKS.find(b => b.id === id); if (!meta) throw new Error("no such book");
   { const r = bookRec(id); if (r && r.title && r.title !== meta.title) meta.title = r.title; const p = bookPos(r, meta); if (p && p !== meta.pos) meta.pos = Object.assign({}, p); } // read on the other device since
   const tx = await bookTextGet(id); if (!tx) throw new Error("book text missing");
-  if ((meta.cv || 1) < BOOK_CV) { // added before the current chapter detection: look again (the text itself is unchanged)
+  if ((meta.cv || 1) < BOOK_CV && meta.fmt !== "epub") { // (an epub's chapters come from its own contents) // added before the current chapter detection: look again (the text itself is unchanged)
     const ch = bookChapters(tx.paras);
     meta.chapters = meta.trad && ZHC ? ch.map(c => Object.assign({}, c, { s: toSimp(c.t) })) : ch; meta.cv = BOOK_CV;
     bookMetaPut(meta).catch(e => noteErr("book chapters", e));
