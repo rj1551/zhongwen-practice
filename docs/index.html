@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-lDnV3zMF0skW1smrOkfHpZAZzcfuMwk2vCNkbZOaFZE='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-7yuyBzfxt1KjeLCT2jc/pWBMxqlp8TtkQzsV+H2qwPo='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -152,7 +152,8 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .tk:hover{background:var(--accent-soft)}
 .tk.looked{background:var(--gold-soft)}
 .kf{display:flex;flex-direction:column;height:calc(100dvh - 48px);gap:8px}
-.kfsong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.kfsong{display:flex;flex:1 1 auto;min-width:0;white-space:nowrap} .kfti{overflow:hidden;text-overflow:ellipsis;min-width:0} .kfpn{flex:none}
+.kf .sbar{gap:8px} .kfbtns{gap:6px;flex:none;flex-wrap:nowrap;margin-left:auto} .kfbtns .tagc{padding-left:9px;padding-right:9px}
 .kfview{position:relative;flex:1;overflow:hidden;display:flex;align-items:center}
 .kfcol{width:100%}
 html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100%} html.bklock main{padding-bottom:8px}
@@ -3403,7 +3404,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v93 · 11/23 00:02"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v94 · 11/23 00:12"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5570,8 +5571,8 @@ function renderFeed(main) {
   }
   const it = KF.run.it, muted = kfMuted(), fresh = KF.drawn !== KF.run;
   main.innerHTML = `<div class="kf" id="kf">
-    <div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button><span class="small muted kfsong">🎵 ${esc(it.title || "")} · <span id="kfpos"></span></span>
-      <span class="row" style="gap:6px;margin-left:auto"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.hi > 0 ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc" id="kfscr" aria-label="简体 / 繁體 Simplified / traditional">${cuePref().tr ? "繁" : "简"}</button><button class="tagc ${muted ? "on" : ""}" id="kfmute">${muted ? "🔇 静音 Muted" : "🔊"}</button></span></div>
+    <div class="sbar"><button class="x" id="kfquit" aria-label="结束 Stop">■</button><span class="small muted kfsong"><span class="kfti">🎵 ${esc(it.title || "")}</span><span class="kfpn">&nbsp;· <span id="kfpos"></span></span></span>
+      <span class="row kfbtns"><button class="tagc" id="kfsp" aria-label="上一首 Previous song" ${KF.hi > 0 ? "" : "disabled"}>⏮</button><button class="tagc" id="kfsn" aria-label="下一首 Next song">⏭</button><button class="tagc" id="kfscr" aria-label="简体 / 繁體 Simplified / traditional">${cuePref().tr ? "繁" : "简"}</button><button class="tagc ${muted ? "on" : ""}" id="kfmute" aria-label="${muted ? "静音 Muted" : "声音 Sound"}">${muted ? "🔇" : "🔊"}</button></span></div>
     <div class="kfview" id="kfview"><div class="kfcol" id="kfcol">${KF.run.lines.map((i, j) => kfLineHtml(it, i, j)).join("")}</div>
       <div class="kfdots" id="kfdots" hidden><i></i><i></i><i></i></div>
       <div class="kfpz" id="kfpz" hidden>⏸ 已暂停 · Paused<br><span class="small">点一下继续 · Tap to go on</span></div></div>

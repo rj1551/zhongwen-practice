@@ -72,6 +72,13 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
   await page.waitForFunction(() => KF.sbId === "Kb" && KF.nextRun && KF.nextRun.it.id === "Kb", null, { timeout: 3000 });
   ok(await page.evaluate(() => { const a = kfOther(); return a.readyState >= 1 && a !== KF.aud && Math.abs(a.currentTime - 0.5) < 0.05; }), "while a run plays, the next song is already loaded on the second player, sought to its lead-in");
   ok(/2\/5/.test(await page.textContent("#kfpos")) && /歌一/.test(await page.textContent(".kfsong")), "the song's name and the place in the run show at the top");
+  // the top bar stays on one line at phone width; a long title gives way (…), the line count and buttons don't (v94)
+  const bar = await page.evaluate(() => {
+    $(".kfti").textContent = "🎵 一个非常非常非常非常长的歌名 - 一个也很长的歌手名字 · 现场版";
+    const b = [...$$(".kfbtns .tagc")].map(x => x.getBoundingClientRect()), pn = $(".kfpn").getBoundingClientRect(), ti = $(".kfti"), bt = $(".kfbtns").getBoundingClientRect();
+    return { oneRow: b.every(r => Math.abs(r.top - b[0].top) < 2), pnVisible: pn.width > 10 && pn.right <= bt.left + 1, cut: ti.scrollWidth > ti.clientWidth, fits: $(".sbar").getBoundingClientRect().right <= innerWidth + 1 };
+  });
+  ok(bar.oneRow && bar.pnVisible && bar.cut && bar.fits, "the top bar stays on one line: a long title is cut with …, the line count and the buttons stay whole: " + JSON.stringify(bar));
 
   // ---- 3. tapping a character pauses; closing goes on from 1.5 s before the line ----
   const huan = page.locator('.kfl[data-j="0"] .kfc', { hasText: "还" });
@@ -205,7 +212,7 @@ const st = JSON.stringify({ v: 1, updatedAt: Date.now(), placed: true, skills: n
 
   // ---- 9. mute: silent, but the lines still move at the song's timing ----
   await page.click("#kfmute"); await page.waitForSelector("#kfcol .kfl.cur");
-  ok(await page.evaluate(() => localStorage.getItem("zwlgf:kfmute") === "1") && /静音/.test(await page.textContent("#kfmute")), "🔇 mutes (remembered on this device)");
+  ok(await page.evaluate(() => localStorage.getItem("zwlgf:kfmute") === "1") && /🔇/.test(await page.textContent("#kfmute")) && /静音/.test(await page.getAttribute("#kfmute", "aria-label")), "🔇 mutes (remembered on this device)");
   await page.evaluate(() => kfStartAt(0));
   await page.waitForFunction(() => KF.li === 1, null, { timeout: 6000 });
   ok(await page.evaluate(() => KF.aud.paused && !KF.useAud), "muted, the lines still scroll by themselves at the song's timing, silently");
