@@ -128,6 +128,11 @@ Each: `{"kind": "xhs|news|travel|book|wb", "title": "Chinese title", "paras": ["
   figures; book = a short literary narrative excerpt, past tense, descriptive; travel = a realistic dialogue between
   a traveller and a local in China (ordering, directions, tickets, hotels), each line prefixed 甲：or 乙：. Rotate
   genres; news and xhs most often.
+- Places (learner, 2026-11-23): when a passage is set somewhere real, name real places there — real streets,
+  districts, landmarks, food streets, scenic spots (e.g. for Chengdu: 建设路, 九眼桥, 熊猫基地) — never made-up place
+  names that only sound real. Small details may be approximate or invented (a particular stall or shop, a price, how
+  long the queue was); that's fine. This applies to every genre, 微博·抖音 posts included; news keeps clearly
+  fictional figures, but its cities and places are real.
 - 140–220 characters, simplified Chinese, 2–4 paragraphs; every paragraph segmented with | between EVERY token
   (punctuation is its own token: 我|今天|去|了|上海|。). Naturally include at least 4 words from `reviewWords` +
   `fadingWords` (prefer `reviewWords`), and 2–4 `newWords`: pick ones that fit the text naturally and are worth knowing
