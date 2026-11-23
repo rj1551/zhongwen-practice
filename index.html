@@ -173,6 +173,7 @@ html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100
 .bkres button{flex-direction:column;gap:2px} .bktoc button.on{border-color:var(--accent);background:var(--accent-soft)}
 .bkres mark{background:var(--gold-soft);color:inherit;border-radius:3px}
 .btn.danger{border-color:var(--bad);color:var(--bad)}
+.ghp{border-radius:4px;transition:background-color .15s,box-shadow .15s} .ghp.gh{background:color-mix(in srgb, var(--accent) 20%, transparent);box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent)}
 html.kflock,html.kflock body{overflow:hidden;overscroll-behavior:none;height:100%}
 .kf{touch-action:none;overscroll-behavior:none}
 .kfcol.turn .kfl:not(.off){animation:kfin .3s ease}
@@ -3001,31 +3002,108 @@ function renderSched(card, el, onResult, onNext) {
   $("#sr-skip", el).onclick = () => { markDay("nr"); save(); onResult({ ok: true, sr: true }); onNext(); };
 }
 const psgChars = p => Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
-function recordReread(pid, cpm) {
-  const r = S.reads[pid]; if (!r) return;
-  if (cpm) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; if (cpm >= NATIVE_CPM) r.fluent = true; }
+/* ---- re-reading with a ghost (v93, learner 2026-11-23): picked each time. A soft highlight moves through the passage
+   phrase by phrase at your best counted re-read of it (or its first read) + 5 %, never above NATIVE_CPM. After 读完了
+   comes 跟上意思了吗？: only a run you followed counts as a best and can retire the passage at native speed (plain
+   re-reads too). Re-read history r.rr = [[t, cpm, ok (0/1, missing = old, counted), ghost (0/1)], …]. */
+const GHOST_UP = 1.05;
+const rrOk = e => e[2] !== 0;
+const rrBest = r => Math.max(r.cpm || 0, ...(r.rr || []).filter(rrOk).map(e => e[1]));
+const ghostCpm = r => Math.min(NATIVE_CPM, Math.max(30, Math.round(rrBest(r) * GHOST_UP)));
+// a paragraph's tokens → phrases: up to a ，。！？；：、… mark, or ~7 characters at a word boundary
+function ghostPhrases(toks) {
+  const out = []; let cur = [], n = 0;
+  const close = () => { if (cur.length) out.push({ toks: cur, n }); cur = []; n = 0; };
+  for (const t of toks) {
+    const a = Array.from(t), punct = a.length && a.every(isPunct);
+    if (!punct && n >= 7) close();
+    cur.push(t); if (!punct) n += a.filter(c => !isPunct(c)).length;
+    if (punct && /[，。！？；：、…,.!?;:]/.test(t)) close();
+  }
+  close(); return out;
+}
+// the passage's paragraphs as phrase spans; `tok(t, pi, ti)` draws a token (tappable in 阅读, plain in the practice card)
+function ghostHtml(parasToks, tok, pi0 = 0) {
+  let g = 0;
+  return parasToks.map((toks, i) => { let ti = 0; return `<p>${ghostPhrases(toks).map(ph => `<span class="ghp" data-g="${g++}" data-n="${ph.n}">${ph.toks.map(t => tok(t, i + pi0, ti++)).join("")}</span>`).join("")}</p>`; }).join("");
+}
+// runs the highlight over the .ghp spans in `box` at `cpm`; pauses while the app is hidden; .stop() ends it
+function ghostRun(box, cpm, onEnd) {
+  const spans = [...box.querySelectorAll(".ghp")], ends = []; let acc = 0;
+  for (const s of spans) { acc += (+s.dataset.n || 0) / cpm * 60000; ends.push(acc); }
+  let el = 0, last = performance.now(), cur = -1, done = false;
+  const tick = () => {
+    if (done) return;
+    const t = performance.now(); if (!document.hidden) el += Math.min(t - last, 1000); last = t;
+    let i = ends.findIndex(e => e > el); if (i < 0) i = spans.length;
+    if (i !== cur) { if (spans[cur]) spans[cur].classList.remove("gh"); cur = i; if (spans[cur]) spans[cur].classList.add("gh"); }
+    if (i >= spans.length) { done = true; if (onEnd) onEnd(); return; }
+    G.raf = requestAnimationFrame(tick);
+  };
+  const G = { raf: 0, stop() { done = true; cancelAnimationFrame(G.raf); spans.forEach(s => s.classList.remove("gh")); }, get done() { return done; }, ms: ends[ends.length - 1] || 0 };
+  G.raf = requestAnimationFrame(tick);
+  return G;
+}
+function ghostPick(r) { // the two ways to start a re-read
+  return `<div class="stack" style="gap:8px"><button class="btn wide" id="rr-plain">读 Read</button>
+    <button class="btn soft wide" id="rr-ghost">👻 带鬼影读 Read with the ghost · ${ghostCpm(r)} 字/分</button>
+    <p class="small muted">鬼影按你这篇最好的速度再快 5% 往前走，一次一个短语；跟着它读或者比它快。开始以后才计时。<br>The ghost moves a phrase at a time at your best speed on this passage + 5%. Read along with it or ahead of it. Timing starts when you pick.</p></div>`;
+}
+// after 读完了: did you follow the meaning? → onAnswer(ok)
+function ghostAsk(box, onAnswer) {
+  box.innerHTML = `<div class="card stack" style="gap:8px"><b>跟上意思了吗？ · Did you follow the meaning?</b>
+    <div class="row" style="gap:8px"><button class="btn" id="rr-ok">跟上了 Yes</button><button class="btn ghost" id="rr-no">没完全跟上 Not quite</button></div>
+    <p class="small muted">只有跟上了的才算最好成绩 · Only a read you followed counts as a best.</p></div>`;
+  $("#rr-ok", box).onclick = () => onAnswer(true); $("#rr-no", box).onclick = () => onAnswer(false);
+}
+// record a re-read; returns {best before, new best?}
+function recordReread(pid, cpm, ok = true, ghost = false) {
+  const r = S.reads[pid]; if (!r) return {};
+  const before = rrBest(r);
+  if (cpm) { r.rr = (r.rr || []).concat([[now(), cpm, ok ? 1 : 0, ghost ? 1 : 0]]).slice(-20); r.lastCpm = cpm; if (ok && cpm >= NATIVE_CPM) r.fluent = true; }
   r.re = (r.re || 0) + 1; r.lastT = now(); save();
+  return { before, best: !!(cpm && ok && cpm > before) };
+}
+function rereadResultHtml(p, r, cpm, rec, ok, ghost, tgt, paused) {
+  if (paused) return `<p>看起来中途停了，这次不算速度。 Looks like you paused partway, so this one isn't counted.</p>`;
+  const vsG = ghost ? Math.round((cpm / tgt - 1) * 100) : 0;
+  const hist = [r.cpm, ...(r.rr || []).map(e => e[1] + (e[3] ? "👻" : "") + (e[2] === 0 ? "?" : ""))];
+  return `<div class="row" style="align-items:flex-end;gap:16px"><div class="big">${cpm}</div><p class="muted">字/分钟 characters a minute</p></div>
+    ${ghost ? `<p>${cpm >= tgt ? `🏁 比鬼影快 <b style="color:var(--good)">${vsG > 0 ? "+" + vsG + "%" : "一点"}</b> · You beat the ghost (${tgt})` : `👻 鬼影快了 ${-vsG}% · The ghost (${tgt}) was ${-vsG}% faster`}</p>` : ""}
+    <p>${ok ? rec.best ? `<b style="color:var(--good)">新纪录 New best</b> · 之前 before ${rec.before}` : `最好 Best ${rec.before}` : `这次不算最好成绩 · Not counted as a best (you didn't quite follow)`} · 母语速度 Native ${NATIVE_CPM}</p>
+    <div class="bkprog" title="${cpm} / ${NATIVE_CPM}"><i style="width:${Math.min(100, Math.round(100 * Math.max(cpm, rrBest(r)) / NATIVE_CPM))}%"></i></div>
+    ${hist.length > 2 ? `<p class="small muted">每次 Each read: ${hist.join(" → ")}（👻 = 带鬼影 with the ghost，? = 没完全跟上 not quite followed）</p>` : ""}
+    ${r.fluent ? `<p>🎉 母语者的速度了，这篇不会再出现在练习里 · Native-level speed: this passage won't come up in practice again.</p>` : ""}`;
 }
 function renderReread(pid, el, onResult, onNext) {
   const p = PSG.get(pid), r = S.reads[pid];
   if (!p || !r) return onNext();
-  const timer = makeTimer();
+  const tgt = ghostCpm(r);
   el.innerHTML = `<div class="card" id="cc"><div class="kind"><span class="label">重读 · Re-read for speed</span><span class="chip ${p.reg || ""}">${p.mine ? "我的" : REG_NAME[p.reg] || ""}</span></div>
     <h2 class="zh" style="font-size:19px">${esc(p.mine ? mineTitle(p) : p.title)}</h2>
-    <div class="reading" style="font-size:19px;line-height:1.9">${p.paras.map(x => `<p>${esc(x.replace(/[|\/]/g, ""))}</p>`).join("")}</div>
-    <p class="small muted">读过了，再读一遍练速度，不答题 · You've read this before: read it again at your pace, no questions.</p>
-    <button class="btn wide" id="done">读完了 Done</button><div id="fb"></div></div>`;
+    <div id="rrbody">${ghostPick(r)}</div><div id="fb"></div></div>`;
   const cc = $("#cc", el);
-  $("#done", el).onclick = () => {
-    $("#done", el).remove();
-    const sec = timer.stop() / 1000, cpm = Math.round(psgChars(p) / (sec / 60)), paused = sec > 20 * 60;
-    recordReread(pid, paused ? null : cpm);
-    const gain = r.cpm ? Math.round((cpm / r.cpm - 1) * 100) : 0;
-    $("#fb", el).innerHTML = `<div class="fb ok">${paused ? `<span>看起来中途停了，这次不算速度 · Looks like you paused, so speed isn't counted.</span>` :
-      `<span><b style="font-size:20px">${cpm}</b> 字/分钟 · 第一次 first read ${r.cpm} ${gain > 0 ? `<b style="color:var(--good)">+${gain}%</b>` : gain < 0 ? `(${gain}%)` : ""}</span>${r.fluent ? `<span>🎉 母语者的速度了，这篇不会再出现在练习里 · Native-level speed: this passage won't come up in practice again.</span>` : ""}`}</div>`;
-    onResult({ ok: true, rr: true, ms: sec * 1000 });
-    nextButton(cc, onNext);
+  const start = ghost => {
+    $("#rrbody", el).innerHTML = `<div class="reading" id="rrtext" style="font-size:19px;line-height:1.9">${ghostHtml(passageTokens(p).map(ts => ts.map(t => t.replace(/\//g, "")).filter(Boolean)), t => esc(t))}</div>
+      <p class="small muted">读过了，再读一遍练速度，不答题 · You've read this before: read it again${ghost ? " with the ghost" : " at your pace"}, no questions.</p>
+      <p class="small muted" id="ghend" hidden>👻 鬼影读完了 · The ghost has finished.</p>
+      <button class="btn wide" id="done">读完了 Done</button>`;
+    const timer = makeTimer(), G = ghost ? ghostRun($("#rrtext", el), tgt, () => { const e = $("#ghend", el); if (e) e.hidden = false; }) : null;
+    $("#done", el).onclick = () => {
+      $("#done", el).remove(); if (G) G.stop();
+      const sec = timer.stop() / 1000, cpm = Math.round(psgChars(p) / (sec / 60)), paused = sec > 20 * 60;
+      const finish = ok => {
+        const rec = recordReread(pid, paused ? null : cpm, ok, ghost);
+        $("#fb", el).innerHTML = `<div class="fb ok stack">${rereadResultHtml(p, r, cpm, rec, ok, ghost, tgt, paused)}</div>`;
+        onResult({ ok: true, rr: true, ms: sec * 1000 });
+        nextButton(cc, onNext);
+      };
+      if (paused) return finish(true);
+      ghostAsk($("#fb", el), finish);
+    };
   };
+  $("#rr-plain", el).onclick = () => start(false);
+  $("#rr-ghost", el).onclick = () => start(true);
 }
 function renderPick(item, el, onResult, onNext) {
   const right = item.opts[0], opts = shuffle(item.opts);
@@ -3229,7 +3307,7 @@ function renderRead(main) {
   const done = all.filter(p => S.reads[p.id] && now() - lastT(S.reads[p.id]) < REREAD_GAP).sort((a, b) => lastT(S.reads[b.id]) - lastT(S.reads[a.id]));
   const rItem = p => {
     const r = S.reads[p.id], days = Math.floor((now() - lastT(r)) / DAY);
-    return `<button class="pitem" data-p="${esc(p.id)}" data-re="1"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span><span class="small muted">第一次 ${r.cpm} 字/分${r.rr && r.rr.length ? ` · 最快 ${Math.max(...r.rr.map(e => e[1]))}` : ""} · ${days} 天前读过</span></div><h3>${esc(p.title)}</h3></button>`;
+    return `<button class="pitem" data-p="${esc(p.id)}" data-re="1"><div class="row"><span class="chip ${p.reg}">${REG[p.reg] || "对话"}</span><span class="small muted">第一次 ${r.cpm} 字/分${r.rr && r.rr.some(rrOk) ? ` · 最快 ${rrBest(r)}` : ""} · ${days} 天前读过</span></div><h3>${esc(p.title)}</h3></button>`;
   };
   const item = p => {
     const r = S.reads[p.id];
@@ -3263,14 +3341,24 @@ const tokHtml = (t, k, looked) => {
 };
 function renderPassage(main) {
   const p = PSG.get(READ.pid);
+  if (READ.re && READ.ghost == null && S.reads[p.id]) { // re-read: with or without the ghost, picked each time (v93)
+    if (READ.timer) READ.timer.stop();
+    main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button><span class="chip">重读 Re-read</span></div>
+      <div class="card stack"><h2 class="zh" style="font-size:21px">${esc(p.mine ? mineTitle(p) : p.title)}</h2>${ghostPick(S.reads[p.id])}</div>`;
+    $("#back").onclick = () => { READ = p.mine ? { grp: p.grp } : null; render(); };
+    const go = g => { READ.ghost = g; READ.timer = makeTimer(); renderPassage(main); window.scrollTo(0, 0); };
+    $("#rr-plain").onclick = () => go(false); $("#rr-ghost").onclick = () => go(true);
+    return;
+  }
   const paras = [segmentText(p.mine ? mineTitle(p) : p.title, p.gl || {})].concat(passageTokens(p)); // index 0 = title
   main.innerHTML = `<div class="spread"><button class="btn ghost" id="back">← 返回</button>${READ.re ? `<span class="chip">重读 Re-read</span>` : ""}
     <span class="row" style="gap:8px">${p.gen || p.mine ? `<button class="tagc" id="pren" aria-label="改名 Rename">✎</button>` : ""}<label class="row small" style="gap:6px"><input type="checkbox" id="sp" ${READ.spaced ? "checked" : ""}> 分词 Show chunks</label></span></div>
     <div class="card"><div class="reading ${READ.spaced ? "spaced" : ""} ${p.reg === "wb" ? "wb " + (p.sty || "weibo") : ""}" id="rd">
       <h2 class="zh" id="ptitle" style="font-size:21px;line-height:1.7">${paras[0].map((t, ti) => tokHtml(t, "0:" + ti, READ.looked.has("0:" + ti))).join("")}</h2>
-      ${paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
+      ${READ.re && READ.ghost ? ghostHtml(paras.slice(1), (t, pi, ti) => tokHtml(t, pi + ":" + ti, READ.looked.has(pi + ":" + ti)), 1) : paras.slice(1).map((toks, i) => `<p>${toks.map((t, ti) => tokHtml(t, (i + 1) + ":" + ti, READ.looked.has((i + 1) + ":" + ti))).join("")}</p>`).join("")}</div>
+    ${READ.re && READ.ghost ? `<p class="small muted" id="ghend" hidden>👻 鬼影读完了 · The ghost has finished.</p>` : ""}
     ${READ.re || (p.mine && !(p.qs && p.qs.length)) ? `<button class="btn wide" id="done">读完了 Done</button>` : `<button class="btn wide" id="done">读完了，答题 Done → questions</button>`}</div>`;
-  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); closeSheet(); READ = p.mine ? { grp: p.grp } : null; render(); }; // in practice: back to the passage card
+  $("#back").onclick = () => { if (READ.timer) READ.timer.stop(); if (READ.gh) READ.gh.stop(); closeSheet(); READ = p.mine ? { grp: p.grp } : null; render(); }; // in practice: back to the passage card
   $("#sp").onchange = e => { READ.spaced = e.target.checked; $("#rd").classList.toggle("spaced", READ.spaced); };
   const pr = $("#pren"); if (pr) pr.onclick = () => {
     if (READ.timer && READ.timer.hold) READ.timer.hold();
@@ -3280,6 +3368,7 @@ function renderPassage(main) {
   };
   READ.paras = paras;
   bindTokens(main, p);
+  if (READ.re && READ.ghost) { if (READ.gh) READ.gh.stop(); READ.gh = ghostRun($("#rd", main), ghostCpm(S.reads[p.id]), () => { const e = $("#ghend"); if (e) e.hidden = false; }); }
   $("#done").onclick = () => READ.re ? finishReread(main, p) : (p.mine && !(p.qs && p.qs.length)) ? finishMine(main, p) : passageQuiz(main, p);
 }
 function bindTokens(scope, p) {
@@ -3437,25 +3526,22 @@ function passageQuiz(main, p) {
 // Re-read for speed (option A: speed only). Compared with your first read of the same passage; doesn't touch the
 // card schedule or the reading-speed skill (a re-read is faster partly because you know the text).
 function finishReread(main, p) {
-  closeSheet();
+  closeSheet(); if (READ.gh) READ.gh.stop();
   const n = Array.from(p.paras.join("").replace(/[|\/]/g, "")).filter(c => !isPunct(c)).length;
   const sec = READ.timer.stop() / 1000, cpm = Math.round(n / (sec / 60));
   const r = S.reads[p.id], prevT = r.lastT || r.t, soon = now() - prevT < REREAD_GAP;
-  const paused = sec > 20 * 60;
-  const before = (r.rr || []).map(e => e[1]);
-  if (!paused) { r.rr = (r.rr || []).concat([[now(), cpm]]).slice(-20); r.lastCpm = cpm; }
-  r.re = (r.re || 0) + 1; r.lastT = now();
-  logDay(Math.min(sec, 900), true, "read"); save();
-  const gain = r.cpm ? Math.round((cpm / r.cpm - 1) * 100) : 0;
-  const hist = [r.cpm, ...before, ...(paused ? [] : [cpm])];
-  main.innerHTML = `<div class="card"><span class="label">重读 · Re-read</span>
-    ${paused ? `<p>看起来中途停了，这次不算速度。 Looks like you paused partway, so this one isn't counted.</p>` : `
-    <div class="row" style="align-items:flex-end;gap:16px"><div class="big">${cpm}</div><p class="muted">字/分钟 characters a minute</p></div>
-    <p>第一次 First read <b>${r.cpm}</b> → 这次 This time <b>${cpm}</b> ${gain > 0 ? `<b style="color:var(--good)">+${gain}%</b>` : gain < 0 ? `<span class="muted">(${gain}%)</span>` : ""}</p>
-    ${hist.length > 2 ? `<p class="small muted">每次 Each read: ${hist.join(" → ")}</p>` : ""}
-    ${soon ? `<p class="small muted">离上次不到两天，有一部分是记忆。 Less than 2 days since last time, so part of this is memory.</p>` : ""}`}
-    <button class="btn wide" id="list">回到列表 Back to list</button></div>`;
-  $("#list").onclick = () => { READ = p.mine ? { grp: p.grp } : null; render(); window.scrollTo(0, 0); };
+  const paused = sec > 20 * 60, ghost = !!READ.ghost, tgt = ghostCpm(r);
+  const finish = ok => {
+    const rec = recordReread(p.id, paused ? null : cpm, ok, ghost);
+    logDay(Math.min(sec, 900), true, "read"); save();
+    main.innerHTML = `<div class="card stack"><span class="label">重读 · Re-read${ghost ? " 👻" : ""}</span>
+      ${rereadResultHtml(p, r, cpm, rec, ok, ghost, tgt, paused)}
+      ${soon && !paused ? `<p class="small muted">离上次不到两天，有一部分是记忆。 Less than 2 days since last time, so part of this is memory.</p>` : ""}
+      <button class="btn wide" id="list">回到列表 Back to list</button></div>`;
+    $("#list").onclick = () => { READ = p.mine ? { grp: p.grp } : null; render(); window.scrollTo(0, 0); };
+  };
+  if (paused) return finish(true);
+  main.innerHTML = `<div id="rrask"></div>`; ghostAsk($("#rrask", main), finish); window.scrollTo(0, 0);
 }
 /* ============ your own texts (我的文章) ============
    Paste any text; it's split into parts of ~400 characters at paragraph/sentence breaks, up to ~10 parts
