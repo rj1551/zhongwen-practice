@@ -60,8 +60,8 @@ const FAKE = () => {
   await shot(page, "tts-bar.png");
   ok(await page.evaluate(() => { const e = $(".bk .ts.on"); return e && e.dataset.s === "3:0" && e.textContent === "他在河边慢慢地走着。"; }), "the sentence being read is highlighted");
   ok(await page.evaluate(() => window.__wl.held === 1), "the screen is kept on while it reads");
-  ok(await page.evaluate(() => navigator.audioSession.type === "playback" && !!TTS_KEEP && !TTS_KEEP.loop), "iPhone: in the tap, before speaking, the page's sound is put in playback mode and a very short silent sound is played (no loop)");
-  ok(/静音模式/.test(await page.textContent("body")), "iPhone, first time: a hint to turn off silent mode if there's no sound");
+  ok(await page.evaluate(() => navigator.audioSession.type === "auto"), "the page's sound mode is left alone (v99)");
+  ok(/静音模式/.test(await page.textContent("body")), "iPhone, first time: a hint that silent mode mutes read-aloud");
   ok(await page.evaluate(() => { const b = $("#ttsbar").getBoundingClientRect(); return b.bottom <= innerHeight + 1 && b.bottom > innerHeight - 140; }), "the player bar sits at the bottom of the screen");
   // the chain: sentences one after another, into the next paragraphs; the place follows
   await page.evaluate(() => { window.__dur = 15; speechSynthesis.__kill(); TTS.utt.onend(); });
@@ -72,7 +72,6 @@ const FAKE = () => {
   const pos = await page.evaluate(() => ({ pos: BK.pos, tp: TTS.p, mp: BK.meta.pos.p }));
   ok(pos.pos === pos.tp && pos.mp === pos.tp, "the place follows the voice (paragraph " + pos.tp + ")");
   ok(await page.evaluate(() => window.__wl.held === 0), "paused: the screen may turn off again");
-  ok(await page.evaluate(() => navigator.audioSession.type === "auto"), "paused: the sound mode goes back to what it was");
   ok(await page.evaluate(rd0 => JSON.stringify(BK.rd) === rd0 && !(BK.sit && BK.sit.c), rd0), "heard text isn't counted as read (no new characters, no book speed)");
   // pause holds; play picks up the same sentence
   const n0 = await page.evaluate(() => window.__said.length); await page.waitForTimeout(150);
