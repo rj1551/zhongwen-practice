@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-A5mlM6vvMPr74W4peQ9TnioFmXjaw4OEuX16mUG3370='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-/SYZ2JYsqPXnIgAIDjMGksHRFi99Qh18S84cWDB2MZk='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3424,7 +3424,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v97 · 11/23 20:55"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v98 · 11/23 21:12"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4362,29 +4362,35 @@ function ttsNoVoice() {
   document.body.append(pan);
   $("#ttsnvok", pan).onclick = () => pan.remove();
 }
-function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSound(true); ttsSpeak(); ttsBarDraw(); }
-// play with the silent switch on, the way songs do (v97). iPhones treat the voice like a game sound (muted on silent)
-// unless the page's sound is in "playback" mode: set that where the phone has the setting (navigator.audioSession,
-// iOS 17+), and also keep a silent sound looping while it reads (a playing sound puts the page in playback mode).
-// Side effect: like a song, it stops other apps' music while it reads.
+function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSound(true); ttsSpeak(); ttsBarDraw(); ttsHint(); }
+// play with the silent switch on, the way songs do (v98; v97's looping silent sound didn't help). On iPhones the
+// voice is muted on silent unless the page's sound is in "playback" mode. What others report working on a real
+// iPhone: inside the tap, before speaking, set navigator.audioSession.type = "playback" and play a very short silent
+// sound once. Only on iPhone / iPad. Side effect: like a song, it stops other apps' music while it reads.
 let TTS_KEEP = null, TTS_AS0 = null;
+const TTS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent || "") || (/Macintosh/.test(navigator.userAgent || "") && navigator.maxTouchPoints > 1);
 function ttsSound(on) {
+  if (!TTS_IOS) return;
   try {
     const as = navigator.audioSession;
     if (as) { if (on) { if (TTS_AS0 == null) TTS_AS0 = as.type || "auto"; as.type = "playback"; } else if (TTS_AS0 != null) { as.type = TTS_AS0; TTS_AS0 = null; } }
   } catch (e) {}
+  if (!on) return;
   try {
-    if (on) {
-      if (!TTS_KEEP) {
-        const n = 8000, b = new Uint8Array(44 + n), v = new DataView(b.buffer), w = (o, t) => [...t].forEach((c, i) => b[o + i] = c.charCodeAt(0));
-        w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-        v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, "data"); v.setUint32(40, n, true); b.fill(128, 44); // 1 s of 8-bit silence
-        TTS_KEEP = document.createElement("audio"); TTS_KEEP.loop = true; TTS_KEEP.hidden = true; TTS_KEEP.src = URL.createObjectURL(new Blob([b], { type: "audio/wav" })); document.body.append(TTS_KEEP);
-      }
-      if (AUD && !AUD.paused) AUD.pause(); // (a song from 听 left playing)
-      const p = TTS_KEEP.play(); if (p && p.catch) p.catch(() => {});
-    } else if (TTS_KEEP) TTS_KEEP.pause();
+    if (!TTS_KEEP) {
+      const n = 400, b = new Uint8Array(44 + n), v = new DataView(b.buffer), w = (o, t) => [...t].forEach((c, i) => b[o + i] = c.charCodeAt(0));
+      w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, "data"); v.setUint32(40, n, true); b.fill(128, 44); // 0.05 s of 8-bit silence
+      TTS_KEEP = document.createElement("audio"); TTS_KEEP.hidden = true; TTS_KEEP.src = URL.createObjectURL(new Blob([b], { type: "audio/wav" })); document.body.append(TTS_KEEP);
+    }
+    if (AUD && !AUD.paused) AUD.pause(); // (a song from 听 left playing)
+    TTS_KEEP.currentTime = 0; const p = TTS_KEEP.play(); if (p && p.catch) p.catch(() => {});
   } catch (e) { noteErr("read aloud sound", e); }
+}
+// the first time on an iPhone / iPad: where to look if there's no sound
+function ttsHint() {
+  if (!TTS_IOS) return; try { if (localStorage.getItem("zwlgf:ttshint")) return; localStorage.setItem("zwlgf:ttshint", "1"); } catch (e) { return; }
+  toast("听不到的话：关掉静音模式试试 · Can't hear it? Try turning silent mode off", 5000);
 }
 function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; try { speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsSound(false); ttsBarDraw(); }
 function ttsStop() {
