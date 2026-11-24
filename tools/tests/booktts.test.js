@@ -177,6 +177,14 @@ const FAKE = () => {
   await page.evaluate(() => { window.__voices = window.__voices.filter(v => !/^zh/.test(v.lang)); setView("read"); });
   await page.click("[data-bkgo]"); await page.waitForSelector("#bk"); await page.click("#bkaa");
   ok(/没找到中文语音/.test(await page.textContent("#aapop")), "no Chinese voice: Aa says how to add one");
+  await page.click("#bkaa");
+  const n1 = await page.evaluate(() => window.__said.length);
+  await page.click("#bktts"); await page.waitForSelector(".ttsnv", { timeout: 5000 });
+  ok(await page.evaluate(n1 => window.__said.length === n1 && !TTS && !$("#ttsbar"), n1) && /Windows/.test(await page.textContent(".ttsnv")) && /Mac/.test(await page.textContent(".ttsnv")), "no Chinese voice: 🔊 doesn't read with another language's voice; it says how to add a Chinese voice (Windows / Mac / iPhone)");
+  await page.click("#ttsnvok"); ok(!(await page.$(".ttsnv")), "好 closes the note");
+  // a voice list that arrives a moment late is waited for; zh_CN spelling counts
+  await page.evaluate(() => { window.__voices = [{ name: "Ting", lang: "zh_CN", voiceURI: "t2", localService: true }]; });
+  ok(await page.evaluate(() => ttsVoices().length === 1), "a voice given as zh_CN counts as Chinese");
   await browser.close();
   console.log(fails ? `${fails} FAILED` : "ALL PASSED"); process.exit(fails ? 1 : 0);
 })().catch(e => { console.log("FAIL", e); process.exit(1); });

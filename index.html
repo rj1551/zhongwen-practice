@@ -181,6 +181,7 @@ html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100
 .ttsrate{border-radius:14px;padding:0 10px;font-weight:700;font-size:15px;border:1px solid var(--line)}
 .ttsrp{position:fixed;left:0;right:0;bottom:0;z-index:22;background:var(--surface);border-top:1px solid var(--line);border-radius:18px 18px 0 0;box-shadow:0 -10px 30px rgba(0,0,0,.18);padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;gap:6px;animation:ttsup .18s ease-out}
 @keyframes ttsup{from{transform:translateY(40px);opacity:0}}
+.ttsnv{align-items:stretch;text-align:left;gap:8px;max-height:80vh;overflow-y:auto}
 .ttsrv{font-size:34px;font-weight:700;line-height:1.1}
 .ttsrw{position:relative;width:100%;max-width:460px}
 .ttsrc{position:absolute;left:50%;top:0;width:3px;height:30px;margin-left:-1.5px;background:var(--accent);border-radius:2px;z-index:1;pointer-events:none}
@@ -4299,7 +4300,7 @@ function ttsPref() { try { return Object.assign({ rate: 1, voice: "" }, JSON.par
 function setTtsPref(o) { try { localStorage.setItem("zwlgf:ttspref", JSON.stringify(Object.assign(ttsPref(), o))); } catch (e) {} }
 const ttsRate = () => { const r = +ttsPref().rate; return TTS_RATES.includes(r) ? r : 1; };
 const ttsRateLabel = r => r.toFixed(1) + "×";
-function ttsVoices() { try { return speechSynthesis.getVoices().filter(v => /^(zh|cmn|yue)\b/i.test(v.lang || "")); } catch (e) { return []; } }
+function ttsVoices() { try { return speechSynthesis.getVoices().filter(v => /^(zh|cmn|yue)([-_]|$)/i.test(v.lang || "") || (!v.lang && /chinese|mandarin|中文|普通话|國語|国语/i.test(v.name || ""))); } catch (e) { return []; } } // (zh-CN, zh_CN, cmn…; a few systems give only a name)
 function ttsVoice() {
   const vs = ttsVoices(), want = ttsPref().voice, cn = v => /^(zh|cmn)[-_](CN|Hans)/i.test(v.lang);
   return vs.find(v => v.voiceURI === want) || vs.find(v => cn(v) && v.localService) || vs.find(cn) || vs.find(v => !/HK|yue/i.test(v.lang)) || vs[0] || null;
@@ -4339,9 +4340,26 @@ async function ttsWake(on) {
 }
 function ttsStart() {
   if (!TTS_OK || !BK) return;
-  TTS = { book: BK.id, p: BK.pos, s: 0, playing: false, gen: 0, pend: 0, since: null, utt: null };
-  if (!ttsVoices().length) toast("没找到中文语音，用设备默认的 · No Chinese voice found; trying the device's default", 3000);
-  render(); ttsPlay();
+  if (ttsVoices().length) return ttsBegin();
+  // no Chinese voice (yet: some browsers load their list a moment later). Without one, browsers read with an English
+  // voice that skips the Chinese and says only the numbers — so don't start; say how to add one
+  const id = BK.id; let done = false;
+  const go = () => { if (done) return; done = true; try { speechSynthesis.removeEventListener("voiceschanged", go); } catch (e) {} if (!BK || BK.id !== id || TTS) return; if (ttsVoices().length) ttsBegin(); else ttsNoVoice(); };
+  try { speechSynthesis.addEventListener("voiceschanged", go); } catch (e) {}
+  setTimeout(go, 1500);
+}
+function ttsBegin() { TTS = { book: BK.id, p: BK.pos, s: 0, playing: false, gen: 0, pend: 0, since: null, utt: null }; render(); ttsPlay(); }
+function ttsNoVoice() {
+  const o = $("#ttsrp"); if (o) o.remove();
+  const pan = document.createElement("div"); pan.id = "ttsrp"; pan.className = "ttsrp ttsnv";
+  pan.innerHTML = `<b>这个浏览器没有中文语音，没法朗读 · This browser has no Chinese voice, so it can't read aloud</b>
+    <span class="small">加一个中文语音，然后把浏览器关掉重开：· Add a Chinese voice, then close and reopen the browser:</span>
+    <span class="small"><b>Windows</b>：设置 → 时间和语言 → 语言和区域 → 添加「中文(简体)」，勾上「文本到语音转换」· Settings → Time &amp; language → Language &amp; region → add Chinese (Simplified) with Text-to-speech. 或者用 Edge：它自带联网的中文语音 · Or use Edge, which has online Chinese voices.</span>
+    <span class="small"><b>Mac</b>：系统设置 → 辅助功能 → 朗读内容 → 系统声音 → 管理声音… → 中文 · System Settings → Accessibility → Spoken Content → System voice → Manage Voices… → Chinese.</span>
+    <span class="small"><b>iPhone</b>：设置 → 辅助功能 → 朗读内容 → 声音 → 中文 · Settings → Accessibility → Spoken Content → Voices → Chinese.</span>
+    <button class="btn" id="ttsnvok" style="min-height:36px;padding:6px 18px;align-self:center">好 OK</button>`;
+  document.body.append(pan);
+  $("#ttsnvok", pan).onclick = () => pan.remove();
 }
 function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSpeak(); ttsBarDraw(); }
 function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; try { speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
@@ -4465,7 +4483,7 @@ function ttsRatePanel() {
   $("#ttsrok", pan).onclick = () => { settle(); pan.remove(); };
   go(TTS_RATES.indexOf(cur), false); show();
 }
-document.addEventListener("click", e => { const p = $("#ttsrp"); if (p && e.target.isConnected && !p.contains(e.target) && !e.target.closest("#ttsrate")) p.remove(); });
+document.addEventListener("click", e => { const p = $("#ttsrp"); if (p && e.target.isConnected && !p.contains(e.target) && !e.target.closest("#ttsrate, #bktts")) p.remove(); });
 // 🔒: a cover over everything that ignores touches; hold its button to take it away
 function ttsLock(on) {
   const old = $("#ttslk"); if (old) old.remove(); if (!on) return;
