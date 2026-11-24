@@ -174,6 +174,25 @@ html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100
 .bkres button{flex-direction:column;gap:2px} .bktoc button.on{border-color:var(--accent);background:var(--accent-soft)}
 .bkres mark{background:var(--gold-soft);color:inherit;border-radius:3px}
 .btn.danger{border-color:var(--bad);color:var(--bad)}
+.bk .ts.on{background:color-mix(in srgb, var(--accent) 16%, transparent);border-radius:4px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.ttsbar{position:sticky;bottom:0;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:4px;margin:6px -6px 0;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 -4px 16px rgba(0,0,0,.08)}
+.ttsb{min-width:42px;min-height:42px;border:0;background:none;color:var(--ink);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;padding:0}
+.ttsb:active{background:var(--accent-soft)} .ttsplay{min-width:54px;min-height:54px;background:var(--accent);color:var(--accent-ink)} .ttsplay:active{background:var(--accent)}
+.ttsrate{border-radius:14px;padding:0 10px;font-weight:700;font-size:15px;border:1px solid var(--line)}
+.ttsrp{position:fixed;left:0;right:0;bottom:0;z-index:22;background:var(--surface);border-top:1px solid var(--line);border-radius:18px 18px 0 0;box-shadow:0 -10px 30px rgba(0,0,0,.18);padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;gap:6px;animation:ttsup .18s ease-out}
+@keyframes ttsup{from{transform:translateY(40px);opacity:0}}
+.ttsrv{font-size:34px;font-weight:700;line-height:1.1}
+.ttsrw{position:relative;width:100%;max-width:460px}
+.ttsrc{position:absolute;left:50%;top:0;width:3px;height:30px;margin-left:-1.5px;background:var(--accent);border-radius:2px;z-index:1;pointer-events:none}
+.ttsr{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:0 0 4px;outline:none;-webkit-mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent)}
+.ttsr::-webkit-scrollbar{display:none}
+.ttst{flex:0 0 40px;scroll-snap-align:center;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
+.ttst i{display:block;width:2px;height:16px;margin-top:7px;background:var(--muted);border-radius:1px} .ttst.big i{height:24px;margin-top:3px;width:2.5px}
+.ttst b{font-size:11px;font-weight:600;color:var(--muted);height:14px;white-space:nowrap} .ttst.on b{color:var(--ink)}
+.ttsvsel{max-width:62%;font-size:16px;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.ttslk{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.06);touch-action:none;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+.ttsunl{position:relative;overflow:hidden;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:22px;padding:10px 18px;font-size:14px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none}
+.ttsunl i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent-soft)} .ttsunl.hold i{width:100%;transition:width 1.2s linear} .ttsunl span{position:relative}
 .ghp{border-radius:4px;transition:background-color .15s,box-shadow .15s} .ghp.gh{background:color-mix(in srgb, var(--accent) 20%, transparent);box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent)}
 html.kflock,html.kflock body{overflow:hidden;overscroll-behavior:none;height:100%}
 .kf{touch-action:none;overscroll-behavior:none}
@@ -1254,7 +1273,7 @@ function pushRecent(k, v) { (S.recent[k] = S.recent[k] || []).push(v); }
    listening isn't counted. Kept ~2 years. */
 const LOG_DAYS = 800;
 function devId() { try { let d = localStorage.getItem("zwlgf:dev"); if (!d) { d = "d" + Math.random().toString(36).slice(2, 8); localStorage.setItem("zwlgf:dev", d); } return d; } catch (e) { return "d0"; } }
-const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0) + (v.kt || 0) + (v.bk || 0); } return { n, ok, sec }; };
+const byTotal = d => { let n = 0, ok = 0, sec = 0; for (const v of Object.values(d.by || {})) { n += v.n || 0; ok += v.ok || 0; sec += (v.due || 0) + (v.extra || 0) + (v.rd || 0) + (v.fw || 0) + (v.kt || 0) + (v.bk || 0) + (v.lb || 0); } return { n, ok, sec }; };
 function logTotals(d) { const b = byTotal(d), o = d.old || { n: 0, ok: 0, sec: 0 }; d.n = o.n + b.n; d.ok = o.ok + b.ok; d.sec = o.sec + b.sec; return d; }
 function logDay(sec, ok, kind = "due") {
   const k = dayKey(), d = S.log[k] = S.log[k] || { n: 0, ok: 0, sec: 0 };
@@ -1262,10 +1281,10 @@ function logDay(sec, ok, kind = "due") {
   const v = d.by[devId()] = d.by[devId()] || { n: 0, ok: 0, due: 0, extra: 0, rd: 0 };
   // fw = free writing (v73): on top of today's set, so it isn't card time and doesn't move the new-item allowance
   // kt = the lyric feed (v74, 刷歌词): KTV practice, not card time either
-  // bk = reading a book (v88): not card time either
-  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "ktv" ? "kt" : kind === "book" ? "bk" : kind === "extra" ? "extra" : "due";
-  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" || kind === "fw" ? 900 : kind === "book" ? 3600 : 240));
-  if (kind !== "read" && kind !== "fw" && kind !== "ktv" && kind !== "book") { v.n++; v.ok += ok ? 1 : 0; }
+  // bk = reading a book (v88): not card time either; lb = listening to a book read aloud (v95, 听书)
+  const f = kind === "read" ? "rd" : kind === "fw" ? "fw" : kind === "ktv" ? "kt" : kind === "book" ? "bk" : kind === "listen" ? "lb" : kind === "extra" ? "extra" : "due";
+  v[f] = Math.round((v[f] || 0) + Math.min(sec, kind === "read" || kind === "fw" ? 900 : kind === "book" || kind === "listen" ? 3600 : 240));
+  if (kind !== "read" && kind !== "fw" && kind !== "ktv" && kind !== "book" && kind !== "listen") { v.n++; v.ok += ok ? 1 : 0; }
   logTotals(d);
 }
 // per-device flags on today's log (synced, merged by OR): done = today's set is done (✓); cd = today's cards are done
@@ -1276,17 +1295,17 @@ function mergeLogDay(x, y) {
   if (!x) return y; if (!y) return x;
   if (!x.by && !y.by) return { n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), sec: Math.max(x.sec, y.sec) };
   const m = { by: {} };
-  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, kt: Math.max(w.kt || 0, v.kt || 0) || undefined, bk: Math.max(w.bk || 0, v.bk || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
+  for (const src of [x, y]) for (const [dv, v] of Object.entries(src.by || {})) { const w = m.by[dv]; m.by[dv] = !w ? Object.assign({}, v) : { n: Math.max(w.n || 0, v.n || 0), ok: Math.max(w.ok || 0, v.ok || 0), due: Math.max(w.due || 0, v.due || 0), extra: Math.max(w.extra || 0, v.extra || 0), rd: Math.max(w.rd || 0, v.rd || 0), fw: Math.max(w.fw || 0, v.fw || 0) || undefined, kt: Math.max(w.kt || 0, v.kt || 0) || undefined, bk: Math.max(w.bk || 0, v.bk || 0) || undefined, lb: Math.max(w.lb || 0, v.lb || 0) || undefined, done: (w.done || v.done) ? 1 : undefined, cd: (w.cd || v.cd) ? 1 : undefined, nr: (w.nr || v.nr) ? 1 : undefined }; }
   // the part from before the split: a day from older code (no by) is its totals minus what's already split
   const b = byTotal(m), legacy = z => z.by ? (z.old || { n: 0, ok: 0, sec: 0 }) : { n: Math.max(0, z.n - b.n), ok: Math.max(0, z.ok - b.ok), sec: Math.max(0, z.sec - b.sec) };
   const lx = legacy(x), ly = legacy(y); m.old = { n: Math.max(lx.n, ly.n), ok: Math.max(lx.ok, ly.ok), sec: Math.max(lx.sec, ly.sec) };
   return logTotals(m);
 }
 function daySplit(d) {
-  const r = { due: 0, extra: 0, rd: 0, fw: 0, kt: 0, bk: 0, old: 0, done: false, cd: false, nr: false };
+  const r = { due: 0, extra: 0, rd: 0, fw: 0, kt: 0, bk: 0, lb: 0, old: 0, done: false, cd: false, nr: false };
   if (!d) return r;
   if (!d.by) { r.old = d.sec || 0; return r; }
-  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; r.fw += v.fw || 0; r.kt += v.kt || 0; r.bk += v.bk || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
+  for (const v of Object.values(d.by)) { r.due += v.due || 0; r.extra += v.extra || 0; r.rd += v.rd || 0; r.fw += v.fw || 0; r.kt += v.kt || 0; r.bk += v.bk || 0; r.lb += v.lb || 0; if (v.done) r.done = true; if (v.cd) r.cd = true; if (v.nr) r.nr = true; }
   r.old = (d.old || {}).sec || 0; return r;
 }
 const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时 ${m % 60 ? (m % 60) + " 分" : ""}`.trim(); };
@@ -1299,27 +1318,27 @@ function timeCardHtml() {
   if (TRANGE === "7" || TRANGE === "30") { const n = +TRANGE; for (let i = n - 1; i >= 0; i--) { const t = now() - i * DAY, dt = new Date(dayKey(t) + "T12:00"); add(n === 7 ? "日一二三四五六"[dt.getDay()] : (i % 5 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : ""), [dayKey(t)], true); } }
   else if (TRANGE === "12w") { const m0 = new Date(midnight(now())); const back = (m0.getDay() + 6) % 7; const mon = midnight(now()) - back * DAY; for (let w = 11; w >= 0; w--) { const s0 = mon - w * 7 * DAY, keys = []; for (let i = 0; i < 7; i++) keys.push(dayKey(s0 + i * DAY + 3 * 3600e3)); const dt = new Date(s0); add(w % 2 === 0 ? `${dt.getMonth() + 1}/${dt.getDate()}` : "", keys); } }
   else { const ks = Object.keys(S.log || {}).sort(), first = ks.length ? new Date(ks[0] + "T12:00") : new Date(); const cur = new Date(dayKey() + "T12:00"); let y = first.getFullYear(), mo = first.getMonth(); const months = []; while (y < cur.getFullYear() || (y === cur.getFullYear() && mo <= cur.getMonth())) { months.push([y, mo]); mo++; if (mo > 11) { mo = 0; y++; } } months.slice(-24).forEach(([y, mo]) => { const pre = `${y}-${String(mo + 1).padStart(2, "0")}`; add(`${mo + 1}月`, ks.filter(k => k.startsWith(pre))); }); }
-  const F = ["due", "extra", "fw", "rd", "bk", "kt", "old"], sum = o => F.reduce((a, f) => a + (o[f] || 0), 0);
-  let T = { due: 0, extra: 0, fw: 0, rd: 0, bk: 0, kt: 0, old: 0 }, days = 0, doneDays = 0;
-  B.forEach(b => { b.s = { due: 0, extra: 0, fw: 0, rd: 0, bk: 0, kt: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of F) b.s[f] += sp[f]; if (sum(sp) > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = sum(b.s); for (const f in T) T[f] += b.s[f]; });
+  const F = ["due", "extra", "fw", "rd", "bk", "lb", "kt", "old"], sum = o => F.reduce((a, f) => a + (o[f] || 0), 0);
+  let T = { due: 0, extra: 0, fw: 0, rd: 0, bk: 0, lb: 0, kt: 0, old: 0 }, days = 0, doneDays = 0;
+  B.forEach(b => { b.s = { due: 0, extra: 0, fw: 0, rd: 0, bk: 0, lb: 0, kt: 0, old: 0 }; b.done = false; for (const k of b.keys) { const sp = daySplit(S.log[k]); for (const f of F) b.s[f] += sp[f]; if (sum(sp) > 60) days++; if (sp.done) { b.done = true; doneDays++; } } b.tot = sum(b.s); for (const f in T) T[f] += b.s[f]; });
   const max = Math.max(60, ...B.map(b => b.tot)), all = sum(T);
   const seg = (v, c) => v ? `<i style="height:${v / max * 100}%;background:${c}"></i>` : "";
-  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", fw: "var(--plum)", kt: "var(--gold)", bk: "color-mix(in srgb, var(--good) 50%, var(--surface))", old: "var(--line)" };
+  const C = { due: "var(--accent)", extra: "color-mix(in srgb, var(--accent) 45%, var(--surface))", rd: "var(--good)", fw: "var(--plum)", kt: "var(--gold)", bk: "color-mix(in srgb, var(--good) 50%, var(--surface))", lb: "color-mix(in srgb, var(--plum) 45%, var(--surface))", old: "var(--line)" };
   const today = daySplit(S.log[dayKey()]);
   if (TSEL == null || TSEL >= B.length) TSEL = B.length - 1;
   const sb = B[TSEL], dl = sb.day ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 周${"日一二三四五六"[t.getDay()]}`; })() : TRANGE === "12w" ? (() => { const t = new Date(sb.keys[0] + "T12:00"); return `${t.getMonth() + 1}/${t.getDate()} 那周 week of`; })() : sb.lab;
-  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.fw ? ` · 写作 ${fmtMinEn(sb.s.fw)}` : ""}${sb.s.bk ? ` · 书 Books ${fmtMinEn(sb.s.bk)}` : ""}${sb.s.kt ? ` · 歌 KTV ${fmtMinEn(sb.s.kt)}` : ""}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
+  const detail = `<div class="tdet small"><b>${dl}</b>：${sb.tot ? `<b>${fmtMinEn(sb.tot)}</b> · 该做的 ${fmtMinEn(sb.s.due)}${sb.day && sb.done ? " ✓" : ""} · 额外 ${fmtMinEn(sb.s.extra)} · 阅读 ${fmtMinEn(sb.s.rd)}${sb.s.fw ? ` · 写作 ${fmtMinEn(sb.s.fw)}` : ""}${sb.s.bk ? ` · 书 Books ${fmtMinEn(sb.s.bk)}` : ""}${sb.s.lb ? ` · 听书 Listening to books ${fmtMinEn(sb.s.lb)}` : ""}${sb.s.kt ? ` · 歌 KTV ${fmtMinEn(sb.s.kt)}` : ""}${sb.s.old ? ` · 以前 earlier ${fmtMinEn(sb.s.old)}` : ""}` : "没练 nothing logged"}</div>`;
   return `<span class="label">时间 · Time spent</span>
     <div class="row" style="gap:6px">${TRANGES.map(([k, l]) => `<button class="tagc ${TRANGE === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div>
-    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.kt, C.kt)}${seg(b.s.bk, C.bk)}${seg(b.s.rd, C.rd)}${seg(b.s.fw, C.fw)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
+    <div class="tbars ${B.length > 12 ? "dense" : ""}">${B.map((b, i) => `<div class="tb ${i === TSEL ? "sel" : ""}" data-tb="${i}"><div class="tcol">${seg(b.s.old, C.old)}${seg(b.s.kt, C.kt)}${seg(b.s.lb, C.lb)}${seg(b.s.bk, C.bk)}${seg(b.s.rd, C.rd)}${seg(b.s.fw, C.fw)}${seg(b.s.extra, C.extra)}${seg(b.s.due, C.due)}</div><span class="tv">${b.tot >= 30 && B.length <= 12 ? Math.round(b.tot / 60) : ""}${b.day && b.done && B.length <= 7 ? "<br>✓" : ""}</span><span class="tl">${b.lab}</span></div>`).join("")}</div>
     ${detail}
-    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.fw}"></i>写 Writing</span><span><i style="background:${C.rd}"></i>阅读 Reading</span><span><i style="background:${C.bk}"></i>书 Books</span><span><i style="background:${C.kt}"></i>歌 KTV</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
+    <div class="tkey small"><span><i style="background:${C.due}"></i>该做的 Today's set</span><span><i style="background:${C.extra}"></i>额外 Extra</span><span><i style="background:${C.fw}"></i>写 Writing</span><span><i style="background:${C.rd}"></i>阅读 Reading</span><span><i style="background:${C.bk}"></i>书 Books</span><span><i style="background:${C.lb}"></i>听书 Listening to books</span><span><i style="background:${C.kt}"></i>歌 KTV</span>${T.old ? `<span><i style="background:${C.old}"></i>以前（没分类）Earlier, not split</span>` : ""}</div>
     <div class="stack small" style="gap:4px">
       <span><b>这段时间 In this period: ${fmtMin(all)}</b> · ${fmtMinEn(all)}${days ? ` · 练了 ${days} 天 on ${days} day${days > 1 ? "s" : ""} (avg ${fmtMinEn(all / days)})` : ""}</span>
       <span>练习 Exercises <b>${fmtMinEn(T.due + T.extra)}</b> = 该做的 today's set ${fmtMinEn(T.due)} + 额外 extra ${fmtMinEn(T.extra)}${doneDays && TRANGE !== "all" ? ` · 做完 set done on ${doneDays} day${doneDays > 1 ? "s" : ""}` : ""}</span>
-      <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b> · 书 Books <b>${fmtMinEn(T.bk)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
+      <span>阅读 Reading <b>${fmtMinEn(T.rd)}</b> · 书 Books <b>${fmtMinEn(T.bk)}</b> · 听书 Listening to books <b>${fmtMinEn(T.lb)}</b>${T.old ? ` · 以前没分类 earlier, not split ${fmtMinEn(T.old)}` : ""}</span>
       <span>写作 Writing <b>${fmtMinEn(T.fw)}</b> · 歌 KTV (刷歌词 lyric feed) <b>${fmtMinEn(T.kt)}</b></span>
-      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.fw ? ` · 写作 ${fmtMinEn(today.fw)}` : ""}${today.bk ? ` · 书 ${fmtMinEn(today.bk)}` : ""}${today.kt ? ` · 歌 ${fmtMinEn(today.kt)}` : ""}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 其他听力不算在内 Other listening isn't counted.</span></div>`;
+      <span class="muted">今天 Today: 该做的 ${fmtMinEn(today.due)}${today.done ? " ✓ 做完 done" : ""} · 额外 ${fmtMinEn(today.extra)} · 阅读 ${fmtMinEn(today.rd)}${today.fw ? ` · 写作 ${fmtMinEn(today.fw)}` : ""}${today.bk ? ` · 书 ${fmtMinEn(today.bk)}` : ""}${today.lb ? ` · 听书 ${fmtMinEn(today.lb)}` : ""}${today.kt ? ` · 歌 ${fmtMinEn(today.kt)}` : ""}${today.old ? ` · ${fmtMinEn(today.old)} earlier` : ""}. 其他听力不算在内 Other listening isn't counted.</span></div>`;
 }
 function bindTimeCard(scope) {
   const redraw = () => { $("#timecard").innerHTML = timeCardHtml(); bindTimeCard($("#timecard")); };
@@ -3978,6 +3997,7 @@ function bkSit() { return BK.sit || (BK.sit = { t: now(), s: 0, c: 0, k: new Set
 // the place moved: if forward through new text at a reading pace, that's reading (time for the Time card, and for
 // speed when it's first-time reading); jumps (目录, search, ↩) and skimming don't count
 function bkTrack(p, jump) {
+  if (ttsOn()) { BK.lastAt = { p, t: now() }; return; } // 听书 (v95): heard text isn't read text, and its time is 听书 time
   const t = now(), L = BK.lastAt; BK.lastAt = { p, t };
   if (jump || !L || document.hidden) return;
   const dt = (t - L.t) / 1000; if (p <= L.p || dt <= 0) { if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; return; }
@@ -3992,8 +4012,10 @@ function bkTrack(p, jump) {
 // into progress: the day's book time, read ranges, this sitting, the place (on leaving, app put away, every 2 min)
 function bkFlush(final) {
   if (!BK) return;
-  if (final && BK.lastAt && !document.hidden) { const dt = (now() - BK.lastAt.t) / 1000; if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; BK.lastAt = null; }
-  const r = bookRec(BK.id); let changed = false;
+  let changed0 = false;
+  ttsTick(); if (TTS && TTS.pend >= 1) { logDay(TTS.pend, true, "listen"); TTS.pend = 0; changed0 = true; }
+  if (final && BK.lastAt && !document.hidden && !ttsOn()) { const dt = (now() - BK.lastAt.t) / 1000; if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; BK.lastAt = null; }
+  const r = bookRec(BK.id); let changed = changed0;
   if (BK.pend >= 1) { logDay(BK.pend, true, "book"); BK.pend = 0; changed = true; }
   if (r) {
     const rd = rgUnion(r.rd, BK.rd);
@@ -4078,7 +4100,7 @@ async function bookOpen(id) {
   const chunks = [0]; let acc = 0; // fixed chunks of ~5,000 characters, starting at chapters where possible (pages are laid out per chunk)
   tx.paras.forEach((x, i) => { if (i && ((starts.has(i) && acc >= 1000) || acc >= BOOK_CHUNK)) { chunks.push(i); acc = 0; } acc += x.length; });
   BK = { id, meta, paras: tx.paras, simp: tx.simp, offs, heads, chunks, toks: [], looked: new Set(), p: { id: "book:" + id, gl: {}, trad: meta.trad, title: meta.title }, pos: Math.min(meta.pos ? meta.pos.p : 0, tx.paras.length - 1), back: null, hit: null, find: null, rd: ((bookRec(id) || {}).rd || []).slice(), sit: null, lastAt: null, pend: 0 };
-  if (!CED) loadCedict().then(() => { if (BK && BK.id === id) { BK.toks = []; if (VIEW === "read" && READ && READ.book === id && !READ.sub) render(); } }).catch(() => {});
+  if (!CED) loadCedict().then(() => { if (BK && BK.id === id) { BK.toks = []; BK.sents = []; if (VIEW === "read" && READ && READ.book === id && !READ.sub) render(); } }).catch(() => {});
 }
 const bkOrig = () => !!(BK.meta.trad && BK.meta.orig && BK.simp);
 const bkSimp = i => BK.simp ? BK.simp[i] : BK.paras[i];
@@ -4087,12 +4109,16 @@ const bkChunkOf = p => { let c = 0; for (let k = 0; k < BK.chunks.length; k++) i
 function bkParaHtml(i) {
   const toks = bkToks(i), sa = Array.from(bkSimp(i)), oa = bkOrig() ? Array.from(BK.paras[i]) : null, useO = oa && oa.length === sa.length;
   const hit = BK.hit && BK.hit.p === i ? BK.hit : null;
+  const sents = bkSents(i); let si = 0; // sentences for 听书 (v95): each in a .ts span, highlighted while it's read
   let off = 0, h = "";
   toks.forEach((t, ti) => {
     const n = Array.from(t).length, show = useO ? oa.slice(off, off + n).join("") : t, a = off; off += n;
-    if (!/\S/.test(t) || Array.from(t).every(isPunct)) { h += esc(show); return; }
+    const se = sents[si]; if (se && se[0] === ti) h += `<span class="ts${TTS && TTS.p === i && TTS.s === si ? " on" : ""}" data-s="${i}:${si}">`;
+    const close = () => { if (se && se[1] === ti + 1) { h += "</span>"; si++; } };
+    if (!/\S/.test(t) || Array.from(t).every(isPunct)) { h += esc(show); close(); return; }
     const k = i + ":" + ti, isHit = hit && a < hit.a + hit.n && a + n > hit.a;
     h += `<span class="tk${BK.looked.has(k) ? " looked" : ""}${isHit ? " hit" : ""}" data-k="${k}">${esc(show)}</span>`;
+    close();
   });
   return `<p class="${BK.heads.has(i) ? "bkh" : ""}" data-pi="${i}">${h}</p>`;
 }
@@ -4100,8 +4126,10 @@ function bkRange(a, b) { const s = BK.chunks[a], e = b + 1 < BK.chunks.length ? 
 let BK_SAVE_T = null;
 function bkSetPos(p, jump) {
   if (!BK || p == null) return;
+  if (ttsOn() && !jump) return; // while the player is open the place follows the voice, not the scrolling or page turns
   bkTrack(p, jump);
   BK.pos = p;
+  if (jump === true && ttsOn()) ttsGoto(p); // 目录, search, ↩: the voice goes there too
   const m = BK.meta; m.pos = { p, c: BK.offs[p], t: now() }; m.lastT = now();
   clearTimeout(BK_SAVE_T); BK_SAVE_T = setTimeout(bkSaveNow, 800);
   if (now() - (BK.synced || 0) > 2 * MIN) { BK.synced = now(); setTimeout(() => { if (BK) bkFlush(false); }, 900); }
@@ -4110,14 +4138,14 @@ function bkSaveNow() { clearTimeout(BK_SAVE_T); BK_SAVE_T = null; if (BK) bookMe
 document.addEventListener("visibilitychange", () => {
   if (!BK) return;
   if (!document.hidden) { if (VIEW === "read" && READ && READ.book === BK.id && !READ.sub) BK.lastAt = { p: BK.pos, t: now() }; return; } // back: the clock starts again here
-  if (BK.lastAt) { const dt = (now() - BK.lastAt.t) / 1000; if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; BK.lastAt = null; }
+  if (BK.lastAt && !ttsOn()) { const dt = (now() - BK.lastAt.t) / 1000; if (dt > 0 && dt <= BOOK_MAXGAP) BK.pend = (BK.pend || 0) + dt; } BK.lastAt = null;
   if (BK_SAVE_T) bkSaveNow(); bkFlush(false);
 });
 function bkJump(p, hit) {
   if (Math.abs(p - BK.pos) > 2) BK.back = BK.pos; // ↩ 回到刚才 after a jump
   BK.hit = hit || null; bkSetPos(p, true); READ.sub = null; render();
 }
-function bkLeave() { closeSheet(); bkSaveNow(); bkFlush(true); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
+function bkLeave() { closeSheet(); ttsStop(); bkSaveNow(); bkFlush(true); BK.find = null; BK.hit = null; READ = null; render(); window.scrollTo(0, 0); }
 
 // ---- the reader ----
 function renderBook(main) {
@@ -4136,11 +4164,14 @@ function renderBook(main) {
   if (!BK.lastAt || BK.lastAt.p !== BK.pos) BK.lastAt = { p: BK.pos, t: now() };
   const pref = bookPref(), page = pref.mode === "page", m = BK.meta, f = BK.find;
   main.innerHTML = `<div class="bkbar" id="bkbar"><button class="btn ghost" id="bkback" style="min-height:38px;padding:6px 10px">←</button><span class="bkt small muted zh">${esc(m.title)}</span>
-      <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button><button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
+      <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button>${TTS_OK ? `<button class="tagc${TTS ? " on" : ""}" id="bktts" aria-label="听书 Read aloud">🔊</button>` : ""}<button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
     ${f && f.res.length ? `<div class="bkfb" id="bkfb"><span class="small zh">「${esc(f.q)}」</span><span class="row" style="gap:6px;flex-wrap:nowrap"><button class="tagc" id="bkfp" aria-label="上一个 Previous">‹</button><span class="small muted" id="bkfn">${f.i + 1}/${f.res.length}${f.more ? "+" : ""}</span><button class="tagc" id="bkfx" aria-label="下一个 Next">›</button><button class="tagc" id="bkfc" aria-label="关闭搜索 Close search">✕</button></span></div>` : ""}
     <div class="bk ${page ? "page" : "scroll"}" id="bk" style="font-size:${BOOK_FS[pref.fs] || 21}px">${page ? `<div class="bkpw" id="bkpw"><div class="bkpi" id="bkpi"></div></div>` : `<div id="bkc"></div>`}</div>
-    ${page ? `<div class="bkpb"><button id="bkprev" aria-label="上一页 Previous page">‹</button><span class="small muted" id="bkpct"></span><button id="bknext" aria-label="下一页 Next page">›</button></div>` : ""}`;
+    ${page ? `<div class="bkpb"><button id="bkprev" aria-label="上一页 Previous page">‹</button><span class="small muted" id="bkpct"></span><button id="bknext" aria-label="下一页 Next page">›</button></div>` : ""}
+    ${TTS ? ttsBarHtml() : ""}`;
   $("#bkback", main).onclick = bkLeave;
+  const tb = $("#bktts", main); if (tb) tb.onclick = () => { closeSheet(); if (TTS) ttsStop(); else ttsStart(); };
+  if (TTS) ttsBind(main);
   $("#bktoc", main).onclick = () => { closeSheet(); READ.sub = "toc"; render(); };
   $("#bkfind", main).onclick = () => { closeSheet(); READ.sub = "find"; render(); };
   $("#bkaa", main).onclick = e => { e.stopPropagation(); bookAa(e.currentTarget); };
@@ -4152,6 +4183,7 @@ function renderBook(main) {
   }
   $("#bk", main).addEventListener("click", e => {
     const s = e.target.closest(".tk"); if (!s) return;
+    if (TTS && TTS.playing) ttsPause(); // looking a word up while it reads: it waits
     const [pi, ti] = s.dataset.k.split(":").map(Number);
     BK.looked.add(s.dataset.k); s.classList.add("looked");
     bkSit().k.add(((BK.toks[pi] || [])[ti] || "").replace(/\//g, ""));
@@ -4201,7 +4233,7 @@ function bkPageInit(main) {
 function bkPageLayout(c, at) { // at: {p} (the page holding paragraph p, or the search hit), {last: true}, or {pg}
   const pw = $("#bkpw"), pi = $("#bkpi"); if (!pw || !pi) return;
   BK.pc = c;
-  const bar = $(".bkpb"), H = Math.max(200, innerHeight - pw.getBoundingClientRect().top - (bar ? bar.offsetHeight : 44) - 12);
+  const bar = $(".bkpb"), tsb = $("#ttsbar"), H = Math.max(200, innerHeight - pw.getBoundingClientRect().top - (bar ? bar.offsetHeight : 44) - (tsb ? tsb.offsetHeight + 6 : 0) - 12);
   pw.style.height = H + "px";
   const W = pw.clientWidth;
   pi.style.transition = "none"; pi.style.transform = "none";
@@ -4254,6 +4286,211 @@ document.addEventListener("keydown", e => {
   if (["ArrowRight", "PageDown", " "].includes(e.key)) { e.preventDefault(); bkTurn(1); }
   else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); bkTurn(-1); }
 });
+// ---- 听书 · read aloud (v95) ----
+// The device's own voice reads the book from your place, a sentence at a time (each a .ts span, highlighted); the
+// page follows along if you were following (scrolled away or paged on, it leaves you be). The place follows the
+// voice. Heard text doesn't count as read (no book speed, no "new characters"); the time is 听书 (log field lb).
+// The screen is kept on while it reads (Screen Wake Lock, where the device has it); 🔒 ignores touches until held.
+const TTS_OK = typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance === "function";
+const TTS_RATES = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5];
+let TTS = null, TTS_WL = null, TTS_WLWARN = false, TTS_AADRAW = null, TTS_RT = null;
+const ttsOn = () => !!(TTS && BK && TTS.book === BK.id);
+function ttsPref() { try { return Object.assign({ rate: 1, voice: "" }, JSON.parse(localStorage.getItem("zwlgf:ttspref") || "{}")); } catch (e) { return { rate: 1, voice: "" }; } }
+function setTtsPref(o) { try { localStorage.setItem("zwlgf:ttspref", JSON.stringify(Object.assign(ttsPref(), o))); } catch (e) {} }
+const ttsRate = () => { const r = +ttsPref().rate; return TTS_RATES.includes(r) ? r : 1; };
+const ttsRateLabel = r => r.toFixed(1) + "×";
+function ttsVoices() { try { return speechSynthesis.getVoices().filter(v => /^(zh|cmn|yue)\b/i.test(v.lang || "")); } catch (e) { return []; } }
+function ttsVoice() {
+  const vs = ttsVoices(), want = ttsPref().voice, cn = v => /^(zh|cmn)[-_](CN|Hans)/i.test(v.lang);
+  return vs.find(v => v.voiceURI === want) || vs.find(v => cn(v) && v.localService) || vs.find(cn) || vs.find(v => !/HK|yue/i.test(v.lang)) || vs[0] || null;
+}
+if (TTS_OK) try { speechSynthesis.addEventListener("voiceschanged", () => { if (TTS_AADRAW) TTS_AADRAW(); }); } catch (e) {}
+function ttsVoiceRow() {
+  const vs = ttsVoices(), cur = ttsVoice();
+  if (!vs.length) return `<div class="aarow" style="flex-direction:column;align-items:flex-start;gap:2px"><span>听书声音 Voice</span><span class="small muted">这台设备没找到中文语音。iPhone：设置 → 辅助功能 → 朗读内容 → 声音 → 中文；电脑：系统设置里的「语音」添加中文。· No Chinese voice found on this device: add one in the system's speech settings.</span></div>`;
+  return `<div class="aarow"><span>听书声音 Voice</span><select id="ttsvsel" class="ttsvsel">${vs.map(v => `<option value="${esc(v.voiceURI)}" ${cur && v.voiceURI === cur.voiceURI ? "selected" : ""}>${esc(v.name)} · ${esc(v.lang)}${v.localService === false ? " · 联网 online" : ""}</option>`).join("")}</select></div>`;
+}
+// a paragraph's sentences as token ranges [from, to): cut after 。！？；… (plus closing quotes), or at a comma once
+// a sentence is long (some voices stop on very long ones); only those with something to say
+function bkSents(i) {
+  const cache = BK.sents || (BK.sents = []); if (cache[i]) return cache[i];
+  const toks = bkToks(i), out = [], END = /[。！？!?；;…]/, CLOSE = /^[\s”’」』）)\]】〉》"']+$/, SOFT = /[，,、：:]/;
+  let st = 0, len = 0;
+  const say = (a, b) => /[\p{L}\p{N}]/u.test(toks.slice(a, b).join("")) && out.push([a, b]);
+  for (let ti = 0; ti < toks.length; ti++) {
+    const t = toks[ti]; len += Array.from(t).length;
+    const pun = /\S/.test(t) && Array.from(t).every(isPunct);
+    if (pun && (END.test(t) || (SOFT.test(t) && len >= 80))) { while (ti + 1 < toks.length && CLOSE.test(toks[ti + 1])) ti++; say(st, ti + 1); st = ti + 1; len = 0; }
+  }
+  if (st < toks.length) say(st, toks.length);
+  return (cache[i] = out);
+}
+const ttsText = (p, s) => { const se = bkSents(p)[s]; return se ? bkToks(p).slice(se[0], se[1]).join("").replace(/\//g, "") : ""; };
+// time: counted while it's reading
+function ttsTick() { if (!TTS || !TTS.since) return; const dt = (now() - TTS.since) / 1000; if (dt > 0) TTS.pend += Math.min(dt, 3600); TTS.since = TTS.playing && !document.hidden ? now() : null; }
+async function ttsWake(on) {
+  try {
+    if (!on) { const w = TTS_WL; TTS_WL = null; if (w) await w.release(); return; }
+    if (TTS_WL || document.hidden) return;
+    if (!navigator.wakeLock) throw new Error("no wake lock");
+    TTS_WL = await navigator.wakeLock.request("screen"); TTS_WL.addEventListener("release", () => { TTS_WL = null; });
+    if (!TTS || !TTS.playing) ttsWake(false);
+  } catch (e) { TTS_WL = null; if (!TTS_WLWARN) { TTS_WLWARN = true; toast("这台设备不能让屏幕一直亮着，可能会自己熄屏 · This device can't keep the screen on; it may turn off by itself", 3500); } }
+}
+function ttsStart() {
+  if (!TTS_OK || !BK) return;
+  TTS = { book: BK.id, p: BK.pos, s: 0, playing: false, gen: 0, pend: 0, since: null, utt: null };
+  if (!ttsVoices().length) toast("没找到中文语音，用设备默认的 · No Chinese voice found; trying the device's default", 3000);
+  render(); ttsPlay();
+}
+function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSpeak(); ttsBarDraw(); }
+function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; try { speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
+function ttsStop() {
+  if (!TTS) return;
+  const keep = TTS; ttsPause(); TTS = null; ttsLock(false); $("#ttsrp") && $("#ttsrp").remove();
+  if (BK && keep.book === BK.id) {
+    if (keep.pend >= 1) { logDay(keep.pend, true, "listen"); save(); }
+    BK.lastAt = { p: BK.pos, t: now() }; // reading on from here counts as usual
+    if (VIEW === "read" && READ && READ.book === BK.id && !READ.sub) render();
+  }
+}
+// speak the current sentence (skipping to the next one with something to say)
+function ttsSpeak() {
+  if (!TTS || !ttsOn()) return;
+  while (TTS.p < BK.paras.length && !bkSents(TTS.p)[TTS.s]) { TTS.p++; TTS.s = 0; }
+  if (TTS.p >= BK.paras.length) { TTS.p = BK.paras.length - 1; TTS.s = Math.max(0, bkSents(TTS.p).length - 1); ttsPause(); toast("读到书的最后了 · That's the end of the book"); return; }
+  ttsShow();
+  const g = ++TTS.gen, u = new SpeechSynthesisUtterance(ttsText(TTS.p, TTS.s)), v = ttsVoice();
+  u.lang = v ? v.lang : "zh-CN"; if (v) u.voice = v; u.rate = ttsRate();
+  u.onend = () => { if (TTS && g === TTS.gen && TTS.playing) ttsStep(1); };
+  u.onerror = e => {
+    if (!TTS || g !== TTS.gen || /interrupted|canceled|cancelled/.test((e && e.error) || "")) return;
+    noteErr("read aloud", new Error((e && e.error) || "speech error")); ttsPause(); toast("朗读停了 · Reading aloud stopped — tap ▶ to go on", 3000);
+  };
+  TTS.utt = u; // (kept, or some browsers drop it and never say it ended)
+  try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) { noteErr("read aloud", e); ttsPause(); } // (cancelling when idle trips up some phones)
+}
+function ttsStep(d) {
+  if (!TTS) return;
+  let { p, s } = TTS; s += d;
+  if (s < 0) { do { p--; } while (p >= 0 && !bkSents(p).length); if (p < 0) { p = TTS.p; s = 0; } else s = bkSents(p).length - 1; }
+  else if (s >= bkSents(p).length) { p++; s = 0; }
+  TTS.p = Math.min(p, BK.paras.length); TTS.s = s;
+  if (TTS.playing) ttsSpeak(); else { ttsShow(); }
+}
+function ttsGoto(p) { if (!TTS || TTS.p === p) return; TTS.p = p; TTS.s = 0; if (TTS.playing) ttsSpeak(); }
+// is the sentence being read (or the place) on the screen? Only then does the page follow the voice
+function ttsSeen(el) {
+  if (!el) return true;
+  const pi = $("#bkpi");
+  if (pi) { const r = el.getClientRects()[0]; return !!r && ttsPageOf(r) === BK.pg; }
+  const r = el.getBoundingClientRect(); return r.bottom > bkBarH() && r.top < innerHeight - ttsBarH();
+}
+const ttsBarH = () => { const b = $("#ttsbar"); return b ? b.offsetHeight : 0; };
+const ttsPageOf = r => Math.floor((r.left - $("#bkpi").getBoundingClientRect().left + 1) / BK.pW);
+function ttsShow() {
+  if (!TTS || !ttsOn()) return;
+  const old = $(".bk .ts.on"), follow = ttsSeen(old);
+  if (old) old.classList.remove("on");
+  if (TTS.p !== BK.pos && TTS.p < BK.paras.length) bkSetPos(TTS.p, "tts");
+  const sel = `.ts[data-s="${TTS.p}:${TTS.s}"]`;
+  if (!(VIEW === "read" && READ && READ.book === BK.id && !READ.sub)) return; // 目录 / search open: just the place
+  if ($("#bkc")) {
+    let el = $(sel);
+    if (!el && follow) { bkScrollInit(); el = $(sel); }
+    if (!el) return;
+    el.classList.add("on");
+    if (follow) {
+      const r = el.getBoundingClientRect(), top = bkBarH() + 8, bot = innerHeight - ttsBarH() - 8;
+      if (r.top < top || r.bottom > bot) window.scrollTo({ top: Math.max(0, scrollY + r.top - top - (bot - top) * 0.2), behavior: "smooth" });
+    }
+  } else if ($("#bkpi")) {
+    if (bkChunkOf(TTS.p) !== BK.pc) { if (!follow) return; bkPageLayout(bkChunkOf(TTS.p), { p: TTS.p }); }
+    const el = $(sel); if (!el) return;
+    el.classList.add("on");
+    const r = el.getClientRects()[0];
+    if (follow && r) { const pg = ttsPageOf(r); if (pg !== BK.pg) bkPageShow(pg, true); }
+  }
+}
+// the player bar under the text
+const TTS_ICON = {
+  play: `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>`,
+  pause: `<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><rect x="6.5" y="5.5" width="4" height="13" rx="1" fill="currentColor"/><rect x="13.5" y="5.5" width="4" height="13" rx="1" fill="currentColor"/></svg>`,
+  prev: `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="5" y="6" width="2.4" height="12" rx="1" fill="currentColor"/><path d="M19 6v12l-9.5-6z" fill="currentColor"/></svg>`,
+  next: `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="16.6" y="6" width="2.4" height="12" rx="1" fill="currentColor"/><path d="M5 6v12l9.5-6z" fill="currentColor"/></svg>`
+};
+function ttsBarHtml() {
+  return `<div class="ttsbar" id="ttsbar"><button class="ttsb" id="ttsx" aria-label="关掉听书 Close the player">✕</button>
+    <button class="ttsb" id="ttsprev" aria-label="上一句 Previous sentence">${TTS_ICON.prev}</button>
+    <button class="ttsb ttsplay" id="ttsplay" aria-label="${TTS && TTS.playing ? "暂停 Pause" : "播放 Play"}">${TTS && TTS.playing ? TTS_ICON.pause : TTS_ICON.play}</button>
+    <button class="ttsb" id="ttsnext" aria-label="下一句 Next sentence">${TTS_ICON.next}</button>
+    <button class="ttsb ttsrate" id="ttsrate" aria-label="速度 Speed">${ttsRateLabel(ttsRate())}</button>
+    <button class="ttsb" id="ttslock" aria-label="锁住屏幕 Lock the screen">🔒</button></div>`;
+}
+function ttsBarDraw() {
+  const b = $("#ttsplay"); if (!b || !TTS) return;
+  b.innerHTML = TTS.playing ? TTS_ICON.pause : TTS_ICON.play; b.setAttribute("aria-label", TTS.playing ? "暂停 Pause" : "播放 Play");
+  const r = $("#ttsrate"); if (r) r.textContent = ttsRateLabel(ttsRate());
+}
+function ttsBind(main) {
+  $("#ttsx", main).onclick = () => ttsStop();
+  $("#ttsplay", main).onclick = () => { closeSheet(); if (TTS.playing) ttsPause(); else ttsPlay(); };
+  $("#ttsprev", main).onclick = () => { closeSheet(); ttsStep(-1); };
+  $("#ttsnext", main).onclick = () => { closeSheet(); ttsStep(1); };
+  $("#ttsrate", main).onclick = e => { e.stopPropagation(); ttsRatePanel(); };
+  $("#ttslock", main).onclick = () => ttsLock(true);
+}
+// speed: a ruler you swipe sideways, snapping to 0.1 steps (0.5×–1.5×)
+const TTS_TICK = 40;
+function ttsRatePanel() {
+  if ($("#ttsrp")) { $("#ttsrp").remove(); return; }
+  const cur = ttsRate(), pan = document.createElement("div"); pan.id = "ttsrp"; pan.className = "ttsrp";
+  pan.innerHTML = `<div class="ttsrv" id="ttsrv">${ttsRateLabel(cur)}</div><span class="small muted">速度 Speed</span>
+    <div class="ttsrw"><div class="ttsrc" aria-hidden="true"></div><div class="ttsr" id="ttsr" tabindex="0" role="slider" aria-label="速度 Speed" aria-valuemin="0.5" aria-valuemax="1.5" aria-valuenow="${cur}">${TTS_RATES.map((r, i) => `<span class="ttst${Number.isInteger(r * 2) ? " big" : ""}" data-ri="${i}"><i></i><b>${Number.isInteger(r * 2) ? ttsRateLabel(r) : ""}</b></span>`).join("")}</div></div>
+    <div class="row" style="gap:8px;justify-content:center"><button class="tagc" data-rs="-1" aria-label="慢一点 Slower">−</button><button class="tagc" id="ttsr1">1.0×</button><button class="tagc" data-rs="1" aria-label="快一点 Faster">+</button><button class="btn" id="ttsrok" style="min-height:36px;padding:6px 18px">好 Done</button></div>`;
+  document.body.append(pan);
+  const ru = $("#ttsr", pan), pad = () => Math.max(0, ru.clientWidth / 2 - TTS_TICK / 2);
+  ru.style.paddingLeft = ru.style.paddingRight = pad() + "px";
+  const idx = () => Math.max(0, Math.min(TTS_RATES.length - 1, Math.round(ru.scrollLeft / TTS_TICK)));
+  const go = (i, smooth) => ru.scrollTo({ left: i * TTS_TICK, behavior: smooth ? "smooth" : "auto" });
+  const show = () => { const r = TTS_RATES[idx()]; $("#ttsrv", pan).textContent = ttsRateLabel(r); ru.setAttribute("aria-valuenow", r); $$(".ttst", ru).forEach((t, i) => t.classList.toggle("on", i === idx())); };
+  const settle = () => { const r = TTS_RATES[idx()]; if (r === ttsRate()) return; setTtsPref({ rate: r }); ttsBarDraw(); clearTimeout(TTS_RT); TTS_RT = setTimeout(() => { if (TTS && TTS.playing) ttsSpeak(); }, 350); };
+  let st = null;
+  ru.addEventListener("scroll", () => { show(); clearTimeout(st); st = setTimeout(settle, 160); }, { passive: true });
+  ru.addEventListener("wheel", e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); go(Math.max(0, Math.min(TTS_RATES.length - 1, idx() + Math.sign(e.deltaY))), true); } }, { passive: false });
+  ru.addEventListener("keydown", e => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); go(Math.max(0, Math.min(TTS_RATES.length - 1, idx() + (e.key === "ArrowRight" ? 1 : -1))), true); } });
+  $$(".ttst", ru).forEach(t => t.onclick = () => go(+t.dataset.ri, true));
+  $$("[data-rs]", pan).forEach(b => b.onclick = () => go(Math.max(0, Math.min(TTS_RATES.length - 1, idx() + +b.dataset.rs)), true));
+  $("#ttsr1", pan).onclick = () => go(TTS_RATES.indexOf(1), true);
+  $("#ttsrok", pan).onclick = () => { settle(); pan.remove(); };
+  go(TTS_RATES.indexOf(cur), false); show();
+}
+document.addEventListener("click", e => { const p = $("#ttsrp"); if (p && e.target.isConnected && !p.contains(e.target) && !e.target.closest("#ttsrate")) p.remove(); });
+// 🔒: a cover over everything that ignores touches; hold its button to take it away
+function ttsLock(on) {
+  const old = $("#ttslk"); if (old) old.remove(); if (!on) return;
+  $("#ttsrp") && $("#ttsrp").remove(); closeSheet();
+  const c = document.createElement("div"); c.id = "ttslk"; c.className = "ttslk";
+  c.innerHTML = `<button class="ttsunl" id="ttsunl"><i></i><span>🔒 按住解锁 · Hold to unlock</span></button>`;
+  document.body.append(c);
+  const stop = e => { if (!e.target.closest("#ttsunl")) { e.preventDefault(); e.stopPropagation(); } };
+  ["touchstart", "touchmove", "wheel", "click", "dblclick", "contextmenu"].forEach(k => c.addEventListener(k, stop, { passive: false }));
+  const b = $("#ttsunl", c); let t = null;
+  const down = e => { e.preventDefault(); b.classList.add("hold"); t = setTimeout(() => ttsLock(false), 1200); };
+  const up = () => { clearTimeout(t); b.classList.remove("hold"); };
+  b.addEventListener("pointerdown", down); ["pointerup", "pointerleave", "pointercancel"].forEach(k => b.addEventListener(k, up));
+  b.addEventListener("contextmenu", e => e.preventDefault());
+}
+document.addEventListener("keydown", e => { if ($("#ttslk")) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+document.addEventListener("visibilitychange", () => {
+  if (!TTS) return;
+  if (document.hidden) { ttsTick(); TTS.hidAt = now(); return; }
+  if (!TTS.playing) return;
+  let going = false; try { going = speechSynthesis.speaking || speechSynthesis.pending; } catch (e) {}
+  if (going) { if (TTS.hidAt) TTS.pend += Math.min(3600, (now() - TTS.hidAt) / 1000); TTS.since = now(); ttsWake(true); } // it kept reading while away (computers do)
+  else { TTS.since = null; TTS.playing = false; TTS.gen++; ttsBarDraw(); } // the phone stopped it: ▶ picks up at the same sentence
+  TTS.hidAt = null;
+});
 // Aa: size, scroll / pages, 简体 / 原文 (per device; 原文 per book)
 function bookAa(btn) {
   let pop = $("#aapop"); if (pop) { pop.remove(); btn.classList.remove("on"); return; }
@@ -4262,6 +4499,7 @@ function bookAa(btn) {
     const p = bookPref(), m = BK.meta;
     pop.innerHTML = `<div class="aarow"><span>大小 Size</span><span class="row" style="gap:4px"><button class="tagc" data-bfs="-1" ${p.fs <= 0 ? "disabled" : ""}>字 −</button><button class="tagc" data-bfs="1" ${p.fs >= BOOK_FS.length - 1 ? "disabled" : ""}>字 +</button></span></div>
       <div class="aarow"><span>翻看 Layout</span><span class="row" style="gap:4px"><button class="tagc ${p.mode !== "page" ? "on" : ""}" data-bmode="scroll">滚动 Scroll</button><button class="tagc ${p.mode === "page" ? "on" : ""}" data-bmode="page">翻页 Pages</button></span></div>
+      ${TTS_OK ? ttsVoiceRow() : ""}
       ${m.trad && BK.simp ? `<div class="aarow"><span>字 Script</span><span class="row" style="gap:4px"><button class="tagc ${m.orig ? "" : "on"}" data-borig="0">简体</button><button class="tagc ${m.orig ? "on" : ""}" data-borig="1">原文 Original</button></span></div>` : ""}`;
     const r = btn.getBoundingClientRect(), w = Math.min(320, innerWidth - 24);
     pop.style.width = w + "px"; pop.style.top = (r.bottom + 6) + "px"; pop.style.left = Math.max(12, Math.min(r.right - w, innerWidth - w - 12)) + "px";
@@ -4269,6 +4507,8 @@ function bookAa(btn) {
     $$("[data-bfs]", pop).forEach(b => b.onclick = () => { setBookPref({ fs: Math.max(0, Math.min(BOOK_FS.length - 1, bookPref().fs + +b.dataset.bfs)) }); redraw(); });
     $$("[data-bmode]", pop).forEach(b => b.onclick = () => { setBookPref({ mode: b.dataset.bmode }); redraw(); });
     $$("[data-borig]", pop).forEach(b => b.onclick = () => { m.orig = b.dataset.borig === "1"; bookMetaPut(m).catch(e => noteErr("book orig", e)); redraw(); });
+    const vs = $("#ttsvsel", pop); if (vs) vs.onchange = () => { setTtsPref({ voice: vs.value }); if (TTS && TTS.playing) ttsSpeak(); };
+    TTS_AADRAW = () => { if ($("#aapop.bkaa")) draw(); };
   };
   draw();
 }
