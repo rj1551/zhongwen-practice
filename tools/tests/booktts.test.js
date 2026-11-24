@@ -33,6 +33,7 @@ const FAKE = () => {
   };
   Object.defineProperty(window, "speechSynthesis", { configurable: true, value: ss });
   window.SpeechSynthesisUtterance = U;
+  Object.defineProperty(navigator, "audioSession", { configurable: true, value: { type: "auto" } });
   Object.defineProperty(navigator, "wakeLock", { configurable: true, value: { request: async () => { window.__wl.req++; window.__wl.held++; const l = { released: false, _f: [], addEventListener(k, f) { this._f.push(f); }, async release() { if (!this.released) { this.released = true; window.__wl.held--; } } }; return l; } } });
 };
 (async () => {
@@ -59,6 +60,7 @@ const FAKE = () => {
   await shot(page, "tts-bar.png");
   ok(await page.evaluate(() => { const e = $(".bk .ts.on"); return e && e.dataset.s === "3:0" && e.textContent === "他在河边慢慢地走着。"; }), "the sentence being read is highlighted");
   ok(await page.evaluate(() => window.__wl.held === 1), "the screen is kept on while it reads");
+  ok(await page.evaluate(() => navigator.audioSession.type === "playback" && !!TTS_KEEP && TTS_KEEP.loop), "while it reads the page's sound is in playback mode (plays with the silent switch on), with a silent loop as backup");
   ok(await page.evaluate(() => { const b = $("#ttsbar").getBoundingClientRect(); return b.bottom <= innerHeight + 1 && b.bottom > innerHeight - 140; }), "the player bar sits at the bottom of the screen");
   // the chain: sentences one after another, into the next paragraphs; the place follows
   await page.evaluate(() => { window.__dur = 15; speechSynthesis.__kill(); TTS.utt.onend(); });
@@ -69,6 +71,7 @@ const FAKE = () => {
   const pos = await page.evaluate(() => ({ pos: BK.pos, tp: TTS.p, mp: BK.meta.pos.p }));
   ok(pos.pos === pos.tp && pos.mp === pos.tp, "the place follows the voice (paragraph " + pos.tp + ")");
   ok(await page.evaluate(() => window.__wl.held === 0), "paused: the screen may turn off again");
+  ok(await page.evaluate(() => navigator.audioSession.type === "auto" && TTS_KEEP.paused), "paused: the sound mode goes back to what it was, the silent loop stops");
   ok(await page.evaluate(rd0 => JSON.stringify(BK.rd) === rd0 && !(BK.sit && BK.sit.c), rd0), "heard text isn't counted as read (no new characters, no book speed)");
   // pause holds; play picks up the same sentence
   const n0 = await page.evaluate(() => window.__said.length); await page.waitForTimeout(150);

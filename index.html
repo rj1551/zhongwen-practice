@@ -4361,8 +4361,31 @@ function ttsNoVoice() {
   document.body.append(pan);
   $("#ttsnvok", pan).onclick = () => pan.remove();
 }
-function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSpeak(); ttsBarDraw(); }
-function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; try { speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
+function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSound(true); ttsSpeak(); ttsBarDraw(); }
+// play with the silent switch on, the way songs do (v97). iPhones treat the voice like a game sound (muted on silent)
+// unless the page's sound is in "playback" mode: set that where the phone has the setting (navigator.audioSession,
+// iOS 17+), and also keep a silent sound looping while it reads (a playing sound puts the page in playback mode).
+// Side effect: like a song, it stops other apps' music while it reads.
+let TTS_KEEP = null, TTS_AS0 = null;
+function ttsSound(on) {
+  try {
+    const as = navigator.audioSession;
+    if (as) { if (on) { if (TTS_AS0 == null) TTS_AS0 = as.type || "auto"; as.type = "playback"; } else if (TTS_AS0 != null) { as.type = TTS_AS0; TTS_AS0 = null; } }
+  } catch (e) {}
+  try {
+    if (on) {
+      if (!TTS_KEEP) {
+        const n = 8000, b = new Uint8Array(44 + n), v = new DataView(b.buffer), w = (o, t) => [...t].forEach((c, i) => b[o + i] = c.charCodeAt(0));
+        w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+        v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, "data"); v.setUint32(40, n, true); b.fill(128, 44); // 1 s of 8-bit silence
+        TTS_KEEP = document.createElement("audio"); TTS_KEEP.loop = true; TTS_KEEP.hidden = true; TTS_KEEP.src = URL.createObjectURL(new Blob([b], { type: "audio/wav" })); document.body.append(TTS_KEEP);
+      }
+      if (AUD && !AUD.paused) AUD.pause(); // (a song from 听 left playing)
+      const p = TTS_KEEP.play(); if (p && p.catch) p.catch(() => {});
+    } else if (TTS_KEEP) TTS_KEEP.pause();
+  } catch (e) { noteErr("read aloud sound", e); }
+}
+function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; try { speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsSound(false); ttsBarDraw(); }
 function ttsStop() {
   if (!TTS) return;
   const keep = TTS; ttsPause(); TTS = null; ttsLock(false); $("#ttsrp") && $("#ttsrp").remove();
@@ -4506,7 +4529,7 @@ document.addEventListener("visibilitychange", () => {
   if (!TTS.playing) return;
   let going = false; try { going = speechSynthesis.speaking || speechSynthesis.pending; } catch (e) {}
   if (going) { if (TTS.hidAt) TTS.pend += Math.min(3600, (now() - TTS.hidAt) / 1000); TTS.since = now(); ttsWake(true); } // it kept reading while away (computers do)
-  else { TTS.since = null; TTS.playing = false; TTS.gen++; ttsBarDraw(); } // the phone stopped it: ▶ picks up at the same sentence
+  else { TTS.since = null; TTS.playing = false; TTS.gen++; ttsSound(false); ttsBarDraw(); } // the phone stopped it: ▶ picks up at the same sentence
   TTS.hidAt = null;
 });
 // Aa: size, scroll / pages, 简体 / 原文 (per device; 原文 per book)
