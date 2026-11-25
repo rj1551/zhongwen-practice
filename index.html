@@ -1171,7 +1171,7 @@ function indexGen() {
 const REG_NAME = { xhs: "小红书", news: "新闻", book: "书面", talk: "对话", zhihu: "知乎", wb: "微博·抖音" };
 const TIER_NAME = { s: "熟词", f: "在忘", k: "不稳", l: "顽固词", u: "没学过", n: "不在你的词库 Not in your Anki list" };
 /* ---------- CC-CEDICT: full dictionary, every reading kept separately; loaded on first use ---------- */
-let CED = null, CED_P = null;
+let CED = null, CED_P = null, CED_FAIL = false;
 function loadCedict() {
   if (CED_P) return CED_P;
   CED_P = fetch("data/cedict.txt").then(r => { if (!r.ok) throw 0; return r.text(); }).then(t => {
@@ -1182,11 +1182,11 @@ function loadCedict() {
       for (let i = 1; i + 1 < f.length; i += 2) rd.push([f[i], f[i + 1]]);
       m.set(f[0], rd);
     }
-    CED = m;
+    CED = m; CED_FAIL = false;
     if (VIEW === "read" && READ && READ.pid) refreshTitle();
     if ($("#sheet") && SHEET_ARGS && SHEET_ARGS[4] && SHEET_ARGS[4].isConnected) openSheet(...SHEET_ARGS); // "still loading" → the real entry
     return m;
-  }).catch(() => { CED_P = null; return null; });
+  }).catch(e => { CED_P = null; CED_FAIL = true; noteErr("dictionary load", e || new Error("couldn't load data/cedict.txt")); if ($("#sheet") && SHEET_ARGS && SHEET_ARGS[4] && SHEET_ARGS[4].isConnected) openSheet(...SHEET_ARGS); return null; });
   return CED_P;
 }
 const pyKey = s => String(s || "").normalize("NFC").toLowerCase().replace(/[\s'’·\/]/g, "");
@@ -3361,6 +3361,7 @@ const tokHtml = (t, k, looked) => {
   return Array.from(show).every(isPunct) || /^\p{Extended_Pictographic}+$/u.test(show) ? esc(show) : `<span class="tk ${looked ? "looked" : ""}" data-k="${k}">${esc(show)}</span>`;
 };
 function renderPassage(main) {
+  loadCedict(); // (v100) today's-set reading and the re-read card come here without passing renderRead, which used to start the load
   const p = PSG.get(READ.pid);
   if (READ.re && READ.ghost == null && S.reads[p.id]) { // re-read: with or without the ghost, picked each time (v93)
     if (READ.timer) READ.timer.stop();
@@ -3427,6 +3428,7 @@ const APP_VERSION = "__APP_VERSION__"; // stamped by build.sh: sw.js CACHE · bu
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
+  if (!CED && !CED_P && !CED_FAIL) loadCedict(); // not loading yet: start it, so "still loading" never waits on nothing (after a failure, the next passage opened tries again)
   const tok = paras[pi][ti], word = tok.replace(/\//g, "");
   const A = lookupAll(tok, p.gl || {});
   const L = A ? { py: A.readings[0].py, gl: A.readings[0].gl, tier: A.tier, lv: A.lv } : null;
@@ -3440,7 +3442,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const multi = rds.length > 1;
   const rdHtml = r => `<div class="rd"><b>${esc(r.py)}</b>${multi && r.here ? '<span class="rtag here">这里 here</span>' : ""}${multi && r.anki && !r.here ? '<span class="rtag">你学过 Anki</span>' : ""}<span>${esc(r.gl)}</span></div>`;
   sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${p.trad && ZHC && toTrad(word) !== word ? `<span class="w" style="font-size:22px;color:var(--muted)">${esc(toTrad(word))}</span>` : ""}${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
-    ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? `词典里没有这个词 · This word isn't in the dictionary.${chars.length > 1 || parts.length ? "<br>下面是每个部分的意思 · Here's what each part means." : ""}` : "完整词典还在加载… The full dictionary is still loading."}</p>`}
+    ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? `词典里没有这个词 · This word isn't in the dictionary.${chars.length > 1 || parts.length ? "<br>下面是每个部分的意思 · Here's what each part means." : ""}` : CED_FAIL ? "完整词典没能加载（可能没网）· The full dictionary couldn't load (offline?). 你的词表和这篇的注释照样能查 · Your word list and this passage's notes still work." : "完整词典还在加载… The full dictionary is still loading."}</p>`}
     <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more && rds.length ? `<button class="btn ghost" id="more">更多 More</button>` : ""}</div>
     <div id="moreb" ${rds.length ? "hidden" : ""}>
     ${rds.length > 3 ? `<div class="rds">${rds.slice(3).map(rdHtml).join("")}</div>` : ""}
@@ -6406,7 +6408,7 @@ const PROV_TEST = [
   ["L18", "大雨造成了严重的交通。", 1, "ok", "chat"], ["L23", "因为现在的经济情况，公司决定推迟扩张计划。", 2, "missing", "chat"],
   ["L29", "我们最后有了一致。", 1, "wrong", "chat"], ["L39", "我不必然同意他。", 1, "missing", "chat"],
   ["L40", "毕竟他还是一个小孩子。", 3, "ok", "chat"], ["L27", "尽管下着大雨，比赛被照常进行了。", 1, "ok", "chat"],
-  ["L44", "突然开始下大雨了。", 3, "missing", "chat"], ["L30", "运动在缓解压力方面扮演很大的角色。", 1, "missing", "chat"]
+  ["L44", "我们俩一开始聊天就忘了时间。", 3, "missing", "chat"], ["L30", "运动在缓解压力方面扮演很大的角色。", 1, "missing", "chat"]
 ];
 let PROV_UI = { models: null, busy: false, err: "", res: null, stop: false };
 // 批改顺序 · Grading order: Gemini Flash-Lite first, Groq second; each with its state on this device right now

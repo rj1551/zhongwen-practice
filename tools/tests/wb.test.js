@@ -8,7 +8,10 @@ const URL0 = process.env.TEST_URL || "http://localhost:8765/";
 let fails = 0;
 const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 const Q = (q, a) => ({ q, opts: [a, "wrong one", "wrong two", "wrong three"], why: ["right: 夯爆了", "no", "no", "no"] });
-const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加班到十点",
+// every word token needs a gl entry since 2026-11-24: fill the ones a fixture doesn't care about (not its slang)
+const fillGl = x => { x.gl = Object.assign({}, x.gl); for (const para of x.paras || []) for (const t of para.split("|")) { const k = t.replace(/\//g, ""); if (/\p{Script=Han}/u.test(k) && !x.gl[k] && !(x.slang || []).includes(k)) x.gl[k] = ["py", "gloss"]; } return x; };
+const post = (extra) => fillGl(post0(extra));
+const post0 = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加班到十点",
   paras: ["今天|加班|到|十点|，|老板|还|说|明天|早|点|来|，|我|真|没招|了|😭|谁|懂|啊|！|下班|路上|饿|得|不行|，|只|想|吃|一碗|热|面|。",
     "芒果不加冰|：|这|种|老板|夯爆了|的|反面|，|建议|直接|跑路|，|别|犹豫|了|。",
     "回复|@|芒果不加冰|：|笑死|，|你|这|条|评论|活人感|拉满|，|我|已经|截图|发|给|同事|了|。",
@@ -43,6 +46,8 @@ const post = (extra) => Object.assign({ kind: "wb", style: "weibo", title: "加�
   ok(/slang "笑死" has no gl entry/.test(bad), "check-pack: a slang term without a gloss is refused");
   ok(/slang "绝绝子" is retired/.test(bad) && /at least 2 replies/.test(bad), "check-pack: a retired term (hints.slangRetired) and a post without a thread are refused");
   ok(/at most 2 wb/.test(bad), "check-pack: at most 2 wb posts a pack");
+  const nogl = pack({ passages: [Object.assign(post({ rid: "p:2", title: "g" }), { gl: { 没招: ["méi zhāo", "out of ideas"] } })] });
+  ok(/word token\(s\) missing from gl/.test(nogl) && /加班/.test(nogl), "check-pack: a passage whose word tokens aren't all in gl is refused, naming them");
   ok(/slang "没招" isn't in data\/slang.json/.test(bad), "check-pack: slang that isn't on the reviewed list is refused");
   const rb = fs.readFileSync(path.join(DR, "RUNBOOK.md"), "utf8");
   ok(/Slang only from the reviewed list/.test(rb) && /no web search either/.test(rb) && /no real posts/.test(rb), "RUNBOOK: slang only from data/slang.json, no web search, everything invented");

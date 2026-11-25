@@ -39,6 +39,7 @@ async function readThrough(pg) { // in the reader: done → answer every questio
       await pg.click("#sr-go");
       ok(!!(await pg.$("#rd")) && !!(await pg.$("#quit")), "开始读: the full reader opens inside practice (word taps work there)");
       await pg.click("#rd .tk"); ok(!!(await pg.$("#sheet")), "tapping a word in it opens the dictionary popup");
+      ok(await pg.waitForFunction(() => !!CED, null, { timeout: 30000 }).then(() => true, () => false), "the full dictionary gets loaded in today's reading (v100: it used to stay 'still loading')");
       await pg.evaluate(() => closeSheet());
       ok(await readThrough(pg), "done → questions → finished card");
       const r = await pg.evaluate(pid => S.reads[pid], pid);

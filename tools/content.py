@@ -259,18 +259,20 @@ lad("I've been so busy lately I don't even have time to eat.",
     ["就", "才", "也"],
     ["我最近很忙，所以我甚至不能找时间吃。", "最近太忙我不能找吃饭时间。"],
     "V得 + result: 忙得连…都没有 = 'so busy that not even…'. 忙得/累得/笑得 is how Chinese says 'so … that …'.", "express")
-lad("Please put your phone away.",
-    "请|[把]|手机|收起来|。",
-    ["请把手机收好。", "把手机收起来吧。"],
-    ["被", "给", "让"],
-    ["请放走你的手机。", "请收你的手机起来。"],
-    "把 + object + verb + result: 把手机收起来 = put the phone away (收起来 = put away).", "pattern")
-lad("Suddenly it started pouring.",
-    "突然|[下起]|大雨|来了|。",
-    ["突然下起了大雨。", "突然下起大雨来。", "忽然下起大雨来了。", "突然下起大雨了。"],
-    ["下来", "下去", "下出"],
-    ["突然开始倒雨了。", "突然大雨开始下了。"],
-    "V起 + object + 来 = 'start V-ing' — the object sits inside 起…来. 'Pouring' → 大雨; 倒 is for pouring a liquid yourself.", "pattern")
+# rewritten 2026-11-24 (learner: the 把 card was too easy; the target is now 收起来)
+lad("The meeting's about to start — everyone, please put your phones away.",
+    "会议|马上|就要|开始|了|，|请|大家|把|手机|[收起来]|。",
+    ["马上要开会了，请大家把手机收起来。", "会议马上开始，大家把手机收起来吧。", "会议快开始了，请大家把手机都收起来。"],
+    ["拿起来", "收下", "关起来"],
+    ["会议马上开始，请大家放走你们的手机。", "会议马上开始，请大家收你们的手机起来。"],
+    "收起来 = put away, out of sight: 起来 here means 'gathered up, stowed', not 'up' (拿起来 = pick up). With 把 the object comes first — 把手机收起来, not 收手机起来. 收好 is close but means 'put away properly'.", "pattern")
+# rewritten 2026-11-24 (learner: 突然下雨了 is fine, so the rain sentence didn't call for 起…来)
+lad("Once the two of us get chatting, we lose all track of time.",
+    "我们|俩|一|[聊起天来]|，|就|忘了|时间|。",
+    ["我们俩一聊起天来就忘了时间。", "我们两个一聊起天来，就把时间都忘了。", "我们俩一聊起天来，就完全忘了时间。"],
+    ["聊下天去", "聊过天来", "聊出天来"],
+    ["我们俩一开始聊天，我们忘记时间。", "当我们聊天起来，我们失去所有时间的跟踪。"],
+    "一 + V起O来 + 就… = 'once we get V-ing, …': 聊天 splits around 起…来 → 聊起天来 (like 下起雨来, 唱起歌来). It says the chatting gets going and carries you along; plain 一聊天就 is just 'whenever we chat'. 'Lose track of time' → 忘了时间, not 失去.", "pattern")
 lad("Keep talking, don't stop.",
     "继续|说|[下去]|，|别|停|。",
     ["接着说，别停。", "你接着说下去，别停。", "继续说下去，别停下来。"],

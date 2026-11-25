@@ -131,7 +131,7 @@ const { execFileSync } = require("child_process"), fs = require("fs"), path = re
     sentences: { 测试词: { s: "这是一个测试词的例句。", py: "cèshìcí", gl: "test word" }, 有句子: "有句子也不该被覆盖。" },
     questions: [{ rid: "q:mine:M1", qs: q3, gl: { 天气: ["tiānqì", "weather"] }, en: "The weather is good today.", paras: ["今天|天气|很|好|。"] }, { rid: "q:listen:A1", qs: q3, gl: {} }],
     regrades: [{ rid: rid("regrade"), score: 1, chunk: "ok", fixed: "我本来想去，结果下起雨来了。", notes: ["note"] }],
-    passages: [{ rid: rid("passage"), kind: "news", title: "高铁新线", paras: ["新|高铁|开通|。", "旅客|增加|。"], gl: {}, en: "x", qs: q3 }] };
+    passages: [{ rid: rid("passage"), kind: "news", title: "高铁新线", paras: ["新|高铁|开通|。", "旅客|增加|。"], gl: { 新: ["xīn", "new"], 高铁: ["gāotiě", "high-speed rail"], 开通: ["kāitōng", "open"], 旅客: ["lǚkè", "passenger"], 增加: ["zēngjiā", "increase"] }, en: "x", qs: q3 }] };
   const dd = fs.mkdtempSync("/tmp/zwd-"); fs.mkdirSync(path.join(dd, "progress")); fs.mkdirSync(path.join(dd, "packs"));
   const f = g.files(); for (const p in f) if (!p.startsWith("settings/")) { fs.mkdirSync(path.join(dd, path.dirname(p)), { recursive: true }); fs.writeFileSync(path.join(dd, p), f[p]); }
   fs.writeFileSync(path.join(dd, "packs", "new.json"), JSON.stringify(pack));

@@ -107,6 +107,17 @@ const has = (s, frag) => norm(s).includes(norm(frag));
   if (p.qs.length !== 3) problems.push(`${at}: ${p.qs.length} questions, need exactly 3`);
   p.qs.forEach((q, j) => { if (q.opts.length !== 4) problems.push(`${at}: question ${j + 1} needs 4 options`); if (!q.ex) problems.push(`${at}: question ${j + 1} needs "why" (4 reasons)`); });
   if (!x.en) warn.push(at + ": no English translation");
+  { // every word token glossed (learner, 2026-11-24): readings + chunking come with the passage
+    const miss = new Set(), bad = new Set();
+    for (const para of p.paras) for (const t0 of para.split("|")) {
+      const t = t0.replace(/\//g, "").trim();
+      if (!t || !/\p{Script=Han}/u.test(t)) continue;
+      const g = p.gl[t] || p.gl[t0];
+      if (!g) miss.add(t); else if (!Array.isArray(g) || g.length < 2 || !String(g[0]).trim() || !String(g[1]).trim()) bad.add(t);
+    }
+    if (miss.size) problems.push(`${at}: ${miss.size} word token(s) missing from gl (every word needs ["pinyin", "meaning here"]): ${[...miss].slice(0, 15).join(" ")}${miss.size > 15 ? " …" : ""}`);
+    if (bad.size) problems.push(`${at}: gl entries must be ["pinyin", "meaning"]: ${[...bad].slice(0, 10).join(" ")}`);
+  }
   if (have.title.has(norm(x.title)) || seen.title.has(norm(x.title))) problems.push(at + ": same title as an existing passage");
   if (x.kind === "wb") { // social media (v77): style, the slang it teaches, glossed, not retired
     if (!["weibo", "douyin"].includes(x.style)) problems.push(at + ': wb needs "style": "weibo" or "douyin"');

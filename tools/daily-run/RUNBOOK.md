@@ -138,8 +138,13 @@ Each: `{"kind": "xhs|news|travel|book|wb", "title": "Chinese title", "paras": ["
   `fadingWords` (prefer `reviewWords`), and 2–4 `newWords`: pick ones that fit the text naturally and are worth knowing
   (common in this genre), not just the first in the list; use each new word as one token so the app can see it was
   offered; don't build a passage around them, and spread different new words across a pack's passages.
-- `gl` covers every slang word, name, HSK7+ word, each target word and new word you used, and every word whose pronunciation or
-  meaning here differs from its most common one (pinyin and meaning used in THIS context).
+- `gl` covers **every word token** of the passage (learner, 2026-11-24: the readings and chunking should come with the
+  passage, so the app's popup never waits for the dictionary): every token that isn't punctuation, a number or Latin
+  letters gets `"token": ["pinyin with tone marks as read HERE", "short English meaning in THIS context"]`, keyed exactly
+  as the token is written (without any `/`). Common words too (的 → ["de", "(possessive)"], 了 → ["le", "(change / done)"]);
+  for words with several readings give the one used here (还 hái / huán, 长 cháng / zhǎng, 行 xíng / háng, 得 de / dé / děi).
+  Slang, names, HSK7+, target and new words especially: their meaning as used here. `check-pack.js` refuses a passage with
+  word tokens missing from `gl`.
 - Questions: exactly 3 questions in English about the content; each has 4 options in English with the correct one
   FIRST, plus "why": 4 one-line reasons in the same order (for the correct option quote the Chinese words that decide
   it; for each wrong option say exactly what it gets wrong, quoting the text where useful). Make them hard to answer
