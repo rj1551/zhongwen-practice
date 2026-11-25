@@ -17,7 +17,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++
 const MP3 = fs.readFileSync(path.join(__dirname, "fixtures", "tone3.mp3")); // 1.0 s tone · 0.45 s pause · 1.5 s · 0.45 s · 0.8 s
 const R2C = { account: "acct123", bucket: "zhongwen-audio", akid: "AKIDTEST", secret: "SECRETTEST" };
 const R2S = { objs: new Map(), log: [], badSig: 0 };
-const G = { reqs: [], fail: null };
+const G = { reqs: [], fail: null, tooLong: 0 };
 async function routes(ctx) {
   await ctx.route("https://texttospeech.googleapis.com/**", async route => {
     const rq = route.request(), H = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*", "content-type": "application/json" };
@@ -27,6 +27,7 @@ async function routes(ctx) {
     if (/voices/.test(rq.url())) return route.fulfill({ status: 200, headers: H, body: JSON.stringify({ voices: [{ name: "cmn-CN-Chirp3-HD-Kore" }, { name: "cmn-CN-Chirp3-HD-Puck" }, { name: "cmn-CN-Wavenet-A" }] }) });
     const body = JSON.parse(rq.postData() || "{}"); G.reqs.push(body);
     if (G.fail) return route.fulfill({ status: G.fail, headers: H, body: JSON.stringify({ error: { message: "nope" } }) });
+    if (G.tooLong && Array.from(body.input.text).length > G.tooLong) return route.fulfill({ status: 400, headers: H, body: JSON.stringify({ error: { message: 'This request contains sentences that are too long. Consider splitting up long sentences with sentence ending punctuation e.g. periods. Sentence starting with: "⟪他⧸ta" is too long.' } }) });
     route.fulfill({ status: 200, headers: H, body: JSON.stringify({ audioContent: MP3.toString("base64") }) });
   });
   await ctx.route(`https://${R2C.account}.r2.cloudflarestorage.com/**`, async route => {
@@ -97,6 +98,15 @@ async function dev(seedBook) {
   ok(rec.type === "audio/mpeg" && await page.evaluate(() => audUse().n) > 300, "kept as audio/mpeg; this month's characters counted (" + await page.evaluate(() => audUse().n) + ")");
   ok(/这台设备有 4 \/ 10 章/.test(await page.textContent("#audcard")), "the card shows 4 of 10 chapters");
   await page.evaluate(() => $("#audcard").scrollIntoView()); await shot(page, "aud-card.png");
+  // ---- long paragraphs go in pieces (v104: Chirp refuses requests over a few hundred bytes) ----
+  const LONG = "他在河边慢慢地走着，风很大，天也很冷，可是他一点也不想回家，因为家里没有人等他。".repeat(4) + "最后他还是回去了。";
+  const pc = await page.evaluate(t => audPieces(t).map(([a, b]) => Array.from(t).slice(a, b).join("")), LONG);
+  ok(pc.length >= 2 && pc.every(x => Array.from(x).length <= 120) && pc.slice(0, -1).every(x => /[。，]$/.test(x)) && pc.join("") === LONG, "a long paragraph is sent in pieces of ≤ 120 characters, cut at sentence ends / commas (" + pc.map(x => Array.from(x).length).join(" + ") + ")");
+  G.reqs = []; G.tooLong = 50;
+  const said = await page.evaluate(async t => { const r = await audSayPara(t, audVoice()); return { st: r.st, n: sentCuts(t).length, d: mp3Info(r.buf).dur }; }, LONG);
+  ok(G.reqs.every(r => Array.from(r.input.text).length <= 120) && G.reqs.filter((r, i) => Array.from(r.input.text).length <= 50).length >= 4, "a piece Google still calls too long is cut again and sent in smaller pieces (" + G.reqs.map(r => Array.from(r.input.text).length).join(",") + ")");
+  ok(said.st.length === said.n && said.st.every((x, i) => i === 0 || x > said.st[i - 1]) && said.d > 4.25 * 2, "…and the pieces are joined, each sentence with its start (" + said.st.join(", ") + ")");
+  G.tooLong = 0;
   // ---- a jump: that chapter first ----
   await page.click("#bkib"); await page.click("[data-bkgo]"); await page.waitForSelector("#bkc p");
   G.reqs = [];

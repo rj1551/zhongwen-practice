@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-KI5nDRGGTLic+d2V7zmuSGWbgZGIsYUPRB2MZJG/2kw='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-35CU2WBm/lvqbNJsGtdS1SWGzwtBJTH3o8O8nFUAkfU='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3431,7 +3431,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v103 · 11/24 21:53"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v104 · 11/24 22:10"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4618,6 +4618,48 @@ function sentCuts(text) {
   if (st < ch.length) out.push([st, ch.length]);
   return out.filter(([a, b]) => /[\p{L}\p{N}]/u.test(ch.slice(a, b).join("")));
 }
+// (v104) Google's Chirp voices refuse requests over a few hundred bytes ("sentences that are too long"), whatever the
+// 5,000-byte limit says. So a paragraph goes in pieces of ≤ AUD_PIECE characters, cut at a sentence end nearest the
+// middle, else a comma, else a space, else the middle; a piece Google still refuses is cut again (down to ~20).
+const AUD_PIECE = 120;
+function audPieces(text, lim = AUD_PIECE, x = 0, y = null) {
+  const ch = Array.from(text); if (y == null) y = ch.length;
+  if (y - x <= lim) return [[x, y]];
+  const mid = (x + y) / 2, END = /[。！？!?；;…]/, CLOSE = /[\s”’」』）)\]】〉》"']/, SOFT = /[，,、：:]/;
+  let best = null;
+  for (const re of [END, SOFT, /\s/]) {
+    for (let i = x + 1; i < y; i++) {
+      if (!re.test(ch[i - 1])) continue;
+      let c = i; while (c < y && CLOSE.test(ch[c])) c++;
+      if (c > x && c < y && (best == null || Math.abs(c - mid) < Math.abs(best - mid))) best = c;
+    }
+    if (best != null) break;
+  }
+  const c = best != null ? best : Math.round(mid);
+  return audPieces(text, lim, x, c).concat(audPieces(text, lim, c, y));
+}
+const audTooLong = e => e && e.code === "http" && /too long/i.test(e.message || "");
+// one paragraph: its pieces said one after another and joined, with each sentence's start in the joined audio
+async function audSayPara(t, voice) {
+  const ch = Array.from(t), starts = sentCuts(t).map(r => r[0]), parts = [], st = new Array(starts.length).fill(null);
+  let T = 0, chars = 0;
+  const one = async (x, y, lim) => {
+    const txt = ch.slice(x, y).join(""); if (!/[\p{L}\p{N}]/u.test(txt)) return;
+    let buf;
+    try { buf = await gttsSay(txt, voice); }
+    catch (e) { if (audTooLong(e) && lim > 20) { for (const [a, b] of audPieces(t, Math.floor(lim / 2), x, y)) await one(a, b, Math.floor(lim / 2)); return; } throw e; }
+    chars += y - x;
+    const inf = mp3Info(buf); if (!inf.dur) return;
+    const inside = starts.map((s, i) => [s, i]).filter(([s]) => s >= x && s < y), cuts = [x].concat(inside.map(([s]) => s).filter(s => s > x)).concat([y]);
+    const seg = await audPauses(buf, cuts.slice(1).map((c, k) => c - cuts[k]));
+    for (const [s, i] of inside) { const k = s === x ? 0 : cuts.indexOf(s); st[i] = +(T + (seg[k] || 0)).toFixed(3); }
+    parts.push(new Uint8Array(buf, inf.start)); T += inf.dur;
+  };
+  for (const [x, y] of audPieces(t)) await one(x, y, AUD_PIECE);
+  let last = 0; for (let i = 0; i < st.length; i++) { if (st[i] == null) st[i] = last; last = st[i]; } // (a sentence with nothing said: where the last one was)
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return { buf: out.buffer, st: st.length ? st : [0], chars };
+}
 // where each sentence starts in a paragraph's clip: the pause nearest to where it "should" start by characters
 let AUD_AC = null;
 async function audPauses(buf, wts) {
@@ -4716,12 +4758,11 @@ async function audRun() {
       const t = audParaText(tx, p);
       if (!/[\p{L}\p{N}]/u.test(t)) { await adbPut("clip", ck, { e: 1 }); continue; }
       const n = Array.from(t).length, u = audUse(); if (u.n + n > AUD_CAP && !u.more) { AUDR.err = AUD_CAPERR; return; }
-      let buf;
-      try { buf = await gttsSay(t, voice); }
+      let said;
+      try { said = await audSayPara(t, voice); }
       catch (e) { if (e && e.code === "rate") { AUDR.err = e; audDraw(); await new Promise(z => setTimeout(z, 30000)); AUDR.err = null; p--; continue; } AUDR.err = e; noteErr("book audio", e); return; }
       const u2 = audUse(); u2.n += n; audUseSet(u2);
-      const st = await audPauses(buf, sentCuts(t).map(([x, y]) => y - x));
-      await adbPut("clip", ck, { buf, st }); AUDR.err = null; audDraw();
+      await adbPut("clip", ck, said.buf.byteLength ? { buf: said.buf, st: said.st } : { e: 1 }); AUDR.err = null; audDraw();
       await new Promise(z => setTimeout(z, AUD_GAP_MS));
       const nx = await audNext(); if (nx && (nx.m.id !== m.id || nx.a !== a)) { moved = true; break; } // a jump: that chapter first (clips made here are kept)
     }
