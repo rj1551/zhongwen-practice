@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-S6C9n69fGXpY46q1JdSYoQdkGQTkwWhxEyOLk0GMjkU='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-Mwh89tYPIljRSvxf2gRc5+P5sGopTn68bdzQ4QRWe/0='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3432,7 +3432,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v110 · 11/25 13:27"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v111 · 11/25 14:51"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];

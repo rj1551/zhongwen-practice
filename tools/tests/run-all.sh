@@ -7,7 +7,7 @@
 # copies of docs/ in a temp folder and starts the servers the suites expect, then stops them:
 #   8765 clean copy (most suites, store) · 8767 copy whose GitHub URL points at keepalive's fake on 8766
 #   8790 hangsrv.js on a copy with the https-only service-worker check removed (nosignal, nudge, update)
-#   cache.test.js serves its own copy on 8791.
+#   cache.test.js serves its own copy on 8791, fonts.test.js on 8792.
 # Copies whose script text is patched get a fresh script-lock fingerprint (tools/csp.py), or the app wouldn't start.
 # Exit code 0 only if every suite passed.
 set -u
