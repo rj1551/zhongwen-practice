@@ -2,7 +2,7 @@
 # Builds the GitHub Pages copy in docs/ (index.html wrapped in a full HTML skeleton).
 set -e
 cd "$(dirname "$0")"
-mkdir -p docs/data
+mkdir -p docs/data/fonts
 {
   printf '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
   printf '<meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png">'
@@ -14,6 +14,7 @@ mkdir -p docs/data
 } > docs/index.html
 python3 tools/csp.py docs/index.html # script lock: only this build's own script may run (fingerprint of its exact text)
 cp data/words.json data/content.json data/slang.json data/cedict.txt data/CEDICT-LICENSE.txt data/zhconv.txt data/OPENCC-LICENSE.txt docs/data/
+cp data/fonts/*.woff data/fonts/OFL-*.txt docs/data/fonts/
 cp manifest.json sw.js icon-192.png icon-512.png icon-180.png docs/
 touch docs/.nojekyll
 echo built

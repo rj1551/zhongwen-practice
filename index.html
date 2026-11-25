@@ -2,8 +2,11 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;700&display=swap" media="print" id="fontcss">
 <style>
+/* fonts shipped with the app (v112, data/fonts/README.md): saved with the app, so they're there offline from the first start */
+@font-face{font-family:"Figtree";src:url("data/fonts/Figtree.woff") format("woff");font-weight:400 700;font-display:swap}
+@font-face{font-family:"Noto Serif SC";src:url("data/fonts/NotoSerifSC-500.woff") format("woff");font-weight:400 600;font-display:swap}
+@font-face{font-family:"Noto Serif SC";src:url("data/fonts/NotoSerifSC-700.woff") format("woff");font-weight:700 900;font-display:swap}
 /* Layout: one phone-width column, bottom tab bar; practice cards fill the column. Grid-paper (稿纸) answer boxes are the signature detail. */
 :root{
   --bg:#f1f3f6; --surface:#ffffff; --ink:#18202b; --muted:#5b6676; --line:#dce1e8;
@@ -307,7 +310,7 @@ textarea.code{width:100%;min-height:80px;font-family:ui-monospace,monospace;font
 
 <script>
 // fonts load without holding up the first draw (was an inline onload, which the script lock in build.sh would block)
-{ const fl = document.getElementById("fontcss"); if (fl) { if (fl.sheet) fl.media = "all"; else fl.addEventListener("load", () => { fl.media = "all"; }); } }
+
 "use strict";
 /* ============ utilities ============ */
 const $ = (s, r = document) => r.querySelector(s);

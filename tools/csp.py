@@ -15,7 +15,7 @@ Why each part is there:
   worker-src 'self'       the offline copy's service worker (sw.js)
   connect-src 'self' https:  GitHub, Gemini/Groq/any OpenAI-compatible base the learner sets, R2, LRCLIB
   media-src / img-src     audio and images from this site or from files on the device (blob:), data: icons
-  style-src / font-src    inline styles + Google Fonts
+  style-src / font-src    inline styles + the app's own fonts (data/fonts, v112)
   object-src, base-uri, form-action, frame-src 'none'   nothing the app uses; closes the other ways in
 """
 import base64, hashlib, re, sys
@@ -29,8 +29,8 @@ def policy(script, extra_connect=()):
         "connect-src " + " ".join(["'self'", "https:", *extra_connect]),
         "media-src 'self' blob:",
         "img-src 'self' data: blob:",
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "font-src https://fonts.gstatic.com",
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self'",
         "object-src 'none'",
         "base-uri 'none'",
         "form-action 'none'",

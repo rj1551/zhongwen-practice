@@ -1,10 +1,13 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-Mwh89tYPIljRSvxf2gRc5+P5sGopTn68bdzQ4QRWe/0='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-GDyqCbRoesjVUa2DKDivlDvrdxQOgUyyMumuMYBqyvM='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;700&display=swap" media="print" id="fontcss">
 <style>
+/* fonts shipped with the app (v112, data/fonts/README.md): saved with the app, so they're there offline from the first start */
+@font-face{font-family:"Figtree";src:url("data/fonts/Figtree.woff") format("woff");font-weight:400 700;font-display:swap}
+@font-face{font-family:"Noto Serif SC";src:url("data/fonts/NotoSerifSC-500.woff") format("woff");font-weight:400 600;font-display:swap}
+@font-face{font-family:"Noto Serif SC";src:url("data/fonts/NotoSerifSC-700.woff") format("woff");font-weight:700 900;font-display:swap}
 /* Layout: one phone-width column, bottom tab bar; practice cards fill the column. Grid-paper (稿纸) answer boxes are the signature detail. */
 :root{
   --bg:#f1f3f6; --surface:#ffffff; --ink:#18202b; --muted:#5b6676; --line:#dce1e8;
@@ -308,7 +311,7 @@ textarea.code{width:100%;min-height:80px;font-family:ui-monospace,monospace;font
 
 <script>
 // fonts load without holding up the first draw (was an inline onload, which the script lock in build.sh would block)
-{ const fl = document.getElementById("fontcss"); if (fl) { if (fl.sheet) fl.media = "all"; else fl.addEventListener("load", () => { fl.media = "all"; }); } }
+
 "use strict";
 /* ============ utilities ============ */
 const $ = (s, r = document) => r.querySelector(s);
@@ -3432,7 +3435,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v111 · 11/25 14:51"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v112 · 11/25 15:06"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];

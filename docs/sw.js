@@ -2,21 +2,11 @@
 // Two stores (v68): CACHE holds the app and is renewed with every release; DATA holds the big files that almost
 // never change (the 7 MB dictionary, the 简/繁 table) and is renewed only when DATA's number is bumped. Before v68
 // every release downloaded those ~7.3 MB again. Bump DATA only when cedict.txt or zhconv.txt changes.
-const CACHE = "zwlgf-v111";
+const CACHE = "zwlgf-v112";
 const DATA = "zwlgf-data-1";
-// (v111) the page's fonts (Figtree, Noto Serif SC from Google Fonts): kept across releases, so they work offline. Saved
-// as they're used: Google splits the Chinese font into many small files, and the browser fetches only the ones for the
-// characters on screen, so characters never shown while online fall back to the phone's own font offline.
-const FONTS = "zwlgf-fonts-1";
-const isFont = u => u.host === "fonts.googleapis.com" || u.host === "fonts.gstatic.com";
-async function fontFetch(e, u) {
-  const hit = await caches.match(e.request); // (looks in every store, creates none)
-  if (hit && u.host === "fonts.gstatic.com") return hit; // font files never change
-  const net = fetch(e.request).then(r => { if (r && (r.ok || r.type === "opaque")) { const copy = r.clone(); return caches.open(FONTS).then(c => c.put(e.request, copy)).then(() => r, () => r); } return r; });
-  if (hit) { if (self.navigator.onLine !== false) e.waitUntil(net.catch(() => {})); return hit; } // the list of font files may change: refreshed quietly
-  return net.catch(() => Response.error());
-}
-const BIG = ["data/cedict.txt", "data/zhconv.txt"];
+
+// (v112) the app's own fonts (data/fonts) are kept here too: ~3.8 MB, downloaded once and kept across releases
+const BIG = ["data/cedict.txt", "data/zhconv.txt", "data/fonts/NotoSerifSC-500.woff", "data/fonts/NotoSerifSC-700.woff", "data/fonts/Figtree.woff"];
 const FILES = ["./", "index.html", "data/words.json", "data/content.json", "data/slang.json", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
 const isBig = url => BIG.some(f => new URL(f, self.registration.scope).href === url.split(/[?#]/)[0]);
 const storeFor = url => isBig(url) ? DATA : CACHE;
@@ -35,7 +25,7 @@ async function fillData() {
 self.addEventListener("install", e => { e.waitUntil(Promise.all([caches.open(CACHE).then(c => c.addAll(FILES)), fillData()]).then(() => self.skipWaiting())); });
 // Tell open pages a newer page may be saved; the page compares versions and offers 切换 · Switch (index.html checkUpdate).
 const tellPages = () => self.clients.matchAll({ type: "window" }).then(cs => cs.forEach(c => c.postMessage({ type: "page-saved" })));
-self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== DATA && k !== FONTS).map(k => caches.delete(k)))).then(() => self.clients.claim()).then(tellPages)); });
+self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== DATA).map(k => caches.delete(k)))).then(() => self.clients.claim()).then(tellPages)); });
 // Network-first so updates arrive when online, but never wait more than NET_WAIT for it when there's a saved copy:
 // with no signal a phone often leaves requests hanging instead of failing, and the app used to stay blank (2026-11-14).
 // A late network answer still refreshes the saved copy for next time.
@@ -43,7 +33,6 @@ const NET_WAIT = 3000;
 let slowUntil = 0; // after one request times out, the rest of this page load (its data files) uses the saved copy straight away; opening the app always tries the network
 self.addEventListener("fetch", e => {
   const u = new URL(e.request.url);
-  if (isFont(u) && e.request.method === "GET") { e.respondWith(fontFetch(e, u)); return; }
   if (u.origin !== location.origin) return; // everything else from elsewhere: network only
   if (e.request.method !== "GET") return;
   // no-cache: always ask GitHub whether the file changed (it otherwise lets browsers reuse it for 10 min).
