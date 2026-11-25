@@ -178,6 +178,7 @@ html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100
 .ttsbar{position:sticky;bottom:0;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:4px;margin:6px -6px 0;padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 -4px 16px rgba(0,0,0,.08)}
 .ttsb{min-width:42px;min-height:42px;border:0;background:none;color:var(--ink);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;padding:0}
 .ttsb:active{background:var(--accent-soft)} .ttsplay{min-width:54px;min-height:54px;background:var(--accent);color:var(--accent-ink)} .ttsplay:active{background:var(--accent)}
+.ttssrc{flex:0 0 auto;font-size:15px;min-width:18px;text-align:center}
 .ttsrate{border-radius:14px;padding:0 10px;font-weight:700;font-size:15px;border:1px solid var(--line)}
 .ttsrp{position:fixed;left:0;right:0;bottom:0;z-index:22;background:var(--surface);border-top:1px solid var(--line);border-radius:18px 18px 0 0;box-shadow:0 -10px 30px rgba(0,0,0,.18);padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;gap:6px;animation:ttsup .18s ease-out}
 @keyframes ttsup{from{transform:translateY(40px);opacity:0}}
@@ -885,8 +886,10 @@ function touch(x, ...groups) { const t = now(); x.u = Math.max(t, (x.u || 0) + 1
 function mergeGenItem(a, b) {
   const out = mergeGenItem0(a, b);
   // a book's read ranges and reading sittings (v88) are united, so reading on both devices all counts
-  if (a.rd || b.rd || a.st || b.st) return Object.assign({}, out, { rd: rgUnion(a.rd, b.rd), st: stUnion(a.st, b.st) });
-  return out;
+  const x = {};
+  if (a.rd || b.rd || a.st || b.st) Object.assign(x, { rd: rgUnion(a.rd, b.rd), st: stUnion(a.st, b.st) });
+  if (a.au || b.au) { const m = new Map(); for (const e of (a.au || []).concat(b.au || [])) if (e && e.k) m.set(e.a + "-" + e.b, e); x.au = [...m.values()].sort((p, q) => p.a - q.a); } // a book's chapter audio in the cloud (v101)
+  return Object.keys(x).length ? Object.assign({}, out, x) : out;
 }
 function mergeGenItem0(a, b) {
   const base = (b.u || 0) > (a.u || 0) ? b : a, other = base === a ? b : a;
@@ -1008,6 +1011,7 @@ function purgeTrash(e, quiet) {
   if (e.kind === "book" && e.data && e.data.rec && !(S.gen.books || []).some(x => x.id === e.data.rec.id)) {
     const r = e.data.rec; bookDelLocal(r.id);
     if (r.r2 && r.r2.key) { S.r2del = (S.r2del || []).concat([r.r2.key]); setTimeout(r2Kick, 300); }
+    if ((r.au || []).length) { S.r2del = (S.r2del || []).concat(r.au.flatMap(x => [x.k + ".mp3", x.k + ".json"])); setTimeout(r2Kick, 300); }
   }
   if (!quiet) save();
 }
@@ -1022,7 +1026,7 @@ async function audioGc() {
   const alive = new Set([...(S.gen.listen || []).map(x => x.id), ...(S.gen.trash || []).filter(e => e.kind === "listen" && e.data && e.data.it).map(e => e.data.it.id)]);
   for (const k of await audioKeys()) if (S.gone["listen:" + k] && !alive.has(k)) audioDel(k);
 }
-function housekeep() { trashExpire(); audioGc().catch(e => noteErr("audio cleanup", e)); bookReconcile().catch(e => noteErr("book cleanup", e)); }
+function housekeep() { trashExpire(); audioGc().catch(e => noteErr("audio cleanup", e)); bookReconcile().catch(e => noteErr("book cleanup", e)).then(() => setTimeout(audKick, 4000)); }
 // used by mergeStates: drop what was deleted (and not changed since), and bin entries emptied anywhere
 function applyGone(st) {
   const g = st.gone || {}, dead = (k, u) => g[k] && (u || 0) <= g[k];
@@ -3946,6 +3950,7 @@ async function bookReconcile() {
 }
 async function bookDelLocal(id) {
   BOOKS = (BOOKS || []).filter(b => b.id !== id); if (BK && BK.id === id) BK = null;
+  audDelBook(id);
   try { await bdbDo(["m", "t"], "readwrite", t => { t.objectStore("m").delete(id); t.objectStore("t").delete(id); }); } catch (e) { noteErr("book remove", e); }
 }
 // to the bin (30 days, both devices); this device's copy and the cloud copy go when the bin entry goes
@@ -4130,6 +4135,7 @@ let BK_SAVE_T = null;
 function bkSetPos(p, jump) {
   if (!BK || p == null) return;
   if (ttsOn() && !jump) return; // while the player is open the place follows the voice, not the scrolling or page turns
+  if (jump === true && (BK.meta.aon || BK.meta.awhole)) setTimeout(audKick, 0); // a jump: that chapter's audio first
   bkTrack(p, jump);
   BK.pos = p;
   if (jump === true && ttsOn()) ttsGoto(p); // 目录, search, ↩: the voice goes there too
@@ -4167,7 +4173,7 @@ function renderBook(main) {
   if (!BK.lastAt || BK.lastAt.p !== BK.pos) BK.lastAt = { p: BK.pos, t: now() };
   const pref = bookPref(), page = pref.mode === "page", m = BK.meta, f = BK.find;
   main.innerHTML = `<div class="bkbar" id="bkbar"><button class="btn ghost" id="bkback" style="min-height:38px;padding:6px 10px">←</button><span class="bkt small muted zh">${esc(m.title)}</span>
-      <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button>${TTS_OK ? `<button class="tagc${TTS ? " on" : ""}" id="bktts" aria-label="听书 Read aloud">🔊</button>` : ""}<button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
+      <span class="row" style="gap:6px;flex-wrap:nowrap">${BK.back != null ? `<button class="tagc on" id="bkret">↩ 回到刚才</button>` : ""}<button class="tagc" id="bktoc">目录</button><button class="tagc" id="bkfind" aria-label="搜索 Search">🔍</button>${TTS_OK || (AUDL.get(BK.id) || []).length ? `<button class="tagc${TTS ? " on" : ""}" id="bktts" aria-label="听书 Read aloud">🔊</button>` : ""}<button class="tagc" id="bkaa" aria-label="显示 Display">Aa</button></span></div>
     ${f && f.res.length ? `<div class="bkfb" id="bkfb"><span class="small zh">「${esc(f.q)}」</span><span class="row" style="gap:6px;flex-wrap:nowrap"><button class="tagc" id="bkfp" aria-label="上一个 Previous">‹</button><span class="small muted" id="bkfn">${f.i + 1}/${f.res.length}${f.more ? "+" : ""}</span><button class="tagc" id="bkfx" aria-label="下一个 Next">›</button><button class="tagc" id="bkfc" aria-label="关闭搜索 Close search">✕</button></span></div>` : ""}
     <div class="bk ${page ? "page" : "scroll"}" id="bk" style="font-size:${BOOK_FS[pref.fs] || 21}px">${page ? `<div class="bkpw" id="bkpw"><div class="bkpi" id="bkpi"></div></div>` : `<div id="bkc"></div>`}</div>
     ${page ? `<div class="bkpb"><button id="bkprev" aria-label="上一页 Previous page">‹</button><span class="small muted" id="bkpct"></span><button id="bknext" aria-label="下一页 Next page">›</button></div>` : ""}
@@ -4175,6 +4181,9 @@ function renderBook(main) {
   $("#bkback", main).onclick = bkLeave;
   const tb = $("#bktts", main); if (tb) tb.onclick = () => { closeSheet(); if (TTS) ttsStop(); else ttsStart(); };
   if (TTS) ttsBind(main);
+  if (!AUDL.has(BK.id)) audList(BK.id).then(() => { if (VIEW === "read" && READ && READ.book === BK.id && !READ.sub && !TTS && !TTS_OK && (AUDL.get(BK.id) || []).length) render(); });
+  if (!TTS || TTS.mode !== "file" || TTS.playing === false) audPreload(BK.id, TTS ? TTS.p : BK.pos);
+  if (BK.meta.aon || BK.meta.awhole) audKick();
   $("#bktoc", main).onclick = () => { closeSheet(); READ.sub = "toc"; render(); };
   $("#bkfind", main).onclick = () => { closeSheet(); READ.sub = "find"; render(); };
   $("#bkaa", main).onclick = e => { e.stopPropagation(); bookAa(e.currentTarget); };
@@ -4317,15 +4326,15 @@ function ttsVoiceRow() {
 // a sentence is long (some voices stop on very long ones); only those with something to say
 function bkSents(i) {
   const cache = BK.sents || (BK.sents = []); if (cache[i]) return cache[i];
-  const toks = bkToks(i), out = [], END = /[。！？!?；;…]/, CLOSE = /^[\s”’」』）)\]】〉》"']+$/, SOFT = /[，,、：:]/;
-  let st = 0, len = 0;
-  const say = (a, b) => /[\p{L}\p{N}]/u.test(toks.slice(a, b).join("")) && out.push([a, b]);
-  for (let ti = 0; ti < toks.length; ti++) {
-    const t = toks[ti]; len += Array.from(t).length;
-    const pun = /\S/.test(t) && Array.from(t).every(isPunct);
-    if (pun && (END.test(t) || (SOFT.test(t) && len >= 80))) { while (ti + 1 < toks.length && CLOSE.test(toks[ti + 1])) ti++; say(st, ti + 1); st = ti + 1; len = 0; }
+  const toks = bkToks(i), offs = []; let o = 0;
+  for (const t of toks) { offs.push(o); o += Array.from(t.replace(/\//g, "")).length; }
+  const tokAt = c => { let k = 0; while (k + 1 < toks.length && offs[k + 1] <= c) k++; return k; };
+  const out = [];
+  for (const [a, b] of sentCuts(toks.join("").replace(/\//g, ""))) { // the same cuts as the book audio's timings (sentCuts)
+    let x = tokAt(a), y = tokAt(b - 1) + 1; const last = out[out.length - 1];
+    if (last && x < last[1]) { last[1] = Math.max(last[1], y); continue; } // a cut inside a token: the two go together
+    out.push([x, y]);
   }
-  if (st < toks.length) say(st, toks.length);
   return (cache[i] = out);
 }
 const ttsText = (p, s) => { const se = bkSents(p)[s]; return se ? bkToks(p).slice(se[0], se[1]).join("").replace(/\//g, "") : ""; };
@@ -4341,7 +4350,9 @@ async function ttsWake(on) {
   } catch (e) { TTS_WL = null; if (!TTS_WLWARN) { TTS_WLWARN = true; toast("这台设备不能让屏幕一直亮着，可能会自己熄屏 · This device can't keep the screen on; it may turn off by itself", 3500); } }
 }
 function ttsStart() {
-  if (!TTS_OK || !BK) return;
+  if (!BK) return;
+  if (audLocalFor(BK.id, BK.pos)) return ttsBegin(); // this chapter has audio made ahead (no device voice needed)
+  if (!TTS_OK) { toast("这个浏览器不能朗读，这一章也还没有音频 · This browser can't read aloud, and this chapter has no audio yet", 3500); return; }
   if (ttsVoices().length) return ttsBegin();
   // no Chinese voice (yet: some browsers load their list a moment later). Without one, browsers read with an English
   // voice that skips the Chinese and says only the numbers — so don't start; say how to add one
@@ -4350,7 +4361,7 @@ function ttsStart() {
   try { speechSynthesis.addEventListener("voiceschanged", go); } catch (e) {}
   setTimeout(go, 1500);
 }
-function ttsBegin() { TTS = { book: BK.id, p: BK.pos, s: 0, playing: false, gen: 0, pend: 0, since: null, utt: null }; render(); ttsPlay(); }
+function ttsBegin() { TTS = { book: BK.id, p: BK.pos, s: 0, playing: false, gen: 0, pend: 0, since: null, utt: null, mode: null }; render(); ttsPlay(); }
 function ttsNoVoice() {
   const o = $("#ttsrp"); if (o) o.remove();
   const pan = document.createElement("div"); pan.id = "ttsrp"; pan.className = "ttsrp ttsnv";
@@ -4363,7 +4374,7 @@ function ttsNoVoice() {
   document.body.append(pan);
   $("#ttsnvok", pan).onclick = () => pan.remove();
 }
-function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsWake(true); ttsSpeak(); ttsBarDraw(); ttsHint(); }
+function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsSpeak(); ttsBarDraw(); }
 // iPhones mute the read-aloud voice while silent mode is on, whatever the page does (v97/v98 tried "playback" audio
 // mode + a silent sound; it didn't help on the learner's iPhone, iOS 27.2, so v99 took it out). Real audio files
 // would play on silent (see the book-audio design). The first time on an iPhone / iPad, a hint says so.
@@ -4373,10 +4384,10 @@ function ttsHint() {
   if (!TTS_IOS) return; try { if (localStorage.getItem("zwlgf:ttshint")) return; localStorage.setItem("zwlgf:ttshint", "1"); } catch (e) { return; }
   toast("iPhone 开着静音模式就听不到朗读，要关掉静音 · On iPhone, read-aloud is silent while silent mode is on", 5000);
 }
-function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; try { speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
+function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; } try { if (TTS_OK) speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
 function ttsStop() {
   if (!TTS) return;
-  const keep = TTS; ttsPause(); TTS = null; ttsLock(false); $("#ttsrp") && $("#ttsrp").remove();
+  const keep = TTS; ttsPause(); TTS = null; audMediaOff(); ttsLock(false); $("#ttsrp") && $("#ttsrp").remove();
   if (BK && keep.book === BK.id) {
     if (keep.pend >= 1) { logDay(keep.pend, true, "listen"); save(); }
     BK.lastAt = { p: BK.pos, t: now() }; // reading on from here counts as usual
@@ -4389,6 +4400,11 @@ function ttsSpeak() {
   while (TTS.p < BK.paras.length && !bkSents(TTS.p)[TTS.s]) { TTS.p++; TTS.s = 0; }
   if (TTS.p >= BK.paras.length) { TTS.p = BK.paras.length - 1; TTS.s = Math.max(0, bkSents(TTS.p).length - 1); ttsPause(); toast("读到书的最后了 · That's the end of the book"); return; }
   ttsShow();
+  const h = audLocalFor(BK.id, TTS.p); if (h) return ttsFilePlay(h); // audio made ahead for this chapter (v101)
+  if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; }
+  TTS.mode = "voice";
+  if (!TTS_OK) { ttsPause(); toast("这个浏览器不能朗读，这一章也还没有音频 · This browser can't read aloud, and this chapter has no audio yet", 3500); return; }
+  ttsWake(true); ttsHint(); ttsVoiceNote();
   const g = ++TTS.gen, u = new SpeechSynthesisUtterance(ttsText(TTS.p, TTS.s)), v = ttsVoice();
   u.lang = v ? v.lang : "zh-CN"; if (v) u.voice = v; u.rate = ttsRate();
   u.onend = () => { if (TTS && g === TTS.gen && TTS.playing) ttsStep(1); };
@@ -4449,7 +4465,7 @@ const TTS_ICON = {
   next: `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="16.6" y="6" width="2.4" height="12" rx="1" fill="currentColor"/><path d="M5 6v12l9.5-6z" fill="currentColor"/></svg>`
 };
 function ttsBarHtml() {
-  return `<div class="ttsbar" id="ttsbar"><button class="ttsb" id="ttsx" aria-label="关掉听书 Close the player">✕</button>
+  return `<div class="ttsbar" id="ttsbar"><button class="ttsb" id="ttsx" aria-label="关掉听书 Close the player">✕</button><span class="ttssrc" id="ttssrc">${ttsSrcHtml()}</span>
     <button class="ttsb" id="ttsprev" aria-label="上一句 Previous sentence">${TTS_ICON.prev}</button>
     <button class="ttsb ttsplay" id="ttsplay" aria-label="${TTS && TTS.playing ? "暂停 Pause" : "播放 Play"}">${TTS && TTS.playing ? TTS_ICON.pause : TTS_ICON.play}</button>
     <button class="ttsb" id="ttsnext" aria-label="下一句 Next sentence">${TTS_ICON.next}</button>
@@ -4460,7 +4476,10 @@ function ttsBarDraw() {
   const b = $("#ttsplay"); if (!b || !TTS) return;
   b.innerHTML = TTS.playing ? TTS_ICON.pause : TTS_ICON.play; b.setAttribute("aria-label", TTS.playing ? "暂停 Pause" : "播放 Play");
   const r = $("#ttsrate"); if (r) r.textContent = ttsRateLabel(ttsRate());
+  const sr = $("#ttssrc"); if (sr) sr.innerHTML = ttsSrcHtml();
 }
+// 🎧 = audio made ahead, 📱 = the device's voice (v101: the learner wants to know which is playing)
+const ttsSrcHtml = () => !TTS ? "" : TTS.mode === "file" ? `<span title="录好的音频 · Audio made ahead" aria-label="录好的音频 · Audio made ahead">🎧</span>` : TTS.mode === "voice" ? `<span title="手机的声音 · Device voice" aria-label="手机的声音 · Device voice">📱</span>` : "";
 function ttsBind(main) {
   $("#ttsx", main).onclick = () => ttsStop();
   $("#ttsplay", main).onclick = () => { closeSheet(); if (TTS.playing) ttsPause(); else ttsPlay(); };
@@ -4483,7 +4502,7 @@ function ttsRatePanel() {
   const idx = () => Math.max(0, Math.min(TTS_RATES.length - 1, Math.round(ru.scrollLeft / TTS_TICK)));
   const go = (i, smooth) => ru.scrollTo({ left: i * TTS_TICK, behavior: smooth ? "smooth" : "auto" });
   const show = () => { const r = TTS_RATES[idx()]; $("#ttsrv", pan).textContent = ttsRateLabel(r); ru.setAttribute("aria-valuenow", r); $$(".ttst", ru).forEach((t, i) => t.classList.toggle("on", i === idx())); };
-  const settle = () => { const r = TTS_RATES[idx()]; if (r === ttsRate()) return; setTtsPref({ rate: r }); ttsBarDraw(); clearTimeout(TTS_RT); TTS_RT = setTimeout(() => { if (TTS && TTS.playing) ttsSpeak(); }, 350); };
+  const settle = () => { const r = TTS_RATES[idx()]; if (r === ttsRate()) return; setTtsPref({ rate: r }); ttsBarDraw(); clearTimeout(TTS_RT); if (TTS && TTS.mode === "file" && TAEL) { TAEL.playbackRate = r; return; } TTS_RT = setTimeout(() => { if (TTS && TTS.playing) ttsSpeak(); }, 350); };
   let st = null;
   ru.addEventListener("scroll", () => { show(); clearTimeout(st); st = setTimeout(settle, 160); }, { passive: true });
   ru.addEventListener("wheel", e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); go(Math.max(0, Math.min(TTS_RATES.length - 1, idx() + Math.sign(e.deltaY))), true); } }, { passive: false });
@@ -4515,11 +4534,396 @@ document.addEventListener("visibilitychange", () => {
   if (!TTS) return;
   if (document.hidden) { ttsTick(); TTS.hidAt = now(); return; }
   if (!TTS.playing) return;
-  let going = false; try { going = speechSynthesis.speaking || speechSynthesis.pending; } catch (e) {}
+  let going = false; try { going = TTS.mode === "file" ? !!(TAEL && !TAEL.paused) : speechSynthesis.speaking || speechSynthesis.pending; } catch (e) {}
   if (going) { if (TTS.hidAt) TTS.pend += Math.min(3600, (now() - TTS.hidAt) / 1000); TTS.since = now(); ttsWake(true); } // it kept reading while away (computers do)
   else { TTS.since = null; TTS.playing = false; TTS.gen++; ttsBarDraw(); } // the phone stopped it: ▶ picks up at the same sentence
   TTS.hidAt = null;
 });
+/* ---- 书的音频 · book audio made ahead (v101; design: claude/design-book-audio.md, provisional) ----
+   Google Cloud Text-to-Speech (Chirp 3 HD, cmn-CN) with the learner's API key (provGet().keys.gtts, so it syncs in
+   settings/keys.json like the other keys). Per book, on this device (m.aon), the app keeps the chapter at the place and
+   the next AUD_AHEAD ready while it's open and online; m.awhole = the whole book. One request per paragraph (the
+   simplified text); the chapter at the place goes first, so a jump is served first; resumable (each paragraph's clip
+   is kept until its chapter is put together). A chapter = the clips joined (MP3 frames join) + timings: each
+   paragraph's start (from MP3 frame counts) and its sentences' starts (from the pauses in the audio, else by
+   characters). Kept in IndexedDB zwlgf-baudio; uploaded to the cloud only when the learner taps (books/<id>/audio/…,
+   listed in the synced record r.au so other devices can download it, also on a tap). 听书 plays a chapter's audio
+   through an <audio> element (plays on silent and with the screen locked, lock-screen controls); chapters without
+   audio use the device voice, with a note. Characters sent are counted per month on this device; making stops at
+   AUD_CAP (under Google's 1 M free) unless the learner allows more for that month. */
+const GTTS = "https://texttospeech.googleapis.com/v1/";
+const AUD_AHEAD = 3, AUD_CAP = 900000, AUD_GAP_MS = 250;
+const AUD_VOICES = ["Aoede", "Kore", "Leda", "Zephyr", "Achernar", "Sulafat", "Despina", "Puck", "Charon", "Fenrir", "Orus", "Algenib"]; // used until the real list is loaded
+const AUD_SAMPLE = "大家好，今天我们一起来读书。我先读一段，你听听这个声音怎么样？";
+const gttsKey = () => { const p = provGet(); return (p.keys && p.keys.gtts) || ""; };
+function gttsSetKey(k) { const p = provGet(); p.keys = Object.assign({}, p.keys); if (k) p.keys.gtts = k; else delete p.keys.gtts; provSet(p); }
+function audVoice() { try { return localStorage.getItem("zwlgf:gttsvoice") || "cmn-CN-Chirp3-HD-Aoede"; } catch (e) { return "cmn-CN-Chirp3-HD-Aoede"; } }
+const audVoiceName = v => String(v || "").replace(/^cmn-CN-Chirp3-HD-/, "");
+function audUse() { const m = dayKey().slice(0, 7); try { const u = JSON.parse(localStorage.getItem("zwlgf:gttsuse") || "{}"); return u.m === m ? u : { m, n: 0, more: false }; } catch (e) { return { m, n: 0, more: false }; } }
+function audUseSet(u) { try { localStorage.setItem("zwlgf:gttsuse", JSON.stringify(u)); } catch (e) {} }
+const AUD_CAPERR = { code: "cap", message: "这个月已经用了 900,000 字（Google 每月免费 100 万字）。要继续的话点「这个月继续」，超过 100 万字会收费 · This month's 900,000 characters are used (Google gives 1 M free a month). To go on, tap \"Go on this month\"; past 1 M it's charged." };
+function gttsErr(st, t) {
+  let m = ""; try { m = (JSON.parse(t).error || {}).message || ""; } catch (e) { m = String(t || "").slice(0, 200); }
+  if (st === 429) return { code: "rate", message: "Google 说请求太快了，等一下再继续 · Google says too many requests; waiting a bit" };
+  if (/billing/i.test(m)) return { code: "billing", message: "Google 说这个项目还没开通结算（Billing）· Google says billing isn't enabled for the project" };
+  if (/has not been used|is disabled|SERVICE_DISABLED/i.test(m)) return { code: "api", message: "这个项目里还没启用 Cloud Text-to-Speech API · The Cloud Text-to-Speech API isn't enabled in the project" };
+  if (st === 400 && /API key/i.test(m) || st === 401 || st === 403) return { code: "key", message: "Google 不接受这把钥匙 · Google didn't accept the key" + (m ? ` (${m})` : "") };
+  return { code: "http", message: `Google 语音出错 ${st} · Google's voice service: error ${st}${m ? " — " + m : ""}` };
+}
+async function gttsFetch(path, body) {
+  const key = gttsKey(); if (!key) throw { code: "nokey", message: "还没有 Google 的钥匙（进度 → 书的音频）· No Google key yet (Progress → Book audio)" };
+  let r; try { r = await fetch(GTTS + path, body ? { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": key }, body: JSON.stringify(body) } : { headers: { "x-goog-api-key": key } }); }
+  catch (e) { throw { code: "net", message: "连不上 Google 的语音服务（没网？）· Couldn't reach Google's voice service (offline?)" }; }
+  if (!r.ok) { let t = ""; try { t = await r.text(); } catch (e) {} throw gttsErr(r.status, t); }
+  return r.json();
+}
+async function gttsSay(text, voice) {
+  const j = await gttsFetch("text:synthesize", { input: { text }, voice: { languageCode: "cmn-CN", name: voice }, audioConfig: { audioEncoding: "MP3" } });
+  if (!j || !j.audioContent) throw { code: "bad", message: "Google 没返回音频 · Google sent no audio" };
+  const bin = atob(j.audioContent), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u.buffer;
+}
+async function gttsVoices() {
+  const j = await gttsFetch("voices?languageCode=cmn-CN");
+  return ((j && j.voices) || []).map(v => v.name).filter(n => /Chirp3-HD/.test(n)).sort();
+}
+// MP3: where the frames start and how long they last (frame headers; an ID3 tag at the start is skipped)
+function mp3Info(buf) {
+  const b = new Uint8Array(buf); let i = 0, start = -1, samples = 0, sr = 0, frames = 0;
+  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) i = 10 + (((b[6] & 127) << 21) | ((b[7] & 127) << 14) | ((b[8] & 127) << 7) | (b[9] & 127));
+  const BR1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320], BR2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+  const SR = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xFF || (b[i + 1] & 0xE0) !== 0xE0) { i++; continue; }
+    const ver = (b[i + 1] >> 3) & 3, lay = (b[i + 1] >> 1) & 3, bri = b[i + 2] >> 4, sri = (b[i + 2] >> 2) & 3, pad = (b[i + 2] >> 1) & 1;
+    if (ver === 1 || lay !== 1 || bri === 0 || bri === 15 || sri === 3) { i++; continue; }
+    const s = SR[ver][sri], len = Math.floor((ver === 3 ? 144 : 72) * (ver === 3 ? BR1 : BR2)[bri] * 1000 / s) + pad;
+    if (start < 0) start = i;
+    frames++; samples += ver === 3 ? 1152 : 576; sr = s; i += len;
+  }
+  return { start: Math.max(0, start), dur: sr ? samples / sr : 0, frames };
+}
+// a paragraph's sentences as character ranges [a, b): cut after 。！？；… (plus closing quotes), or at a comma once a
+// sentence is ≥ 80 characters; only ranges with something to say. bkSents (the highlight) uses the same cuts.
+function sentCuts(text) {
+  const ch = Array.from(text), out = [], END = /[。！？!?；;…]/, CLOSE = /[\s”’」』）)\]】〉》"']/, SOFT = /[，,、：:]/;
+  let st = 0, len = 0;
+  for (let i = 0; i < ch.length; i++) {
+    len++; const c = ch[i];
+    if (END.test(c) || (SOFT.test(c) && len >= 80)) { while (i + 1 < ch.length && (CLOSE.test(ch[i + 1]) || END.test(ch[i + 1]))) i++; out.push([st, i + 1]); st = i + 1; len = 0; }
+  }
+  if (st < ch.length) out.push([st, ch.length]);
+  return out.filter(([a, b]) => /[\p{L}\p{N}]/u.test(ch.slice(a, b).join("")));
+}
+// where each sentence starts in a paragraph's clip: the pause nearest to where it "should" start by characters
+let AUD_AC = null;
+async function audPauses(buf, wts) {
+  const k = wts.length, D = mp3Info(buf).dur; if (k <= 1 || !D) return [0];
+  const tot = wts.reduce((a, b) => a + b, 0) || 1; let acc = 0;
+  const exp = wts.slice(0, -1).map(w => (acc += w) / tot * D);
+  let gaps = [];
+  try {
+    AUD_AC = AUD_AC || new (window.AudioContext || window.webkitAudioContext)();
+    const ab = await new Promise((res, rej) => { const p = AUD_AC.decodeAudioData(buf.slice(0), res, rej); if (p && p.then) p.then(res, rej); });
+    const x = ab.getChannelData(0), W = Math.max(1, Math.round(ab.sampleRate * 0.01)), n = Math.floor(x.length / W), e = new Float32Array(n), sc = D / (ab.duration || D);
+    for (let j = 0; j < n; j++) { let s = 0; for (let q = j * W; q < (j + 1) * W; q++) s += x[q] * x[q]; e[j] = Math.sqrt(s / W); }
+    const loud = Array.from(e).sort((a, b) => a - b)[Math.floor(n * 0.9)] || 0, thr = Math.max(1e-4, loud * 0.06);
+    for (let j = 0; j < n;) { if (e[j] < thr) { let q = j; while (q < n && e[q] < thr) q++; if (q - j >= 15 && j > 0 && q < n) gaps.push([j * 0.01 * sc, q * 0.01 * sc]); j = q; } else j++; }
+  } catch (e) { gaps = []; }
+  const out = [0]; let last = 0, gi = 0;
+  for (const t of exp) {
+    let best = null;
+    for (let g = gi; g < gaps.length; g++) {
+      const m = (gaps[g][0] + gaps[g][1]) / 2; if (m <= last + 0.3) continue;
+      const d = Math.abs(m - t); if (d > Math.max(1.5, D / k * 0.5)) { if (m > t) break; continue; }
+      if (!best || d < best.d) best = { d, g };
+    }
+    let st = best ? Math.max(gaps[best.g][0], gaps[best.g][1] - 0.08) : t; if (best) gi = best.g + 1;
+    st = Math.max(st, last + 0.3); out.push(+st.toFixed(3)); last = st;
+  }
+  return out;
+}
+// storage: "clip" = one paragraph's audio while its chapter is being made ("book|voice|p" → {buf, st} or {e: 1} for
+// nothing to say); "ch" = a finished chapter ("book|a|b|voice" → {a, b, voice, d, z, ps, ss, blob})
+let ADB_P = null;
+function adb() {
+  if (ADB_P) return ADB_P;
+  ADB_P = new Promise((res, rej) => { try { const r = indexedDB.open("zwlgf-baudio", 1); r.onupgradeneeded = () => { r.result.createObjectStore("clip"); r.result.createObjectStore("ch"); }; r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } }).catch(e => { ADB_P = null; throw e; });
+  return ADB_P;
+}
+async function adbDo(st, mode, fn) {
+  const db = await adb();
+  return new Promise((res, rej) => { const t = db.transaction(st, mode); let out; fn(t.objectStore(st), v => { out = v; }); t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error("aborted")); });
+}
+const adbGet = (st, k) => adbDo(st, "readonly", (s, set) => { const r = s.get(k); r.onsuccess = () => set(r.result || null); });
+const adbPut = (st, k, v) => adbDo(st, "readwrite", s => { s.put(v, k); });
+const adbDel = (st, k) => adbDo(st, "readwrite", s => { s.delete(k); });
+const adbKeys = (st, pre) => adbDo(st, "readonly", (s, set) => { const r = s.getAllKeys(IDBKeyRange.bound(pre, pre + "￿")); r.onsuccess = () => set((r.result || []).map(String)); });
+// the chapters with audio on this device, per book: [{a, b, v, k}]
+const AUDL = new Map();
+async function audList(id) {
+  if (AUDL.has(id)) return AUDL.get(id);
+  let l = []; try { l = (await adbKeys("ch", id + "|")).map(k => { const [, a, b, ...v] = k.split("|"); return { a: +a, b: +b, v: v.join("|"), k }; }); } catch (e) { noteErr("book audio list", e); }
+  AUDL.set(id, l); return l;
+}
+const audLocalFor = (id, p) => { const l = AUDL.get(id); return (l && l.find(h => p >= h.a && p < h.b)) || null; };
+async function audDelBook(id) {
+  try { for (const st of ["clip", "ch"]) { const ks = await adbKeys(st, id + "|"); for (const k of ks) await adbDel(st, k); } } catch (e) { noteErr("book audio remove", e); }
+  AUDL.delete(id);
+}
+// a book's chapters as paragraph ranges, and the ones to have ready: the place's chapter + AUD_AHEAD (or all)
+function audRanges(m) {
+  const st = [...new Set((m.chapters || []).map(c => c.p))].filter(p => p >= 0 && p < m.n).sort((a, b) => a - b);
+  if (!st.length || st[0] > 0) st.unshift(0);
+  return st.map((a, i) => [a, i + 1 < st.length ? st[i + 1] : m.n]);
+}
+function audPlace(m) { return BK && BK.id === m.id ? BK.pos : ((bookPos(bookRec(m.id), m) || {}).p || 0); }
+function audWant(m) {
+  const rs = audRanges(m), p = audPlace(m), ci = Math.max(0, rs.findIndex(([a, b]) => p >= a && p < b));
+  const ahead = rs.slice(ci, ci + 1 + AUD_AHEAD);
+  return m.awhole ? ahead.concat(rs.slice(ci + 1 + AUD_AHEAD), rs.slice(0, ci)) : m.aon ? ahead : [];
+}
+const audParaText = (tx, p) => String((tx.simp && tx.simp[p]) || tx.paras[p] || "");
+const AUDR = { busy: false, job: null, err: null, stop: false };
+const audBooks = () => (BOOKS || []).filter(m => m.aon || m.awhole).sort((x, y) => (BK && x.id === BK.id ? -1 : 0) - (BK && y.id === BK.id ? -1 : 0));
+async function audNext() {
+  for (const m of audBooks()) { const have = await audList(m.id), r = audWant(m).find(([a, b]) => !have.some(h => h.a === a && h.b === b)); if (r) return { m, a: r[0], b: r[1] }; }
+  return null;
+}
+function audKick() {
+  if (AUDR.busy || !ONLINE || !gttsKey() || !(BOOKS || []).some(m => m.aon || m.awhole)) return;
+  AUDR.busy = true; AUDR.stop = false;
+  audRun().catch(e => { AUDR.err = e && e.message ? e : { message: String(e) }; noteErr("book audio", e); }).finally(() => { AUDR.busy = false; AUDR.job = null; audDraw(); });
+}
+async function audRun() {
+  const texts = new Map();
+  for (let guard = 0; guard < 20000; guard++) {
+    if (AUDR.stop || !ONLINE || !gttsKey()) return;
+    { const u = audUse(); if (u.n >= AUD_CAP && !u.more) { AUDR.err = AUD_CAPERR; return; } }
+    const pick = await audNext(); if (!pick) { AUDR.err = null; return; }
+    const { m, a, b } = pick, voice = audVoice();
+    let tx = texts.get(m.id); if (!tx) { tx = await bookTextGet(m.id); if (!tx) { m.aon = m.awhole = false; await bookMetaPut(m); continue; } texts.set(m.id, tx); }
+    const have = new Set(await adbKeys("clip", `${m.id}|${voice}|`));
+    AUDR.job = { id: m.id, title: m.title, a, b, done: 0, ch: audChTitle(m, a) }; audDraw();
+    let moved = false;
+    for (let p = a; p < b; p++) {
+      if (AUDR.stop || !ONLINE) return;
+      AUDR.job.done = p - a; const ck = `${m.id}|${voice}|${p}`;
+      if (have.has(ck)) continue;
+      const t = audParaText(tx, p);
+      if (!/[\p{L}\p{N}]/u.test(t)) { await adbPut("clip", ck, { e: 1 }); continue; }
+      const n = Array.from(t).length, u = audUse(); if (u.n + n > AUD_CAP && !u.more) { AUDR.err = AUD_CAPERR; return; }
+      let buf;
+      try { buf = await gttsSay(t, voice); }
+      catch (e) { if (e && e.code === "rate") { AUDR.err = e; audDraw(); await new Promise(z => setTimeout(z, 30000)); AUDR.err = null; p--; continue; } AUDR.err = e; noteErr("book audio", e); return; }
+      const u2 = audUse(); u2.n += n; audUseSet(u2);
+      const st = await audPauses(buf, sentCuts(t).map(([x, y]) => y - x));
+      await adbPut("clip", ck, { buf, st }); AUDR.err = null; audDraw();
+      await new Promise(z => setTimeout(z, AUD_GAP_MS));
+      const nx = await audNext(); if (nx && (nx.m.id !== m.id || nx.a !== a)) { moved = true; break; } // a jump: that chapter first (clips made here are kept)
+    }
+    if (!moved) await audAssemble(m, voice, a, b);
+  }
+}
+async function audAssemble(m, voice, a, b) {
+  const parts = [], ps = [], ss = []; let t = 0;
+  for (let p = a; p < b; p++) {
+    const c = await adbGet("clip", `${m.id}|${voice}|${p}`); if (!c || c.e || !c.buf) continue;
+    const inf = mp3Info(c.buf); if (!inf.dur) continue;
+    ps.push([p, +t.toFixed(3)]); (c.st && c.st.length ? c.st : [0]).forEach((x, s) => ss.push([+(t + x).toFixed(3), p, s]));
+    parts.push(new Uint8Array(c.buf, inf.start)); t += inf.dur;
+  }
+  const blob = new Blob(parts, { type: "audio/mpeg" }), k = `${m.id}|${a}|${b}|${voice}`;
+  await adbPut("ch", k, { a, b, voice, d: +t.toFixed(3), z: blob.size, ps, ss, blob, made: now() });
+  for (let p = a; p < b; p++) await adbDel("clip", `${m.id}|${voice}|${p}`);
+  AUDL.delete(m.id); await audList(m.id); audDraw();
+}
+function audChTitle(m, a) { const c = (m.chapters || []).find(x => x.p === a); return c ? (c.s || c.t) : a === 0 ? "开头 · Beginning" : ""; }
+// the cloud (only on a tap): books/<id>/audio/<a>-<b>-<voice>.mp3 + .json; r.au lists them for the other devices
+const audR2Base = (id, h) => `books/${id}/audio/${h.a}-${h.b}-${audVoiceName(h.v)}`;
+async function audUpload(id) {
+  const r = bookRec(id), l = await audList(id); if (!r || !r2Cfg()) return;
+  const inCloud = new Set((r.au || []).map(x => x.a + "-" + x.b));
+  const todo = l.filter(h => !inCloud.has(h.a + "-" + h.b)); if (!todo.length) return;
+  AUDR.up = { id, done: 0, n: todo.length }; audDraw();
+  try {
+    for (const h of todo) {
+      const c = await adbGet("ch", h.k); if (!c) continue;
+      let use = null; try { use = await r2UsageFresh(); } catch (e) {}
+      if (use && use.bytes + c.z > R2_FREE) { toast("没上传：会超过云端 10 GB 免费额度 · Not uploaded: it would go over the free 10 GB", 5000); break; }
+      const base = audR2Base(id, h);
+      await r2Put(base + ".mp3", c.blob);
+      await r2Put(base + ".json", new Blob([JSON.stringify({ v: 1, a: c.a, b: c.b, voice: c.voice, d: c.d, ps: c.ps, ss: c.ss })], { type: "application/json" }));
+      r.au = (r.au || []).filter(x => !(x.a === h.a && x.b === h.b)).concat([{ k: base, a: h.a, b: h.b, v: h.v, d: c.d, z: c.z }]); touch(r, "audio"); save();
+      if (R2.usage) r2UseSet({ bytes: R2.usage.bytes + c.z, n: R2.usage.n + 2 });
+      AUDR.up.done++; audDraw();
+    }
+    toast("音频已上传到云端 · Audio uploaded", 2500);
+  } catch (e) { AUDR.err = e && e.message ? e : { message: "上传没成功 · Upload failed" }; noteErr("book audio upload", e); }
+  finally { AUDR.up = null; audDraw(); }
+}
+async function audDownload(id) {
+  const r = bookRec(id), l = await audList(id); if (!r || !r2Cfg()) return;
+  const todo = (r.au || []).filter(x => !l.some(h => h.a === x.a && h.b === x.b)); if (!todo.length) return;
+  AUDR.down = { id, done: 0, n: todo.length }; audDraw();
+  try {
+    for (const x of todo) {
+      const j = JSON.parse(await (await r2Get(x.k + ".json")).text()), blob = await r2Get(x.k + ".mp3", null, "audio/mpeg");
+      await adbPut("ch", `${id}|${x.a}|${x.b}|${x.v}`, { a: x.a, b: x.b, voice: x.v, d: j.d, z: blob.size, ps: j.ps, ss: j.ss, blob, made: now() });
+      AUDR.down.done++; AUDL.delete(id); await audList(id); audDraw();
+    }
+    toast("音频已下载到这台设备 · Audio downloaded to this device", 2500);
+  } catch (e) { AUDR.err = e && e.message ? e : { message: "下载没成功 · Download failed" }; noteErr("book audio download", e); }
+  finally { AUDR.down = null; audDraw(); }
+}
+// the book's ⋯ screen: switch, progress, this month's characters, cloud
+function audCardHtml(r, m) {
+  const k = gttsKey(), l = AUDL.get(m.id) || [], rs = audRanges(m), have = rs.filter(([a, b]) => l.some(h => h.a === a && h.b === b)).length;
+  const u = audUse(), j = AUDR.job && AUDR.job.id === m.id ? AUDR.job : null, cloud = r2Cfg();
+  const inCloud = new Set((r.au || []).map(x => x.a + "-" + x.b)), up = l.filter(h => !inCloud.has(h.a + "-" + h.b)).length, down = (r.au || []).filter(x => !l.some(h => h.a === x.a && h.b === x.b));
+  const downMB = down.reduce((s, x) => s + (x.z || 0), 0);
+  return `<span class="label">🎧 书的音频 · Book audio</span>
+    ${!k ? `<p class="small muted">用 Google 的声音提前把书做成音频：静音模式下、锁屏时都能听 · Make the book into real audio ahead of time with a Google voice: it plays on silent and with the screen locked.</p><button class="btn soft" id="audsetup">设置 Google 的钥匙 · Set up a Google key</button>`
+    : `<label class="small" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="audon" style="margin-top:3px;flex:none" ${m.aon ? "checked" : ""}> 提前准备音频：你读到的这一章和后面 ${AUD_AHEAD} 章（app 开着、联网时）· Keep audio ready: the chapter you're in and the next ${AUD_AHEAD} (while the app is open and online)</label>`}
+    <p class="small">这台设备有 ${have} / ${rs.length} 章的音频 · ${have} of ${rs.length} chapters on this device${j ? `<br><span class="spin"></span> 正在做：${esc(j.ch || "第 " + (rs.findIndex(x => x[0] === j.a) + 1) + " 章")} · ${j.done}/${j.b - j.a} 段 · Making ${j.done}/${j.b - j.a} paragraphs` : ""}</p>
+    ${AUDR.err ? `<p class="small" style="color:var(--bad)">${esc(AUDR.err.message || "")}</p>` : ""}
+    ${k && AUDR.err && AUDR.err.code === "cap" && !u.more ? `<button class="btn ghost" id="audmore">这个月继续（超过 100 万字会收费）· Go on this month (past 1 M is charged)</button>` : ""}
+    ${k ? `<div class="row" style="gap:8px"><button class="btn ghost" id="audwhole">${m.awhole ? "停止做整本书 · Stop making the whole book" : "整本书都做 · Make the whole book"}</button></div>
+    <p class="small muted">这个月这台设备用了 ${u.n.toLocaleString()} / ${AUD_CAP.toLocaleString()} 字 · This month on this device: ${u.n.toLocaleString()} of ${AUD_CAP.toLocaleString()} characters · 声音 Voice: ${esc(audVoiceName(audVoice()))}</p>` : ""}
+    ${cloud ? `<div class="row" style="gap:8px">${up ? `<button class="btn soft" id="audup" ${AUDR.up ? "disabled" : ""}>☁ 上传 ${up} 章 · Upload ${up} chapter${up > 1 ? "s" : ""}</button>` : ""}${down.length ? `<button class="btn soft" id="auddown" ${AUDR.down ? "disabled" : ""}>⬇ 下载 ${down.length} 章 · Download ${down.length} (${fmtMB(downMB)})</button>` : ""}</div>
+      ${AUDR.up && AUDR.up.id === m.id ? `<p class="small"><span class="spin"></span> 上传中 ${AUDR.up.done}/${AUDR.up.n} · Uploading</p>` : ""}${AUDR.down && AUDR.down.id === m.id ? `<p class="small"><span class="spin"></span> 下载中 ${AUDR.down.done}/${AUDR.down.n} · Downloading</p>` : ""}
+      ${!up && !down.length && l.length ? `<p class="small muted">☁ 云端和这台设备一样 · The cloud has the same chapters</p>` : ""}` : ""}`;
+}
+function audCardBind(r, m) {
+  const c = $("#audcard"); if (!c) return;
+  const s = $("#audsetup", c); if (s) s.onclick = () => { READ = null; setView("me"); setTimeout(() => { const g = $("#gttscard"); if (g) g.scrollIntoView({ block: "start" }); }, 50); };
+  const on = $("#audon", c); if (on) on.onchange = () => { m.aon = on.checked; bookMetaPut(m).catch(e => noteErr("book audio switch", e)); if (m.aon) audKick(); else if (!m.awhole) AUDR.stop = true; audDraw(); };
+  const w = $("#audwhole", c); if (w) w.onclick = () => { m.awhole = !m.awhole; bookMetaPut(m).catch(e => noteErr("book audio switch", e)); if (m.awhole) audKick(); else if (!m.aon) AUDR.stop = true; audDraw(); };
+  const mo = $("#audmore", c); if (mo) mo.onclick = () => { const u = audUse(); u.more = true; audUseSet(u); AUDR.err = null; audKick(); audDraw(); };
+  const up = $("#audup", c); if (up) up.onclick = () => audUpload(m.id);
+  const dn = $("#auddown", c); if (dn) dn.onclick = () => audDownload(m.id);
+}
+function audDraw() {
+  const c = $("#audcard");
+  if (c && READ && READ.sub === "info") { const r = bookRec(READ.book), m = bookLocal(READ.book); if (r && m) { c.innerHTML = audCardHtml(r, m); audCardBind(r, m); } }
+  const g = $("#gttscard"); if (g && !g.contains(document.activeElement)) { g.innerHTML = gttsCard(); gttsBind(); }
+  if (TTS) ttsBarDraw();
+}
+// Progress → 书的音频: the key, how to get one, the voice, a sample
+const GTTS_UI = { voices: null, busy: false, err: "", ok: false, sample: null };
+function gttsCard() {
+  const k = gttsKey(), u = audUse(), v = audVoice(), list = GTTS_UI.voices || AUD_VOICES.map(n => "cmn-CN-Chirp3-HD-" + n);
+  return `<span class="label">🎧 书的音频 · Book audio (Google)</span>
+    <p class="small muted">用 Google 的声音提前把书做成音频文件：静音模式下、锁屏时都能听，和歌一样。每本书在它的「⋯」里打开 · Real audio files made ahead with a Google voice: they play on silent and with the screen locked, like songs. Turn it on per book in its ⋯ screen.</p>
+    <details class="small"><summary>怎么拿钥匙 · How to get a key (about 10 minutes)</summary><ol style="padding-left:18px;margin:6px 0">
+      <li>打开 <b>console.cloud.google.com</b>，用 Google 账号登录，新建一个项目 · Open console.cloud.google.com, sign in, create a project.</li>
+      <li>开通结算：Billing → 关联结算账号（要绑卡）· Billing → link a billing account (a card is needed).</li>
+      <li>预算提醒：Billing → Budgets &amp; alerts → 建一个 $1 的预算，到了发邮件 · Budgets &amp; alerts → a $1 budget that emails you.</li>
+      <li>启用 API：APIs &amp; Services → Library → 搜「Cloud Text-to-Speech API」→ Enable · Enable the Cloud Text-to-Speech API.</li>
+      <li>建钥匙：APIs &amp; Services → Credentials → Create credentials → API key · Create an API key.</li>
+      <li>限制钥匙（重要）：Website restrictions 加 <b>${esc(location.origin)}/*</b>；API restrictions 只选 Cloud Text-to-Speech API · Restrict it: websites = ${esc(location.origin)}/*, APIs = only Cloud Text-to-Speech.</li>
+      <li>把钥匙贴到下面，点「试听」· Paste the key below and tap Sample.</li></ol>
+      <span class="muted">每月免费 100 万字（大约 5 本小说），app 在 90 万字时会停下来问你 · 1 M characters free a month (about 5 novels); the app stops at 900,000 and asks.</span></details>
+    <input class="inp" id="gtkey" type="password" placeholder="Google API key" value="${esc(k)}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="row" style="gap:8px;align-items:center"><select class="inp" id="gtvoice" style="flex:1;min-width:0">${(list.includes(v) ? list : [v].concat(list)).map(n => `<option value="${esc(n)}" ${n === v ? "selected" : ""}>${esc(audVoiceName(n))}</option>`).join("")}</select>
+      <button class="btn soft" id="gtlist" ${!k || GTTS_UI.busy ? "disabled" : ""} style="min-height:38px;padding:8px 12px">全部声音 · All voices</button></div>
+    <div class="row" style="gap:8px;align-items:center"><button class="btn" id="gtsample" ${!k || GTTS_UI.busy ? "disabled" : ""}>${GTTS_UI.busy ? `<span class="spin"></span>` : "▶"} 试听 · Sample</button>${GTTS_UI.sample ? `<audio controls id="gtaud" src="${GTTS_UI.sample}" style="flex:1;min-width:0;height:36px"></audio>` : ""}</div>
+    ${GTTS_UI.err ? `<p class="small" style="color:var(--bad)">${esc(GTTS_UI.err)}</p>` : GTTS_UI.ok ? `<p class="small" style="color:var(--good)">✓ 钥匙能用 · The key works</p>` : ""}
+    ${k ? `<p class="small muted">这个月这台设备用了 ${u.n.toLocaleString()} / ${AUD_CAP.toLocaleString()} 字 · This month on this device: ${u.n.toLocaleString()} characters</p>` : ""}`;
+}
+function gttsBind() {
+  const c = $("#gttscard"); if (!c) return;
+  const redraw = () => { const g = $("#gttscard"); if (g) { g.innerHTML = gttsCard(); gttsBind(); } };
+  $("#gtkey", c).onchange = () => { gttsSetKey($("#gtkey", c).value.trim()); GTTS_UI.ok = false; GTTS_UI.err = ""; GTTS_UI.voices = null; redraw(); audKick(); };
+  $("#gtvoice", c).onchange = () => { try { localStorage.setItem("zwlgf:gttsvoice", $("#gtvoice", c).value); } catch (e) {} GTTS_UI.sample = null; redraw(); };
+  $("#gtlist", c).onclick = async () => { GTTS_UI.busy = true; GTTS_UI.err = ""; redraw(); try { const l = await gttsVoices(); if (l.length) GTTS_UI.voices = l; GTTS_UI.ok = true; } catch (e) { GTTS_UI.err = e.message || String(e); } GTTS_UI.busy = false; redraw(); };
+  $("#gtsample", c).onclick = async () => {
+    GTTS_UI.busy = true; GTTS_UI.err = ""; redraw();
+    try { const buf = await gttsSay(AUD_SAMPLE, audVoice()); if (GTTS_UI.sample) URL.revokeObjectURL(GTTS_UI.sample); GTTS_UI.sample = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" })); GTTS_UI.ok = true; const u = audUse(); u.n += Array.from(AUD_SAMPLE).length; audUseSet(u); }
+    catch (e) { GTTS_UI.err = e.message || String(e); }
+    GTTS_UI.busy = false; redraw(); const a = $("#gtaud"); if (a) a.play().catch(() => {}); // (if the phone refuses, its ▶ plays it)
+  };
+}
+// playing a chapter's audio file (听书): one <audio> element; the highlight and the place follow its time
+let TAEL = null, TAEL_REC = null, TAEL_URL = null, TAEL_LOAD = null;
+function taEl() {
+  if (TAEL) return TAEL;
+  const a = document.createElement("audio"); a.preload = "auto"; a.hidden = true; document.body.append(a); TAEL = a;
+  a.addEventListener("timeupdate", ttsFileTick);
+  a.addEventListener("ended", ttsFileEnded);
+  a.addEventListener("pause", () => { if (TTS && TTS.mode === "file" && TTS.playing && !a.ended && !TTS.swap) { ttsTick(); TTS.playing = false; TTS.since = null; ttsBarDraw(); } }); // paused from the lock screen, a call…
+  a.addEventListener("play", () => { if (TTS && TTS.mode === "file" && !TTS.playing) { TTS.playing = true; TTS.since = now(); ttsBarDraw(); } });
+  return a;
+}
+// load a chapter's audio into the element (kept loaded, so ▶ can start it inside the tap, as iPhones want)
+function audLoad(id, h) {
+  if (TAEL_REC && TAEL_REC.k === h.k) return Promise.resolve(TAEL_REC);
+  if (TAEL_LOAD && TAEL_LOAD.k === h.k) return TAEL_LOAD.p;
+  const p = adbGet("ch", h.k).then(c => {
+    if (!c || !c.blob) throw new Error("chapter audio missing");
+    const el = taEl(); if (TTS) TTS.swap = true;
+    if (TAEL_URL) URL.revokeObjectURL(TAEL_URL);
+    TAEL_URL = URL.createObjectURL(c.blob); el.src = TAEL_URL; el.load();
+    TAEL_REC = Object.assign({ k: h.k, id }, c); delete TAEL_REC.blob;
+    return new Promise(res => { let done = false; const ok = () => { if (done) return; done = true; if (TTS) TTS.swap = false; res(TAEL_REC); }; el.addEventListener("loadedmetadata", ok, { once: true }); setTimeout(ok, 3000); });
+  }).finally(() => { if (TAEL_LOAD && TAEL_LOAD.k === h.k) TAEL_LOAD = null; });
+  TAEL_LOAD = { k: h.k, p }; return p;
+}
+async function audPreload(id, p) { if (!BK || BK.id !== id) return; await audList(id); const h = audLocalFor(id, p); if (h) audLoad(id, h).catch(e => noteErr("book audio load", e)); }
+function audStartOf(rec, p, s) {
+  let best = null; for (const x of rec.ss) { if (x[1] < p || (x[1] === p && x[2] <= s)) best = x; else break; }
+  return best ? best[0] : 0;
+}
+function ttsFilePlay(h) {
+  TTS.mode = "file"; TTS.gen++; try { if (TTS_OK && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel(); } catch (e) {}
+  ttsWake(false);
+  const el = taEl();
+  const go = () => {
+    if (!TTS || !TTS.playing || TTS.mode !== "file" || !TAEL_REC || TAEL_REC.k !== h.k) return;
+    const t = audStartOf(TAEL_REC, TTS.p, TTS.s); if (Math.abs(el.currentTime - t) > 0.3) el.currentTime = t;
+    el.playbackRate = ttsRate(); try { el.preservesPitch = true; el.webkitPreservesPitch = true; } catch (e) {}
+    const pr = el.play(); if (pr && pr.catch) pr.catch(e => { if (e && e.name === "AbortError") return; if (TTS && TTS.mode === "file") { TTS.playing = false; TTS.since = null; ttsBarDraw(); toast("点 ▶ 开始播放 · Tap ▶ to play", 2500); } });
+    audMedia(); ttsBarDraw();
+  };
+  if (TAEL_REC && TAEL_REC.k === h.k) go();
+  else { if (!el.paused) { TTS.swap = true; el.pause(); } audLoad(BK.id, h).then(() => { if (TTS) TTS.swap = false; go(); }, e => { noteErr("book audio load", e); AUDL.delete(BK.id); if (TTS) { TTS.mode = "voice"; ttsSpeak(); } }); }
+}
+function ttsFileTick() {
+  if (!TTS || TTS.mode !== "file" || !TAEL_REC || !TAEL || !BK || TTS.book !== TAEL_REC.id || TAEL_LOAD) return; // (not while another chapter is loading)
+  const t = TAEL.currentTime + 0.05, ss = TAEL_REC.ss; let lo = 0, hi = ss.length - 1, k = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (ss[mid][0] <= t) { k = mid; lo = mid + 1; } else hi = mid - 1; }
+  if (k < 0) return;
+  const p = ss[k][1], s = Math.min(ss[k][2], Math.max(0, bkSents(p).length - 1));
+  if (p !== TTS.p || s !== TTS.s) { TTS.p = p; TTS.s = s; ttsShow(); }
+  if (TAEL.duration && TAEL.currentTime > TAEL.duration - 30) { const nx = audLocalFor(BK.id, TAEL_REC.b); if (nx && !TTS.pre) { TTS.pre = true; adbGet("ch", nx.k).catch(() => {}); } } // warm the next chapter
+}
+function ttsFileEnded() {
+  if (!TTS || TTS.mode !== "file" || !TAEL_REC || !BK) return;
+  const b = TAEL_REC.b; TTS.pre = false;
+  if (b >= BK.paras.length) { TTS.p = BK.paras.length - 1; TTS.s = Math.max(0, bkSents(TTS.p).length - 1); ttsPause(); toast("读到书的最后了 · That's the end of the book"); return; }
+  TTS.p = b; TTS.s = 0; ttsSpeak(); // the next chapter: its audio if it has some, else the device voice (with a note)
+}
+function audMedia() {
+  if (!("mediaSession" in navigator) || !TAEL_REC || !BK) return;
+  try {
+    const ms = navigator.mediaSession, ch = audChTitle(BK.meta, TAEL_REC.a);
+    ms.metadata = new MediaMetadata({ title: ch || BK.meta.title, artist: BK.meta.title, album: "中文练功房 · 听书" });
+    ms.setActionHandler("play", () => { if (TTS && !TTS.playing) ttsPlay(); });
+    ms.setActionHandler("pause", () => { if (TTS && TTS.playing) ttsPause(); });
+    ms.setActionHandler("previoustrack", () => { if (TTS) ttsStep(-1); });
+    ms.setActionHandler("nexttrack", () => { if (TTS) ttsStep(1); });
+    for (const k of ["seekbackward", "seekforward"]) try { ms.setActionHandler(k, null); } catch (e) {}
+  } catch (e) {}
+}
+function audMediaOff() { try { if ("mediaSession" in navigator) { navigator.mediaSession.metadata = null; for (const k of ["play", "pause", "previoustrack", "nexttrack"]) navigator.mediaSession.setActionHandler(k, null); } } catch (e) {} }
+// the device voice is standing in for a chapter whose audio isn't made yet: say so (once per chapter)
+function ttsVoiceNote() {
+  const m = BK && BK.meta; if (!m || !(m.aon || m.awhole) || !TTS) return;
+  const r = audRanges(m).find(([a, b]) => TTS.p >= a && TTS.p < b); if (!r || TTS.noted === r[0]) return;
+  TTS.noted = r[0];
+  toast(`这一章的音频还在准备${ONLINE ? "" : "（要联网）"}，先用手机的声音${TTS_IOS ? "（静音模式下听不到）" : ""} · This chapter's audio isn't ready yet${ONLINE ? "" : " (needs the internet)"}; using the device voice for now${TTS_IOS ? " (silent on silent mode)" : ""}`, 4500);
+  audKick();
+}
 // Aa: size, scroll / pages, 简体 / 原文 (per device; 原文 per book)
 function bookAa(btn) {
   let pop = $("#aapop"); if (pop) { pop.remove(); btn.classList.remove("on"); return; }
@@ -4602,7 +5006,9 @@ function renderBookInfo(main) {
       <p class="small muted">${esc(r.file || "")} · ${Math.round((r.chars || 0) / 1000)} 千字${nch ? ` · ${nch} ${hasCh ? "章 chapters" : "部分 parts"}` : ""}${r.trad ? " · 繁体原文 traditional original" : ""} · ${bookPct(v)}%</p>
       ${bookStatsLine(r) ? `<p class="small">${bookStatsLine(r)}</p>` : ""}
       <p class="small muted">${esc(cloud)}</p>
-      <button class="btn ghost" id="bkrm">删除这本书 · Delete this book</button></div>`;
+      <button class="btn ghost" id="bkrm">删除这本书 · Delete this book</button></div>
+    ${m ? `<div class="card stack" id="audcard">${audCardHtml(r, m)}</div>` : ""}`;
+  if (m) { audCardBind(r, m); if (!AUDL.has(m.id)) audList(m.id).then(audDraw); }
   $("#bkib", main).onclick = () => { READ = null; render(); };
   $("#bktsave", main).onclick = () => {
     const t = $("#bkti", main).value.trim(); if (!t) return;
@@ -6340,6 +6746,8 @@ function bindR2Card() {
   if (r2Cfg() && ONLINE && now() - R2.usageAt > 30 * MIN) { R2.usageAt = now(); r2Usage().then(u => { r2UseSet(u); R2.cardErr = ""; stOnly(); }).catch(e => { R2.cardErr = e.message; stOnly(); }); }
 }
 addEventListener("online", () => setTimeout(r2Kick, 2500));
+addEventListener("online", () => setTimeout(audKick, 3500)); // book audio made ahead (v101)
+document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(audKick, 1500); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(r2Kick, 1500); });
 setTimeout(r2Kick, 4000);
 
@@ -6666,6 +7074,7 @@ function renderMe(main) {
     <p class="small muted">Recognition-only cards (Chinese → English). The tap dictionary in 阅读 shows which bucket each word is in.</p></div>
   <div class="card" id="ghcard">${ghCard()}</div>
   <div class="card" id="provcard">${provCard()}</div>
+  <div class="card stack" id="gttscard">${gttsCard()}</div>
   ${packCard()}
   <div class="card"><span class="label">搬运进度 · Move progress between versions</span>
     <p class="small muted">你的设备已经通过 GitHub 自动同步，平时用不到这里。代码只在两种情况下有用：和 Claude 上的备用版本互通进度，或者手动留一份备份。在一边点<b>导出</b>，在另一边点<b>导入合并</b>。<br>Your devices already sync through GitHub, so you won't normally need this. A code is for moving progress to or from the backup version on Claude, or for keeping a backup by hand: <b>Copy code</b> on one side, <b>Paste & merge</b> on the other.
@@ -6674,7 +7083,7 @@ function renderMe(main) {
     <div class="row"><button class="btn soft" id="exp">导出 Copy code</button><button class="btn ghost" id="imp">导入 Paste & merge</button></div><div id="xio"></div>
     <p class="small muted">iPhone：请总是从主屏幕图标打开，Safari 标签页的数据是分开的。· On iPhone, always open it from the home-screen icon: a Safari tab keeps separate data.${PERSISTED !== true && !COL ? "<br>还没连 GitHub，浏览器也没答应保留数据：偶尔导出一份代码当备份。· Not synced to GitHub and this browser hasn't promised to keep the data: copy a code now and then as a backup." : ""}</p></div>`;
   $("#replace").onclick = startPlacement;
-  bindBank(); if ($("#provcard")) bindProv(); if ($("#ghcard")) bindGh(); bindR2Card();
+  bindBank(); if ($("#provcard")) bindProv(); if ($("#ghcard")) bindGh(); bindR2Card(); gttsBind();
   $("#onetap").onchange = e => { S.settings = setSettings({ oneTap: e.target.checked }); save(); };
   $("#exp").onclick = exportCode;
   $("#imp").onclick = importUI;
