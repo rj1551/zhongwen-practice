@@ -142,7 +142,9 @@ const genCounts = pg => pg.evaluate(() => ({ lad: S.gen.ladder.length, sen: S.ge
   await A.page.fill("#pk-from", "2026-11-25"); await A.page.$eval("#pk-from", e => e.dispatchEvent(new Event("change")));
   ok(await A.page.evaluate(() => stockCfg().from === "2026-11-25"), "…the date picked is saved");
   await A.page.fill("#pk-to", "2026-12-15"); await A.page.$eval("#pk-to", e => e.dispatchEvent(new Event("change")));
+  await A.page.evaluate(() => { window.__mark = document.querySelector("#provcard"); window.__card = document.querySelector("#packcard"); });
   await A.page.$eval("#pk-to", e => e.blur()); await sleep(300);
+  ok(await A.page.evaluate(() => window.__mark.isConnected && !window.__card.isConnected), "v110: leaving the date box redraws only the stock card, not the whole page (no flash)");
   ok(await A.page.evaluate(() => stockCfg().to === "2026-12-15" && $("#pk-to").value === "2026-12-15"), "…and on leaving the box the card is redrawn with both dates");
   await sleep(1500); await A.page.evaluate(() => ghSyncNow()); await sleep(500); await A.page.evaluate(() => SYNCQ);
   const ob2 = JSON.parse(g.files()["outbox.json"]);

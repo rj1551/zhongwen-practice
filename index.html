@@ -7941,9 +7941,9 @@ function bindPackCard() {
   for (const id of ["pk-from", "pk-to"]) {
     const el = $("#" + id);
     el.onchange = el.oninput = () => { S.settings = setSettings({ stock: Object.assign({}, (S.settings || {}).stock, { from: $("#pk-from").value || undefined, to: $("#pk-to").value || undefined }) }); save(); el.dataset.dirty = "1"; };
-    el.onblur = () => { if (!el.dataset.dirty) return; delete el.dataset.dirty; setTimeout(() => { const f = document.activeElement; if (f && (f.id === "pk-from" || f.id === "pk-to")) return; setStock({}, true); }, 0); };
+    el.onblur = () => { if (!el.dataset.dirty) return; delete el.dataset.dirty; setTimeout(() => { const f = document.activeElement; if (f && (f.id === "pk-from" || f.id === "pk-to")) return; setStock({}, false); }, 0); }; // (v110: just this card, not the whole page — that flashed)
   }
-  const clr = $("#pk-clr"); if (clr) clr.onclick = () => setStock({ from: undefined, to: undefined }, true);
+  const clr = $("#pk-clr"); if (clr) clr.onclick = () => setStock({ from: undefined, to: undefined }, false);
   $("#pk-go").onclick = () => {
     const msg = $("#pk-msg");
     try {
