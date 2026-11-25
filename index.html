@@ -4353,7 +4353,8 @@ async function ttsWake(on) {
 }
 function ttsStart() {
   if (!BK) return;
-  if (audLocalFor(BK.id, BK.pos)) return ttsBegin(); // this chapter has audio made ahead (no device voice needed)
+  const cs = AUDC.get(BK.id);
+  if (audLocalFor(BK.id, BK.pos) || (cs && cs.has(BK.pos)) || ttsMaking(BK.pos)) return ttsBegin(); // this chapter has (or is getting) audio made ahead: no device voice needed
   if (!TTS_OK) { toast("这个浏览器不能朗读，这一章也还没有音频 · This browser can't read aloud, and this chapter has no audio yet", 3500); return; }
   if (ttsVoices().length) return ttsBegin();
   // no Chinese voice (yet: some browsers load their list a moment later). Without one, browsers read with an English
@@ -4376,7 +4377,9 @@ function ttsNoVoice() {
   document.body.append(pan);
   $("#ttsnvok", pan).onclick = () => pan.remove();
 }
-function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); ttsSpeak(); ttsBarDraw(); }
+function ttsPlay() { if (!TTS) return; TTS.playing = true; TTS.since = now(); taUnlock(); ttsSpeak(); ttsBarDraw(); }
+// inside the tap: an element that has never played gets a moment of silence, so it may play later without a tap (iPhones)
+function taUnlock() { const el = taEl(); if (el.src || el.dataset.ok) return; el.dataset.ok = "1"; try { TTS.swap = true; el.src = silentWavURL(400); const p = el.play(); if (p && p.catch) p.catch(() => {}); TTS.swap = false; } catch (e) {} }
 // iPhones mute the read-aloud voice while silent mode is on, whatever the page does (v97/v98 tried "playback" audio
 // mode + a silent sound; it didn't help on the learner's iPhone, iOS 27.2, so v99 took it out). Real audio files
 // would play on silent (see the book-audio design). The first time on an iPhone / iPad, a hint says so.
@@ -4386,7 +4389,7 @@ function ttsHint() {
   if (!TTS_IOS) return; try { if (localStorage.getItem("zwlgf:ttshint")) return; localStorage.setItem("zwlgf:ttshint", "1"); } catch (e) { return; }
   toast("iPhone 开着静音模式就听不到朗读，要关掉静音 · On iPhone, read-aloud is silent while silent mode is on", 5000);
 }
-function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; } try { if (TTS_OK) speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
+function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; clearTimeout(TTS.wt); if (TTS.mode === "wait") TTS.mode = null; if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; } try { if (TTS_OK) speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
 function ttsStop() {
   if (!TTS) return;
   const keep = TTS; ttsPause(); TTS = null; audMediaOff(); ttsLock(false); $("#ttsrp") && $("#ttsrp").remove();
@@ -4403,6 +4406,8 @@ function ttsSpeak() {
   if (TTS.p >= BK.paras.length) { TTS.p = BK.paras.length - 1; TTS.s = Math.max(0, bkSents(TTS.p).length - 1); ttsPause(); toast("读到书的最后了 · That's the end of the book"); return; }
   ttsShow();
   const h = audLocalFor(BK.id, TTS.p); if (h) return ttsFilePlay(h); // audio made ahead for this chapter (v101)
+  { const cs = AUDC.get(BK.id); if (cs && cs.has(TTS.p)) return ttsPartialPlay(); } // made, chapter not finished yet (v105)
+  if (ttsMaking()) return ttsWait(); // being made: a few seconds (v105)
   if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; }
   TTS.mode = "voice";
   if (!TTS_OK) { ttsPause(); toast("这个浏览器不能朗读，这一章也还没有音频 · This browser can't read aloud, and this chapter has no audio yet", 3500); return; }
@@ -4481,7 +4486,7 @@ function ttsBarDraw() {
   const sr = $("#ttssrc"); if (sr) sr.innerHTML = ttsSrcHtml();
 }
 // 🎧 = audio made ahead, 📱 = the device's voice (v101: the learner wants to know which is playing)
-const ttsSrcHtml = () => !TTS ? "" : TTS.mode === "file" ? `<span title="录好的音频 · Audio made ahead" aria-label="录好的音频 · Audio made ahead">🎧</span>` : TTS.mode === "voice" ? `<span title="手机的声音 · Device voice" aria-label="手机的声音 · Device voice">📱</span>` : "";
+const ttsSrcHtml = () => !TTS ? "" : TTS.mode === "file" ? `<span title="录好的音频 · Audio made ahead" aria-label="录好的音频 · Audio made ahead">🎧</span>` : TTS.mode === "voice" ? `<span title="手机的声音 · Device voice" aria-label="手机的声音 · Device voice">📱</span>` : TTS.mode === "wait" ? `<span title="音频准备中 · Audio being made" aria-label="音频准备中 · Audio being made">⏳</span>` : "";
 function ttsBind(main) {
   $("#ttsx", main).onclick = () => ttsStop();
   $("#ttsplay", main).onclick = () => { closeSheet(); if (TTS.playing) ttsPause(); else ttsPlay(); };
@@ -4536,7 +4541,7 @@ document.addEventListener("visibilitychange", () => {
   if (!TTS) return;
   if (document.hidden) { ttsTick(); TTS.hidAt = now(); return; }
   if (!TTS.playing) return;
-  let going = false; try { going = TTS.mode === "file" ? !!(TAEL && !TAEL.paused) : speechSynthesis.speaking || speechSynthesis.pending; } catch (e) {}
+  let going = false; try { going = TTS.mode === "file" || TTS.mode === "wait" ? !!(TAEL && !TAEL.paused) : speechSynthesis.speaking || speechSynthesis.pending; } catch (e) {}
   if (going) { if (TTS.hidAt) TTS.pend += Math.min(3600, (now() - TTS.hidAt) / 1000); TTS.since = now(); ttsWake(true); } // it kept reading while away (computers do)
   else { TTS.since = null; TTS.playing = false; TTS.gen++; ttsBarDraw(); } // the phone stopped it: ▶ picks up at the same sentence
   TTS.hidAt = null;
@@ -4554,7 +4559,7 @@ document.addEventListener("visibilitychange", () => {
    audio use the device voice, with a note. Characters sent are counted per month on this device; making stops at
    AUD_CAP (under Google's 1 M free) unless the learner allows more for that month. */
 const GTTS = "https://texttospeech.googleapis.com/v1/";
-const AUD_AHEAD = 3, AUD_CAP = 900000, AUD_GAP_MS = 250;
+const AUD_AHEAD = 3, AUD_CAP = 900000;
 const AUD_VOICES = ["Aoede", "Kore", "Leda", "Zephyr", "Achernar", "Sulafat", "Despina", "Puck", "Charon", "Fenrir", "Orus", "Algenib"]; // used until the real list is loaded
 const AUD_SAMPLE = "大家好，今天我们一起来读书。我先读一段，你听听这个声音怎么样？";
 const gttsKey = () => { const p = provGet(); return (p.keys && p.keys.gtts) || ""; };
@@ -4739,6 +4744,19 @@ function audKick() {
   AUDR.busy = true; AUDR.stop = false;
   audRun().catch(e => { AUDR.err = e && e.message ? e : { message: String(e) }; noteErr("book audio", e); }).finally(() => { AUDR.busy = false; AUDR.job = null; audDraw(); });
 }
+// (v105) several paragraphs at once: AUD_CONC requests in flight (each Chirp answer takes a few seconds; ~6 keeps under
+// Google's 100–200 requests a minute), halved when Google says "too many", one more after each 20 that go through (up
+// to AUD_CONC_MAX). Within the chapter: from the place on first (so the player can start), then the chapter's start.
+let AUD_CONC = 6; const AUD_CONC_MAX = 8;
+// the paragraphs whose audio is made but not yet put into a chapter, per book (this voice): for playing a chapter
+// while it's still being made
+const AUDC = new Map();
+async function audClips(id) {
+  if (AUDC.has(id)) return AUDC.get(id);
+  const v = audVoice(), set = new Set();
+  try { for (const k of await adbKeys("clip", `${id}|${v}|`)) set.add(+k.slice(k.lastIndexOf("|") + 1)); } catch (e) { noteErr("book audio clips", e); }
+  AUDC.set(id, set); return set;
+}
 async function audRun() {
   const texts = new Map();
   for (let guard = 0; guard < 20000; guard++) {
@@ -4747,25 +4765,36 @@ async function audRun() {
     const pick = await audNext(); if (!pick) { AUDR.err = null; return; }
     const { m, a, b } = pick, voice = audVoice();
     let tx = texts.get(m.id); if (!tx) { tx = await bookTextGet(m.id); if (!tx) { m.aon = m.awhole = false; await bookMetaPut(m); continue; } texts.set(m.id, tx); }
-    const have = new Set(await adbKeys("clip", `${m.id}|${voice}|`));
-    AUDR.job = { id: m.id, title: m.title, a, b, done: 0, ch: audChTitle(m, a) }; audDraw();
-    let moved = false;
-    for (let p = a; p < b; p++) {
-      if (AUDR.stop || !ONLINE) return;
-      AUDR.job.done = p - a; const ck = `${m.id}|${voice}|${p}`;
-      if (have.has(ck)) continue;
-      const t = audParaText(tx, p);
-      if (!/[\p{L}\p{N}]/u.test(t)) { await adbPut("clip", ck, { e: 1 }); continue; }
-      const n = Array.from(t).length, u = audUse(); if (u.n + n > AUD_CAP && !u.more) { AUDR.err = AUD_CAPERR; return; }
-      let said;
-      try { said = await audSayPara(t, voice); }
-      catch (e) { if (e && e.code === "rate") { AUDR.err = e; audDraw(); await new Promise(z => setTimeout(z, 30000)); AUDR.err = null; p--; continue; } AUDR.err = e; noteErr("book audio", e); return; }
-      const u2 = audUse(); u2.n += n; audUseSet(u2);
-      await adbPut("clip", ck, said.buf.byteLength ? { buf: said.buf, st: said.st } : { e: 1 }); AUDR.err = null; audDraw();
-      await new Promise(z => setTimeout(z, AUD_GAP_MS));
-      const nx = await audNext(); if (nx && (nx.m.id !== m.id || nx.a !== a)) { moved = true; break; } // a jump: that chapter first (clips made here are kept)
-    }
-    if (!moved) await audAssemble(m, voice, a, b);
+    const have = await audClips(m.id), pl = audPlace(m), from = pl >= a && pl < b ? pl : a;
+    const order = []; for (let p = from; p < b; p++) order.push(p); for (let p = a; p < from; p++) order.push(p);
+    const todo = order.filter(p => !have.has(p));
+    AUDR.job = { id: m.id, title: m.title, a, b, done: b - a - todo.length, ch: audChTitle(m, a) }; audDraw();
+    let moved = false, fail = null, i = 0, okN = 0;
+    const worker = async () => {
+      while (!moved && !fail && !AUDR.stop && ONLINE && i < todo.length) {
+        const p = todo[i++], ck = `${m.id}|${voice}|${p}`, t = audParaText(tx, p);
+        if (!/[\p{L}\p{N}]/u.test(t)) { await adbPut("clip", ck, { e: 1 }); have.add(p); AUDR.job.done++; continue; }
+        const n = Array.from(t).length, u = audUse(); if (u.n + n > AUD_CAP && !u.more) { fail = AUD_CAPERR; return; }
+        let said;
+        try { said = await audSayPara(t, voice); }
+        catch (e) {
+          if (e && e.code === "rate") { AUD_CONC = Math.max(1, AUD_CONC >> 1); AUDR.err = e; audDraw(); todo.push(p); await new Promise(z => setTimeout(z, 15000)); AUDR.err = null; continue; }
+          fail = e; return;
+        }
+        const u2 = audUse(); u2.n += n; audUseSet(u2);
+        await adbPut("clip", ck, said.buf.byteLength ? { buf: said.buf, st: said.st } : { e: 1 });
+        have.add(p); AUDR.job.done++; AUDR.err = null; audDraw();
+        if (++okN % 20 === 0) AUD_CONC = Math.min(AUD_CONC_MAX, AUD_CONC + 1);
+        if (TTS && TTS.mode === "wait" && TTS.book === m.id) ttsSpeak(); // the player was waiting for this
+        const nx = await audNext(); if (nx && (nx.m.id !== m.id || nx.a !== a)) moved = true; // a jump: that chapter first (clips made here are kept)
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, AUD_CONC) }, worker));
+    if (fail) { AUDR.err = fail; if (fail !== AUD_CAPERR) noteErr("book audio", fail); return; }
+    if (AUDR.stop || !ONLINE) return;
+    if (moved) continue;
+    let all = true; for (let p = a; p < b; p++) if (!have.has(p)) { all = false; break; }
+    if (all) await audAssemble(m, voice, a, b);
   }
 }
 async function audAssemble(m, voice, a, b) {
@@ -4779,6 +4808,7 @@ async function audAssemble(m, voice, a, b) {
   const blob = new Blob(parts, { type: "audio/mpeg" }), k = `${m.id}|${a}|${b}|${voice}`;
   await adbPut("ch", k, { a, b, voice, d: +t.toFixed(3), z: blob.size, ps, ss, blob, made: now() });
   for (let p = a; p < b; p++) await adbDel("clip", `${m.id}|${voice}|${p}`);
+  const cs = AUDC.get(m.id); if (cs) for (let p = a; p < b; p++) cs.delete(p);
   AUDL.delete(m.id); await audList(m.id); audDraw();
 }
 function audChTitle(m, a) { const c = (m.chapters || []).find(x => x.p === a); return c ? (c.s || c.t) : a === 0 ? "开头 · Beginning" : ""; }
@@ -4879,7 +4909,7 @@ function gttsBind() {
   const c = $("#gttscard"); if (!c) return;
   const redraw = () => { const g = $("#gttscard"); if (g) { g.innerHTML = gttsCard(); gttsBind(); } };
   $("#gtkey", c).onchange = () => { gttsSetKey($("#gtkey", c).value.trim()); GTTS_UI.ok = false; GTTS_UI.err = ""; GTTS_UI.voices = null; redraw(); audKick(); };
-  $("#gtvoice", c).onchange = () => { try { localStorage.setItem("zwlgf:gttsvoice", $("#gtvoice", c).value); } catch (e) {} GTTS_UI.sample = null; redraw(); };
+  $("#gtvoice", c).onchange = () => { try { localStorage.setItem("zwlgf:gttsvoice", $("#gtvoice", c).value); } catch (e) {} AUDC.clear(); GTTS_UI.sample = null; redraw(); };
   $("#gtlist", c).onclick = async () => { GTTS_UI.busy = true; GTTS_UI.err = ""; redraw(); try { const l = await gttsVoices(); if (l.length) GTTS_UI.voices = l; GTTS_UI.ok = true; } catch (e) { GTTS_UI.err = e.message || String(e); } GTTS_UI.busy = false; redraw(); };
   $("#gtsample", c).onclick = async () => {
     GTTS_UI.busy = true; GTTS_UI.err = ""; redraw();
@@ -4895,9 +4925,17 @@ function taEl() {
   const a = document.createElement("audio"); a.preload = "auto"; a.hidden = true; document.body.append(a); TAEL = a;
   a.addEventListener("timeupdate", ttsFileTick);
   a.addEventListener("ended", ttsFileEnded);
-  a.addEventListener("pause", () => { if (TTS && TTS.mode === "file" && TTS.playing && !a.ended && !TTS.swap) { ttsTick(); TTS.playing = false; TTS.since = null; ttsBarDraw(); } }); // paused from the lock screen, a call…
+  a.addEventListener("pause", () => { if (TTS && (TTS.mode === "file" || TTS.mode === "wait") && TTS.playing && !a.ended && !TTS.swap) { ttsTick(); TTS.playing = false; TTS.since = null; ttsBarDraw(); } }); // paused from the lock screen, a call…
   a.addEventListener("play", () => { if (TTS && TTS.mode === "file" && !TTS.playing) { TTS.playing = true; TTS.since = now(); ttsBarDraw(); } });
   return a;
+}
+// put a chapter's (or a partial chapter's) audio into the element
+function audUseRec(rec, blob) {
+  const el = taEl(); if (TTS) TTS.swap = true;
+  if (TAEL_URL) URL.revokeObjectURL(TAEL_URL);
+  el.loop = false; TAEL_URL = URL.createObjectURL(blob); el.src = TAEL_URL; el.load();
+  TAEL_REC = rec;
+  return new Promise(res => { let done = false; const ok = () => { if (done) return; done = true; if (TTS) TTS.swap = false; res(TAEL_REC); }; el.addEventListener("loadedmetadata", ok, { once: true }); setTimeout(ok, 3000); });
 }
 // load a chapter's audio into the element (kept loaded, so ▶ can start it inside the tap, as iPhones want)
 function audLoad(id, h) {
@@ -4905,32 +4943,73 @@ function audLoad(id, h) {
   if (TAEL_LOAD && TAEL_LOAD.k === h.k) return TAEL_LOAD.p;
   const p = adbGet("ch", h.k).then(c => {
     if (!c || !c.blob) throw new Error("chapter audio missing");
-    const el = taEl(); if (TTS) TTS.swap = true;
-    if (TAEL_URL) URL.revokeObjectURL(TAEL_URL);
-    TAEL_URL = URL.createObjectURL(c.blob); el.src = TAEL_URL; el.load();
-    TAEL_REC = Object.assign({ k: h.k, id }, c); delete TAEL_REC.blob;
-    return new Promise(res => { let done = false; const ok = () => { if (done) return; done = true; if (TTS) TTS.swap = false; res(TAEL_REC); }; el.addEventListener("loadedmetadata", ok, { once: true }); setTimeout(ok, 3000); });
+    const rec = Object.assign({ k: h.k, id }, c); delete rec.blob;
+    return audUseRec(rec, c.blob);
   }).finally(() => { if (TAEL_LOAD && TAEL_LOAD.k === h.k) TAEL_LOAD = null; });
   TAEL_LOAD = { k: h.k, p }; return p;
 }
-async function audPreload(id, p) { if (!BK || BK.id !== id) return; await audList(id); const h = audLocalFor(id, p); if (h) audLoad(id, h).catch(e => noteErr("book audio load", e)); }
+async function audPreload(id, p) { if (!BK || BK.id !== id) return; await audList(id); audClips(id); const h = audLocalFor(id, p); if (h) audLoad(id, h).catch(e => noteErr("book audio load", e)); }
 function audStartOf(rec, p, s) {
   let best = null; for (const x of rec.ss) { if (x[1] < p || (x[1] === p && x[2] <= s)) best = x; else break; }
   return best ? best[0] : 0;
 }
+// (v105) a chapter still being made: the paragraphs already made from p on, up to the first one that isn't
+async function audPartial(id, p) {
+  const set = await audClips(id), m = BK.meta, r = audRanges(m).find(([a, b]) => p >= a && p < b); if (!r || !set.has(p)) return null;
+  const v = audVoice(), parts = [], ps = [], ss = []; let q = p, t = 0;
+  while (q < r[1] && set.has(q)) {
+    const c = await adbGet("clip", `${id}|${v}|${q}`);
+    if (!c) { set.delete(q); break; } // (put into the finished chapter meanwhile)
+    if (!c.e && c.buf) { const inf = mp3Info(c.buf); if (inf.dur) { ps.push([q, +t.toFixed(3)]); (c.st && c.st.length ? c.st : [0]).forEach((x, s) => ss.push([+(t + x).toFixed(3), q, s])); parts.push(new Uint8Array(c.buf, inf.start)); t += inf.dur; } }
+    q++;
+  }
+  if (q === p) return null;
+  if (!parts.length) return { skip: q };
+  return { rec: { k: `part|${id}|${p}|${q}|${v}`, id, a: p, b: q, ps, ss, d: t, partial: true }, blob: new Blob(parts, { type: "audio/mpeg" }) };
+}
+// play TAEL_REC from the sentence at TTS.p / TTS.s
+function ttsRecGo() {
+  const el = taEl(); if (!TTS || !TTS.playing || TTS.mode !== "file" || !TAEL_REC) return;
+  const t = audStartOf(TAEL_REC, TTS.p, TTS.s); if (Math.abs(el.currentTime - t) > 0.3) el.currentTime = t;
+  el.playbackRate = ttsRate(); try { el.preservesPitch = true; el.webkitPreservesPitch = true; } catch (e) {}
+  const pr = el.play(); if (pr && pr.catch) pr.catch(e => { if (e && e.name === "AbortError") return; if (TTS && TTS.mode === "file") { TTS.playing = false; TTS.since = null; ttsBarDraw(); toast("点 ▶ 开始播放 · Tap ▶ to play", 2500); } });
+  audMedia(); ttsBarDraw();
+}
+function ttsFileStart() { TTS.mode = "file"; TTS.gen++; clearTimeout(TTS.wt); try { if (TTS_OK && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel(); } catch (e) {} ttsWake(false); }
 function ttsFilePlay(h) {
-  TTS.mode = "file"; TTS.gen++; try { if (TTS_OK && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel(); } catch (e) {}
-  ttsWake(false);
-  const el = taEl();
-  const go = () => {
-    if (!TTS || !TTS.playing || TTS.mode !== "file" || !TAEL_REC || TAEL_REC.k !== h.k) return;
-    const t = audStartOf(TAEL_REC, TTS.p, TTS.s); if (Math.abs(el.currentTime - t) > 0.3) el.currentTime = t;
-    el.playbackRate = ttsRate(); try { el.preservesPitch = true; el.webkitPreservesPitch = true; } catch (e) {}
-    const pr = el.play(); if (pr && pr.catch) pr.catch(e => { if (e && e.name === "AbortError") return; if (TTS && TTS.mode === "file") { TTS.playing = false; TTS.since = null; ttsBarDraw(); toast("点 ▶ 开始播放 · Tap ▶ to play", 2500); } });
-    audMedia(); ttsBarDraw();
-  };
-  if (TAEL_REC && TAEL_REC.k === h.k) go();
-  else { if (!el.paused) { TTS.swap = true; el.pause(); } audLoad(BK.id, h).then(() => { if (TTS) TTS.swap = false; go(); }, e => { noteErr("book audio load", e); AUDL.delete(BK.id); if (TTS) { TTS.mode = "voice"; ttsSpeak(); } }); }
+  ttsFileStart(); const el = taEl();
+  if (TAEL_REC && TAEL_REC.k === h.k) return ttsRecGo();
+  if (!el.paused) { TTS.swap = true; el.pause(); }
+  audLoad(BK.id, h).then(() => { if (TTS) TTS.swap = false; if (TAEL_REC && TAEL_REC.k === h.k) ttsRecGo(); }, e => { noteErr("book audio load", e); AUDL.delete(BK.id); if (TTS) { TTS.mode = "voice"; ttsSpeak(); } });
+}
+function ttsPartialPlay() {
+  ttsFileStart(); const el = taEl(), id = BK.id, tok = (TTS.ptok = (TTS.ptok || 0) + 1);
+  if (TAEL_REC && TAEL_REC.id === id && TTS.p >= TAEL_REC.a && TTS.p < TAEL_REC.b) return ttsRecGo(); // already loaded
+  if (!el.paused) { TTS.swap = true; el.pause(); }
+  audPartial(id, TTS.p).then(x => {
+    if (!TTS || TTS.ptok !== tok || !TTS.playing || !BK || BK.id !== id) return;
+    if (!x) { const cs = AUDC.get(id); if (cs) cs.delete(TTS.p); return ttsSpeak(); }
+    if (x.skip != null) { TTS.p = x.skip; TTS.s = 0; return ttsSpeak(); }
+    return audUseRec(x.rec, x.blob).then(() => { if (TTS && TTS.ptok === tok) ttsRecGo(); });
+  }).catch(e => { noteErr("book audio partial", e); if (TTS) { TTS.mode = "voice"; ttsSpeak(); } });
+}
+// the chapter's audio is being made right now: wait for it (a silent loop keeps a locked phone's page awake)
+const ttsMaking = (p = TTS.p) => { const m = BK && BK.meta; return !!(m && (m.aon || m.awhole) && ONLINE && gttsKey() && !(AUDR.err && AUDR.err.code !== "rate") && audWant(m).some(([a, b]) => p >= a && p < b)); };
+let TA_SILENT = null;
+// n samples (8 kHz) of silence as a WAV (blob: — the page's rules don't allow data: sounds)
+function silentWavURL(n) { const b = new Uint8Array(44 + n), v = new DataView(b.buffer), w = (o, t) => [...t].forEach((c, i) => b[o + i] = c.charCodeAt(0)); w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, "data"); v.setUint32(40, n, true); b.fill(128, 44); return URL.createObjectURL(new Blob([b], { type: "audio/wav" })); }
+function ttsWait() {
+  const first = TTS.mode !== "wait";
+  TTS.mode = "wait"; TTS.gen++; ttsWake(false); try { if (TTS_OK && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel(); } catch (e) {}
+  if (first) {
+    const el = taEl(); TTS.swap = true;
+    if (!TA_SILENT) TA_SILENT = silentWavURL(8000);
+    TAEL_REC = null; if (TAEL_URL) { URL.revokeObjectURL(TAEL_URL); TAEL_URL = null; }
+    el.loop = true; el.src = TA_SILENT; const pr = el.play(); if (pr && pr.catch) pr.catch(() => {}); TTS.swap = false;
+    toast("这一段的音频正在做，马上就好 · This part's audio is being made — a few seconds", 3000);
+  }
+  audKick(); ttsBarDraw();
+  clearTimeout(TTS.wt); TTS.wt = setTimeout(() => { if (TTS && TTS.playing && TTS.mode === "wait") ttsSpeak(); }, 1500); // (also woken as soon as a paragraph is made)
 }
 function ttsFileTick() {
   if (!TTS || TTS.mode !== "file" || !TAEL_REC || !TAEL || !BK || TTS.book !== TAEL_REC.id || TAEL_LOAD) return; // (not while another chapter is loading)

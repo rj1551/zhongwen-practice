@@ -17,7 +17,7 @@ const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++
 const MP3 = fs.readFileSync(path.join(__dirname, "fixtures", "tone3.mp3")); // 1.0 s tone · 0.45 s pause · 1.5 s · 0.45 s · 0.8 s
 const R2C = { account: "acct123", bucket: "zhongwen-audio", akid: "AKIDTEST", secret: "SECRETTEST" };
 const R2S = { objs: new Map(), log: [], badSig: 0 };
-const G = { reqs: [], fail: null, tooLong: 0 };
+const G = { reqs: [], fail: null, tooLong: 0, delay: 0, live: 0, maxLive: 0, fail429: 0 };
 async function routes(ctx) {
   await ctx.route("https://texttospeech.googleapis.com/**", async route => {
     const rq = route.request(), H = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*", "content-type": "application/json" };
@@ -26,6 +26,10 @@ async function routes(ctx) {
     if (key !== "GOOD-KEY") return route.fulfill({ status: 400, headers: H, body: JSON.stringify({ error: { message: "API key not valid. Please pass a valid API key." } }) });
     if (/voices/.test(rq.url())) return route.fulfill({ status: 200, headers: H, body: JSON.stringify({ voices: [{ name: "cmn-CN-Chirp3-HD-Kore" }, { name: "cmn-CN-Chirp3-HD-Puck" }, { name: "cmn-CN-Wavenet-A" }] }) });
     const body = JSON.parse(rq.postData() || "{}"); G.reqs.push(body);
+    G.live++; G.maxLive = Math.max(G.maxLive, G.live);
+    if (G.delay) await new Promise(z => setTimeout(z, G.delay));
+    G.live--;
+    if (G.fail429 > 0) { G.fail429--; return route.fulfill({ status: 429, headers: H, body: JSON.stringify({ error: { message: "Quota exceeded" } }) }); }
     if (G.fail) return route.fulfill({ status: G.fail, headers: H, body: JSON.stringify({ error: { message: "nope" } }) });
     if (G.tooLong && Array.from(body.input.text).length > G.tooLong) return route.fulfill({ status: 400, headers: H, body: JSON.stringify({ error: { message: 'This request contains sentences that are too long. Consider splitting up long sentences with sentence ending punctuation e.g. periods. Sentence starting with: "⟪他⧸ta" is too long.' } }) });
     route.fulfill({ status: 200, headers: H, body: JSON.stringify({ audioContent: MP3.toString("base64") }) });
@@ -152,13 +156,37 @@ async function dev(seedBook) {
   await page.evaluate(() => { const o = ONLINE; ONLINE = false; ttsPlay(); ONLINE = o; });
   ok(await page.evaluate(() => TTS.mode === "voice" && /📱/.test($("#ttssrc").textContent) && TAEL.paused) && /这一章的音频还在准备/.test(await page.textContent("body")), "a chapter whose audio isn't made yet: the device voice reads it (📱) and a note says so");
   await page.evaluate(() => { ttsStop(); BK.meta.aon = false; AUDR.stop = true; });
+  // ---- v105: several requests at once; a chapter plays while it's still being made ----
+  await page.evaluate(() => { const m = BK.meta; m.aon = true; AUDR.stop = false; ttsStop(); });
+  G.reqs = []; G.delay = 700; G.maxLive = 0;
+  await page.evaluate(() => { bkJump(13, null); render(); }); // chapter 4 (paragraphs 12–15) has no audio; the place is its 2nd paragraph
+  await page.waitForFunction(() => AUDR.busy, null, { timeout: 5000 });
+  await page.click("#bktts"); await page.waitForSelector("#ttsbar");
+  ok(await page.evaluate(() => TTS.mode === "wait" && /⏳/.test($("#ttssrc").textContent)), "🔊 on a chapter being made: it waits (⏳) instead of the device voice");
+  await page.waitForFunction(() => TTS && TTS.mode === "file" && TAEL_REC && TAEL_REC.partial && !TAEL.paused, null, { timeout: 10000 });
+  ok(await page.evaluate(() => TAEL_REC.a === 13 && TTS.p === 13 && /🎧/.test($("#ttssrc").textContent)), "…and starts as soon as the paragraphs from the place are made, before the chapter is finished");
+  ok(/^他在/.test(G.reqs[0].input.text) && G.reqs.length >= 3 && G.maxLive >= 3 && G.maxLive <= 8, "made from the place on, several requests at once (most at once: " + G.maxLive + ")");
+  await page.waitForFunction(() => !AUDR.busy && (AUDL.get(BK.id) || []).some(h => h.a === 12), null, { timeout: 20000 });
+  const pb = await page.evaluate(() => { const b = TAEL_REC.b; ttsFileEnded(); return b; });
+  await page.waitForFunction(() => TTS.mode === "file" && TAEL_REC && !TAEL_REC.partial && !TAEL.paused, null, { timeout: 5000 });
+  ok(await page.evaluate(pb => TTS.p === pb && TTS.p >= TAEL_REC.a && TTS.p < TAEL_REC.b, pb), "when the part made so far ends, it goes on from there with the finished audio (paragraph " + pb + ")");
+  await page.evaluate(() => ttsStop());
+  // "too many requests": it slows down and carries on
+  G.delay = 50; G.fail429 = 2; G.reqs = [];
+  const conc0 = await page.evaluate(async () => { const h = AUDL.get(BK.id).find(x => x.a === 16); await adbDel("ch", h.k); AUDL.delete(BK.id); await audList(BK.id); const c = AUD_CONC; bkJump(16, null); return c; });
+  await page.waitForFunction(() => AUD_CONC < 6 || (AUDL.get(BK.id) || []).some(h => h.a === 16), null, { timeout: 5000 });
+  ok(await page.evaluate(c => AUD_CONC < c, conc0), "Google says too many requests: fewer at once (" + conc0 + " → " + await page.evaluate(() => AUD_CONC) + ")");
+  await page.evaluate(() => { const tm = window.setTimeout; window.__st = tm; });
+  await page.waitForFunction(() => !AUDR.busy && (AUDL.get(BK.id) || []).some(h => h.a === 16), null, { timeout: 40000 });
+  ok(true, "…and after a short wait it finishes the chapter");
+  await page.evaluate(() => { BK.meta.aon = false; AUDR.stop = true; }); G.delay = 0;
   // ---- the cloud: only on a tap ----
   ok(![...R2S.objs.keys()].some(k => /audio\//.test(k)), "nothing is uploaded by itself");
   await page.evaluate(() => { READ = { book: BK.id, sub: "info" }; render(); }); await page.waitForSelector("#audup");
-  ok(/上传 9 章/.test(await page.textContent("#audcard")), "the card offers ☁ 上传 9 章 (the chapters on this device)");
-  await page.click("#audup"); await page.waitForFunction(() => !AUDR.up && (bookRec(READ.book).au || []).length === 9, null, { timeout: 20000 });
+  ok(/上传 10 章/.test(await page.textContent("#audcard")), "the card offers ☁ 上传 10 章 (the chapters on this device)");
+  await page.click("#audup"); await page.waitForFunction(() => !AUDR.up && (bookRec(READ.book).au || []).length === 10, null, { timeout: 20000 });
   const keys = [...R2S.objs.keys()].filter(k => /audio\//.test(k));
-  ok(keys.length === 18 && keys.every(k => /^books\/[^/]+\/audio\/\d+-\d+-Kore\.(mp3|json)$/.test(k)) && R2S.badSig === 0, "upload: each chapter's audio + timings under books/<id>/audio/ (" + keys.length + " files)");
+  ok(keys.length === 20 && keys.every(k => /^books\/[^/]+\/audio\/\d+-\d+-Kore\.(mp3|json)$/.test(k)) && R2S.badSig === 0, "upload: each chapter's audio + timings under books/<id>/audio/ (" + keys.length + " files)");
   const r = await page.evaluate(() => JSON.parse(JSON.stringify(bookRec(READ.book))));
   // ---- another device: download ----
   const p2 = await dev();
@@ -171,8 +199,8 @@ async function dev(seedBook) {
     BOOKS = null; await booksLoad(); S.gen.books = [r]; save();
   }, [r, makeBook()]);
   await p2.evaluate(id => { READ = { book: id, sub: "info" }; setView("read"); }, r.id);   await p2.waitForSelector("#auddown");
-  ok(/下载 9 章/.test(await p2.textContent("#audcard")), "the other device's card offers ⬇ 下载 9 章 (from the synced list)");
-  await p2.click("#auddown"); await p2.waitForFunction(id => !AUDR.down && (AUDL.get(id) || []).length === 9, r.id, { timeout: 20000 });
+  ok(/下载 10 章/.test(await p2.textContent("#audcard")), "the other device's card offers ⬇ 下载 10 章 (from the synced list)");
+  await p2.click("#auddown"); await p2.waitForFunction(id => !AUDR.down && (AUDL.get(id) || []).length === 10, r.id, { timeout: 20000 });
   ok(await p2.evaluate(async id => { const h = AUDL.get(id).find(x => x.a === 4); const c = await adbGet("ch", h.k); return c && c.blob.size > 1000 && c.ss.length === 10; }, r.id), "download: the chapters' audio and timings arrive on the other device");
   ok(await p2.evaluate(au => { const a = { id: "b", u: 1, au: au.slice(0, 3) }, b = { id: "b", u: 2, au: au.slice(2) }; return mergeGenItem(a, b).au.length === au.length; }, r.au), "merging two devices' records unites their cloud audio lists");
   // ---- deleting the book for good takes its audio along ----
