@@ -7533,6 +7533,7 @@ function forecast(days, mins) {
 // It is redrawn in the background when the note is recomputed after a sync, which used to close the paste box. (v69)
 function refreshStock() {
   const c = $("#packcard"); if (!c) return;
+  { const f = document.activeElement; if (f && f.type === "date" && c.contains(f)) { f.addEventListener("blur", () => setTimeout(refreshStock, 0), { once: true }); return; } } // (v109) not while a date picker is open
   const open = $$("details", c).map(d => d.open), vals = {}, focus = document.activeElement && c.contains(document.activeElement) ? document.activeElement.id : null;
   $$("input[id], textarea[id], select[id]", c).forEach(x => { vals[x.id] = x.type === "checkbox" ? x.checked : x.value; });
   const msg = $("#pk-msg", c) ? $("#pk-msg", c).innerHTML : null;
@@ -7935,7 +7936,13 @@ function bindPackCard() {
   const fa = $("#fw-ask"); if (fa) fa.onclick = () => { const v = $("#fw-topic").value.trim().slice(0, 40); if (!v) { toast("写一个话题 · Type a topic"); return; } addReq({ rid: "wt:" + now().toString(36), kind: "fwtopic", topic: v }); $("#fw-topic").value = ""; toast("下次运行时出题 · Prompts come with the next daily run"); refreshStock(); };
   $("#pk-more").onclick = () => { const t = now(); addReq({ rid: "p:" + t.toString(36), kind: "passage", genre: $("#pk-g1").value || null, topic: $("#pk-topic").value.trim().slice(0, 80) }); toast("请 Claude 写了 · Asked; it arrives with the next daily run", 3500); refreshStock(); };
   $("#pk-mins").onchange = e => setStock(e.target.value === "auto" ? { minsSet: false } : { minsSet: true, mins: +e.target.value }, false);
-  $("#pk-from").onchange = $("#pk-to").onchange = () => setStock({ from: $("#pk-from").value || undefined, to: $("#pk-to").value || undefined }, true);
+  // (v109) trip dates: saved as you pick, but the card is only redrawn once you leave the box — iPhones put today in
+  // the moment the picker opens, and redrawing then closed the picker with today chosen
+  for (const id of ["pk-from", "pk-to"]) {
+    const el = $("#" + id);
+    el.onchange = el.oninput = () => { S.settings = setSettings({ stock: Object.assign({}, (S.settings || {}).stock, { from: $("#pk-from").value || undefined, to: $("#pk-to").value || undefined }) }); save(); el.dataset.dirty = "1"; };
+    el.onblur = () => { if (!el.dataset.dirty) return; delete el.dataset.dirty; setTimeout(() => { const f = document.activeElement; if (f && (f.id === "pk-from" || f.id === "pk-to")) return; setStock({}, true); }, 0); };
+  }
   const clr = $("#pk-clr"); if (clr) clr.onclick = () => setStock({ from: undefined, to: undefined }, true);
   $("#pk-go").onclick = () => {
     const msg = $("#pk-msg");

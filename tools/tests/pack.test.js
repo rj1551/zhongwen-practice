@@ -136,8 +136,14 @@ const genCounts = pg => pg.evaluate(() => ({ lad: S.gen.ladder.length, sen: S.ge
   ok(/Keep/.test(card) && /Auto/.test(card) && /Last delivery/.test(card), "stock card: keep N weeks, auto minutes, last delivery");
   await A.page.selectOption("#pk-ahead", "3"); await sleep(1500); await A.page.evaluate(() => ghSyncNow()); await sleep(500); await A.page.evaluate(() => SYNCQ);
   ok(JSON.parse(g.files()["outbox.json"]).target.days === 21, "keep 3 weeks → outbox target 21 days");
+  // v109: like an iPhone — the picker opens with today put in (a change event) — the box must stay open and usable
+  const kept = await A.page.evaluate(() => { const el = $("#pk-from"); el.focus(); el.value = dayKey(); el.dispatchEvent(new Event("change")); return new Promise(res => setTimeout(() => res(el.isConnected && document.activeElement === el), 300)); });
+  ok(kept, "trip date: a change while the picker is open doesn't redraw the card (the box stays open)");
   await A.page.fill("#pk-from", "2026-11-25"); await A.page.$eval("#pk-from", e => e.dispatchEvent(new Event("change")));
+  ok(await A.page.evaluate(() => stockCfg().from === "2026-11-25"), "…the date picked is saved");
   await A.page.fill("#pk-to", "2026-12-15"); await A.page.$eval("#pk-to", e => e.dispatchEvent(new Event("change")));
+  await A.page.$eval("#pk-to", e => e.blur()); await sleep(300);
+  ok(await A.page.evaluate(() => stockCfg().to === "2026-12-15" && $("#pk-to").value === "2026-12-15"), "…and on leaving the box the card is redrawn with both dates");
   await sleep(1500); await A.page.evaluate(() => ghSyncNow()); await sleep(500); await A.page.evaluate(() => SYNCQ);
   const ob2 = JSON.parse(g.files()["outbox.json"]);
   ok(ob2.target.mode === "trip" && ob2.target.days === 21, "trip dates → outbox trip mode, 21 days");
