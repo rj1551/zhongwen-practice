@@ -15,6 +15,7 @@ const SPOKEN = [...SENT.slice(0, 4), "“我们回家吧。”", "他说。"]; /
 function makeBook() { // 6 chapters × 12 paragraphs, five sentences each
   const lines = [], cn = "一二三四五六";
   for (let c = 0; c < 6; c++) { lines.push(`第${cn[c]}章　河边`); for (let p = 0; p < 12; p++) lines.push("　　" + SENT.join("")); }
+  lines.push("　　" + SENT.join("").repeat(8)); // one long last paragraph (runs across pages)
   return lines.join("\n");
 }
 const FAKE = () => {
@@ -165,6 +166,19 @@ const FAKE = () => {
   for (let i = 0; i < 40; i++) await page.click("#ttsnext");
   const pg1 = await page.evaluate(() => [BK.pc, BK.pg, (() => { const r = $(".bk .ts.on").getClientRects()[0]; return ttsPageOf(r) === BK.pg; })()]);
   ok((pg1[0] !== pg0[0] || pg1[1] !== pg0[1]) && pg1[2], "pages: the page turns to keep the sentence on screen: " + JSON.stringify([pg0, pg1]));
+  // v106: a sentence running onto the next page turns the page partway through it
+  await page.evaluate(async () => { ttsPause(); bkJump(BK.paras.length - 1, null); await new Promise(z => setTimeout(z, 400)); });
+  let spanS = null;
+  for (let k = 0; k < 8 && !spanS; k++) {
+    spanS = await page.evaluate(() => { for (const e of $$("#bkpi .ts")) { const rs = [...e.getClientRects()]; if (rs.length && ttsPageOf(rs[0]) === BK.pg && rs.some(r => ttsPageOf(r) > BK.pg)) return e.dataset.s; } return null; });
+    if (!spanS) await page.evaluate(async () => { bkPageShow(BK.pg + 1, true); await new Promise(z => setTimeout(z, 250)); });
+  }
+  ok(!!spanS, "found a sentence that runs onto the next page (" + spanS + ")");
+  if (spanS) {
+    const pgA = await page.evaluate(sp => { const [p, s] = sp.split(":").map(Number); window.__dur = 100000; TTS.p = p; TTS.s = s; TTS.cps = 400; TTS.playing = true; ttsSpeak(); return BK.pg; }, spanS);
+    await page.waitForFunction(pg => BK.pg === pg + 1, pgA, { timeout: 3000 }).catch(() => {});
+    ok(await page.evaluate(([pg, sp]) => BK.pg === pg + 1 && TTS.p + ":" + TTS.s === sp, [pgA, spanS]), "…the page turns while that sentence is still being read (device voice, at the speed it's been reading)");
+  }
   // the end of the book
   await page.evaluate(() => { window.__dur = 10; TTS.p = BK.paras.length - 1; TTS.s = 3; ttsSpeak(); });
   await page.waitForFunction(() => !TTS.playing, null, { timeout: 5000 });

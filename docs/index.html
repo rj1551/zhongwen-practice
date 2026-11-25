@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-5Cz1hnOJvbKfgtL6ojWyWw8PO8E9TM61qiE7K3e/A1A='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-glN8P/4xHvonnY7VInK1quqBrqSIvYQo4UociL5sc2c='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3431,7 +3431,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v105 · 11/24 22:29"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v106 · 11/25 02:21"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4390,7 +4390,7 @@ function ttsHint() {
   if (!TTS_IOS) return; try { if (localStorage.getItem("zwlgf:ttshint")) return; localStorage.setItem("zwlgf:ttshint", "1"); } catch (e) { return; }
   toast("iPhone 开着静音模式就听不到朗读，要关掉静音 · On iPhone, read-aloud is silent while silent mode is on", 5000);
 }
-function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; clearTimeout(TTS.wt); if (TTS.mode === "wait") TTS.mode = null; if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; } try { if (TTS_OK) speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
+function ttsPause() { if (!TTS) return; ttsTick(); TTS.playing = false; TTS.since = null; TTS.gen++; clearTimeout(TTS.wt); clearTimeout(TTS.flipT); if (TTS.mode === "wait") TTS.mode = null; if (TAEL && !TAEL.paused) { TTS.swap = true; TAEL.pause(); TTS.swap = false; } try { if (TTS_OK) speechSynthesis.cancel(); } catch (e) {} ttsWake(false); ttsBarDraw(); }
 function ttsStop() {
   if (!TTS) return;
   const keep = TTS; ttsPause(); TTS = null; audMediaOff(); ttsLock(false); $("#ttsrp") && $("#ttsrp").remove();
@@ -4415,12 +4415,17 @@ function ttsSpeak() {
   ttsWake(true); ttsHint(); ttsVoiceNote();
   const g = ++TTS.gen, u = new SpeechSynthesisUtterance(ttsText(TTS.p, TTS.s)), v = ttsVoice();
   u.lang = v ? v.lang : "zh-CN"; if (v) u.voice = v; u.rate = ttsRate();
-  u.onend = () => { if (TTS && g === TTS.gen && TTS.playing) ttsStep(1); };
+  const t0 = performance.now(), len = Array.from(u.text).length;
+  u.onend = () => {
+    if (TTS && g === TTS.gen) { const dt = (performance.now() - t0) / 1000; if (dt > 0.4 && len >= 4) TTS.cps = TTS.cps ? TTS.cps * 0.6 + (len / dt) * 0.4 : len / dt; } // characters a second, for turning pages mid-sentence
+    if (TTS && g === TTS.gen && TTS.playing) ttsStep(1);
+  };
   u.onerror = e => {
     if (!TTS || g !== TTS.gen || /interrupted|canceled|cancelled/.test((e && e.error) || "")) return;
     noteErr("read aloud", new Error((e && e.error) || "speech error")); ttsPause(); toast("朗读停了 · Reading aloud stopped — tap ▶ to go on", 3000);
   };
   TTS.utt = u; // (kept, or some browsers drop it and never say it ended)
+  ttsFlipTimer();
   try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) { noteErr("read aloud", e); ttsPause(); } // (cancelling when idle trips up some phones)
 }
 function ttsStep(d) {
@@ -4436,7 +4441,7 @@ function ttsGoto(p) { if (!TTS || TTS.p === p) return; TTS.p = p; TTS.s = 0; if 
 function ttsSeen(el) {
   if (!el) return true;
   const pi = $("#bkpi");
-  if (pi) { const r = el.getClientRects()[0]; return !!r && ttsPageOf(r) === BK.pg; }
+  if (pi) return [...el.getClientRects()].some(r => ttsPageOf(r) === BK.pg); // (any part of it: after a page turned mid-sentence, still following)
   const r = el.getBoundingClientRect(); return r.bottom > bkBarH() && r.top < innerHeight - ttsBarH();
 }
 const ttsBarH = () => { const b = $("#ttsbar"); return b ? b.offsetHeight : 0; };
@@ -4463,7 +4468,30 @@ function ttsShow() {
     el.classList.add("on");
     const r = el.getClientRects()[0];
     if (follow && r) { const pg = ttsPageOf(r); if (pg !== BK.pg) bkPageShow(pg, true); }
+    if (follow) ttsFlipPlan(el);
   }
+}
+// (v106) a sentence that runs onto the next page: turn the page partway through it, when the voice gets there —
+// the share of its characters on this page × its time (audio: from its start to the next sentence's; device voice:
+// its length at the speed the voice has been reading, TTS.cps)
+function ttsFlipPlan(el) {
+  clearTimeout(TTS.flipT); TTS.flip = null;
+  const rs = el.getClientRects(); if (!rs.length) return;
+  const pg0 = ttsPageOf(rs[0]); if (pg0 !== BK.pg || !Array.from(rs).some(r => ttsPageOf(r) > pg0)) return;
+  let tot = 0, before = -1;
+  for (const c of el.childNodes) {
+    const n = Array.from(c.textContent || "").length; if (!n) continue;
+    let r; if (c.nodeType === 1) r = c.getClientRects()[0]; else { const g = document.createRange(); g.selectNodeContents(c); r = g.getClientRects()[0]; }
+    if (before < 0 && r && ttsPageOf(r) > pg0) before = tot;
+    tot += n;
+  }
+  if (before <= 0 || !tot) return;
+  TTS.flip = { pg0, frac: before / tot, tot, p: TTS.p, s: TTS.s }; // used by ttsFlipTimer (device voice) / ttsFileTick (audio)
+}
+function ttsFlipTimer() { // the device voice has just started this sentence
+  clearTimeout(TTS.flipT); const f = TTS.flip; if (!f || f.p !== TTS.p || f.s !== TTS.s) return;
+  const secs = f.tot / (TTS.cps || 4.5 * ttsRate());
+  TTS.flipT = setTimeout(() => { if (TTS && TTS.playing && TTS.flip === f && TTS.p === f.p && TTS.s === f.s && BK && BK.pg === f.pg0 && $("#bkpi")) { TTS.flip = null; bkPageShow(f.pg0 + 1, true); } }, f.frac * secs * 1000);
 }
 // the player bar under the text
 const TTS_ICON = {
@@ -5019,6 +5047,10 @@ function ttsFileTick() {
   if (k < 0) return;
   const p = ss[k][1], s = Math.min(ss[k][2], Math.max(0, bkSents(p).length - 1));
   if (p !== TTS.p || s !== TTS.s) { TTS.p = p; TTS.s = s; ttsShow(); }
+  else if (TTS.flip && TTS.flip.p === p && TTS.flip.s === s) {
+    const f = TTS.flip, st = audStartOf(TAEL_REC, p, f.s), nx = TAEL_REC.ss.find(x => x[0] > st + 0.01), end = nx ? nx[0] : (TAEL_REC.d || TAEL.duration || st);
+    if (end > st && TAEL.currentTime >= st + f.frac * (end - st)) { TTS.flip = null; if (BK.pg === f.pg0 && $("#bkpi")) bkPageShow(f.pg0 + 1, true); }
+  }
   if (TAEL.duration && TAEL.currentTime > TAEL.duration - 30) { const nx = audLocalFor(BK.id, TAEL_REC.b); if (nx && !TTS.pre) { TTS.pre = true; adbGet("ch", nx.k).catch(() => {}); } } // warm the next chapter
 }
 function ttsFileEnded() {
