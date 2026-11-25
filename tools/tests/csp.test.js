@@ -17,7 +17,7 @@ const ready = (pg, ms = 15000) => pg.waitForFunction(() => { const t = document.
     await pg.goto(B);
     ok(await ready(pg), "the app starts under the lock");
     ok(/script-src 'sha256-/.test(await pg.$eval('meta[http-equiv="Content-Security-Policy"]', m => m.content)), "the built page carries the policy with a fingerprint");
-    ok(await pg.$eval("#fontcss", l => l.getAttribute("onload") === null), "font link has no inline handler (switched in the script)");
+    ok(await pg.evaluate(async () => { await document.fonts.load('500 20px "Noto Serif SC"', "练"); return !document.querySelector("#fontcss") && document.fonts.check('500 20px "Noto Serif SC"', "练") && !window.__v.some(x => /font/.test(x)); }), "v112: the app's own fonts load under the lock (no Google Fonts link, no font-src violation)");
     for (const v of ["read", "listen", "me", "home"]) { await pg.evaluate(v => setView(v), v); await pg.waitForTimeout(400); }
     await pg.evaluate(() => { S.placed = true; startSession(); }); await pg.waitForTimeout(500);
     await pg.evaluate(() => { SESSION = null; setView("home"); });
