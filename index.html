@@ -4818,12 +4818,13 @@ function gttsCard() {
   return `<span class="label">🎧 书的音频 · Book audio (Google)</span>
     <p class="small muted">用 Google 的声音提前把书做成音频文件：静音模式下、锁屏时都能听，和歌一样。每本书在它的「⋯」里打开 · Real audio files made ahead with a Google voice: they play on silent and with the screen locked, like songs. Turn it on per book in its ⋯ screen.</p>
     <details class="small"><summary>怎么拿钥匙 · How to get a key (about 10 minutes)</summary><ol style="padding-left:18px;margin:6px 0">
-      <li>打开 <b>console.cloud.google.com</b>，用 Google 账号登录，新建一个项目 · Open console.cloud.google.com, sign in, create a project.</li>
+      <li>打开 <b>console.cloud.google.com</b>，用 Google 账号登录，<b>新建一个项目</b>，别用 Gemini 钥匙所在的那个项目（AI Studio 建的，常叫 Default Gemini Project 或 gen-lang-client-…），也别在新项目里开 Gemini API · Open console.cloud.google.com, sign in and <b>create a new project</b> — not the one your Gemini key is in (AI Studio's, often "Default Gemini Project" or gen-lang-client-…), and don't turn on the Gemini API in it. Billing is per project, so your Gemini key stays on the free tier.</li>
       <li>开通结算：Billing → 关联结算账号（要绑卡）· Billing → link a billing account (a card is needed).</li>
       <li>预算提醒：Billing → Budgets &amp; alerts → 建一个 $1 的预算，到了发邮件 · Budgets &amp; alerts → a $1 budget that emails you.</li>
       <li>启用 API：APIs &amp; Services → Library → 搜「Cloud Text-to-Speech API」→ Enable · Enable the Cloud Text-to-Speech API.</li>
-      <li>建钥匙：APIs &amp; Services → Credentials → Create credentials → API key · Create an API key.</li>
+      <li>建钥匙：左边菜单 APIs &amp; Services → <b>Credentials</b> 页面，最上面的「+ Create credentials」→ <b>API key</b>（不要选 OAuth client ID 或 Service account）· On the Credentials page (left menu), the "+ Create credentials" button at the top → <b>API key</b> (not OAuth client ID or Service account).</li>
       <li>限制钥匙（重要）：Website restrictions 加 <b>${esc(location.origin)}/*</b>；API restrictions 只选 Cloud Text-to-Speech API · Restrict it: websites = ${esc(location.origin)}/*, APIs = only Cloud Text-to-Speech.</li>
+      <li>（可选）封顶：APIs &amp; Services → Cloud Text-to-Speech API → Quotas，把每分钟 / 每天的请求数调低，钥匙万一泄露也花不了多少钱 · (Optional) a hard ceiling: lower the API's requests-per-minute / per-day quotas, so a leaked key can't cost much. A budget only emails you; it doesn't stop charges.</li>
       <li>把钥匙贴到下面，点「试听」· Paste the key below and tap Sample.</li></ol>
       <span class="muted">每月免费 100 万字（大约 5 本小说），app 在 90 万字时会停下来问你 · 1 M characters free a month (about 5 novels); the app stops at 900,000 and asks.</span></details>
     <input class="inp" id="gtkey" type="password" placeholder="Google API key" value="${esc(k)}" autocapitalize="off" autocorrect="off" spellcheck="false">
