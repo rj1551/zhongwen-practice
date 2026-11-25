@@ -90,6 +90,14 @@ async function readThrough(pg) { // in the reader: done → answer every questio
       ok(r && r.half === true, "the resumed read is marked and doesn't count toward reading speed");
       await pg.click("#sr-next"); ok(await done(pg), "…and still completes the day");
       await ctx.close(); }
+    // 5b. (v102, learner) home 读 Read goes straight to the passage even when a card came due again meanwhile
+    { const { ctx, pg } = await fresh();
+      await setup(pg, 1);
+      await pg.evaluate(() => { startSession(); SESSION.ended = true; setView("home"); });
+      await pg.evaluate(() => { const ob = buildBlock; window.buildBlock = buildBlock = (n, used) => { const out = ob(n, used); return used.has("again") ? out : (used.add("again"), [{ t: "lad", id: "L01" }].concat(out)); }; render(); });
+      await pg.waitForSelector("#sr-home"); await pg.click("#sr-home");
+      ok(await pg.evaluate(() => SESSION.q[0].t === "sr" && SESSION.q.slice(1).every(c => c.t !== "sr")), "home 读 Read: the passage comes first even with a card due again (and isn't queued twice)");
+      await ctx.close(); }
     // 6. read in 阅读 instead, after the cards: that completes the day; home skip too
     { const { ctx, pg } = await fresh();
       await setup(pg, 1);

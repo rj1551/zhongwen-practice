@@ -1803,7 +1803,7 @@ function renderHome(main) {
   const ck = $("#ck-ok", main); if (ck) ck.onclick = () => { S.ckSum.seen = true; save(); render(); };
   const gf = $("#gh-fix", main); if (gf) gf.onclick = () => { setView("me"); setTimeout(() => { const c = $("#ghcard"); if (c) c.scrollIntoView({ block: "start" }); }, 50); };
   bindStoreCard(main);
-  const hr = $("#sr-home", main); if (hr) hr.onclick = () => startSession();
+  const hr = $("#sr-home", main); if (hr) hr.onclick = () => startSession(undefined, { extrasFirst: true }); // v102: straight to the writing / passage, not a card that came due again first
   const hs = $("#sr-homeskip", main); if (hs) hs.onclick = () => { markDay("nr"); maybeDayDone(); save(); render(); };
   const sc = $("#slang-copy", main); if (sc) sc.onclick = () => navigator.clipboard.writeText(SLANG_ASK).then(() => toast("已复制 · Copied"), () => toast("复制不了 · Couldn't copy"));
   const sl = $("#slang-later", main); if (sl) sl.onclick = () => { try { localStorage.setItem(SLANG_SNOOZE, String(now() + 3 * DAY)); } catch (e) {} render(); };
@@ -2039,7 +2039,7 @@ function buildBlock(n, used, rnd = Math.random) {
   return out;
 }
 const GOAL_CARDS = { 5: 8, 15: 22, 30: 42 };
-function startSession(goal) {
+function startSession(goal, opt = {}) {
   autoTopUp();
   const g = goal === undefined ? ((S.settings && S.settings.goal) || 0) : goal;
   SESSION = { q: [], i: 0, res: [], combo: 0, best: 0, goal: g, goalN: GOAL_CARDS[g] || 0, goalShown: false, t0: now(), used: new Set(), requeued: new Set(), promoted: 0, mastered: 0, ended: false };
@@ -2049,7 +2049,9 @@ function startSession(goal) {
   // cards it can start with are same-day retries, since real reviews only come due again at 3:38.
   if (daySplit(S.log[dayKey()]).done) { SESSION.used.add("divshown"); SESSION.pastDiv = true; }
   (S.offfb || []).filter(f => !f.seen).forEach(f => SESSION.used.add("lad" + f.id)); // feedback first, then the drill (next session)
-  SESSION.q = addFeedback(buildBlock(8, SESSION.used), SESSION);
+  const first = [];
+  if (opt.extrasFirst) { const fw = fwNext(SESSION.used); if (fw) first.push(fw); else { const sr = schedNext(SESSION.used); if (sr) first.push(sr); } }
+  SESSION.q = first.concat(addFeedback(buildBlock(8, SESSION.used), SESSION));
   if (!SESSION.q.length) { SESSION = null; toast("今天的都练完了，也没有新题了 · All done for today, and no new cards left. 阅读 has passages to read or re-read."); return; }
   setView("session");
 }
