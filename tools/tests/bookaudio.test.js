@@ -101,6 +101,11 @@ async function dev(seedBook) {
   ok(p1.length === 3 && Math.abs(p1[1] - 1.37) < 0.2 && Math.abs(p1[2] - 3.32) < 0.2, "sentence starts are found at the pauses in the audio (" + p1.join(", ") + " s; pauses end at 1.45 and 3.40)");
   ok(rec.type === "audio/mpeg" && await page.evaluate(() => audUse().n) > 300, "kept as audio/mpeg; this month's characters counted (" + await page.evaluate(() => audUse().n) + ")");
   ok(/这台设备有 4 \/ 10 章/.test(await page.textContent("#audcard")), "the card shows 4 of 10 chapters");
+  // v108: the month's characters from all devices together (synced per device)
+  const use1 = await page.evaluate(() => { const u = audUse(); return [u.n, S.ttsUse[devId()].n]; });
+  ok(use1[0] > 300 && use1[0] === use1[1], "the month's characters are kept in the synced progress, per device (" + use1[1] + ")");
+  const use2 = await page.evaluate(() => { const other = JSON.parse(JSON.stringify(S)); other.ttsUse = { dOTHER: { m: dayKey().slice(0, 7), n: 50000 }, old: { m: "2020-01", n: 999 } }; other.updatedAt = S.updatedAt + 1000; const mg = mergeStates(S, other); const keep = S.ttsUse; S.ttsUse = mg.ttsUse; const u = audUse(); READ = { book: READ.book, sub: "info" }; render(); const txt = $("#audcard").textContent; S.ttsUse = keep; return [u.n, u.mine, /一共用了/.test(txt) && /这台设备/.test(txt)]; });
+  ok(use2[0] === use1[1] + 50000 && use2[1] === use1[1] && use2[2], "merged with another device: the total adds both (" + use2[0] + "), last months don't count, the card shows the total and this device's share");
   await page.evaluate(() => $("#audcard").scrollIntoView()); await shot(page, "aud-card.png");
   // ---- long paragraphs go in pieces (v104: Chirp refuses requests over a few hundred bytes) ----
   const LONG = "他在河边慢慢地走着，风很大，天也很冷，可是他一点也不想回家，因为家里没有人等他。".repeat(4) + "最后他还是回去了。";
@@ -123,7 +128,7 @@ async function dev(seedBook) {
   await page.waitForFunction(() => !AUDR.busy && (AUDL.get(BK.id) || []).length === 7, null, { timeout: 30000 });
   ok(/^第八章/.test(G.reqs[0].input.text) && JSON.stringify(await page.evaluate(() => AUDL.get(BK.id).map(h => h.a).sort((x, y) => x - y))) === "[0,4,8,12,28,32,36]", "a jump to chapter 8: its audio is made first, then the ones after (8–10)");
   // ---- the cap ----
-  await page.evaluate(() => { audUseSet({ m: dayKey().slice(0, 7), n: 899999, more: false }); BK.meta.awhole = true; });
+  await page.evaluate(() => { S.ttsUse = { [devId()]: { m: dayKey().slice(0, 7), n: 899999 } }; BK.meta.awhole = true; });
   G.reqs = []; await page.evaluate(() => audKick());
   await page.waitForFunction(() => !AUDR.busy, null, { timeout: 10000 });
   ok(G.reqs.length === 0 && await page.evaluate(() => AUDR.err && AUDR.err.code === "cap"), "at 900,000 characters this month it stops before sending more");
@@ -212,6 +217,7 @@ async function dev(seedBook) {
   await p2.click("#audredo"); ok(/再点一下/.test(await p2.textContent("#audredo")), "🔁 重做 asks for a second tap");
   await p2.click("#audredo"); await p2.waitForFunction(id => (AUDL.get(id) || []).length === 0, r.id, { timeout: 5000 });
   ok(await p2.evaluate(id => (bookRec(id).au || []).length === 10 && /下载 10 章/.test($("#audcard").textContent), r.id), "…then this device's chapters are gone (to be made again); the cloud's are still listed");
+  ok(await p2.evaluate(au => { localStorage.setItem("zwlgf:gttsvoice", "cmn-CN-Chirp3-HD-Puck"); const x = Object.assign({}, au[0], { k: au[0].k.replace(/Kore$/, "Puck"), v: "cmn-CN-Chirp3-HD-Puck" }); const m = mergeGenItem({ id: "b", u: 1, au: [au[0]] }, { id: "b", u: 2, au: [x] }).au; const pick = audCloudPick({ au: m }, []); return m.length === 2 && pick.length === 1 && pick[0].v === audVoice(); }, r.au), "v108: two voices of the same chapter both stay listed after a merge; a device downloads one, in its own voice if there is one");
   ok(await p2.evaluate(au => { const a = { id: "b", u: 1, au: au.slice(0, 3) }, b = { id: "b", u: 2, au: au.slice(2) }; return mergeGenItem(a, b).au.length === au.length; }, r.au), "merging two devices' records unites their cloud audio lists");
   // ---- deleting the book for good takes its audio along ----
   await page.evaluate(id => { const e = trashBook(bookRec(id)); purgeTrash(e); }, r.id);

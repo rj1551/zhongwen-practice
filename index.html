@@ -888,7 +888,7 @@ function mergeGenItem(a, b) {
   // a book's read ranges and reading sittings (v88) are united, so reading on both devices all counts
   const x = {};
   if (a.rd || b.rd || a.st || b.st) Object.assign(x, { rd: rgUnion(a.rd, b.rd), st: stUnion(a.st, b.st) });
-  if (a.au || b.au) { const m = new Map(); for (const e of (a.au || []).concat(b.au || [])) if (e && e.k) m.set(e.a + "-" + e.b, e); x.au = [...m.values()].sort((p, q) => p.a - q.a); } // a book's chapter audio in the cloud (v101)
+  if (a.au || b.au) { const m = new Map(); for (const e of (a.au || []).concat(b.au || [])) if (e && e.k) m.set(e.k, e); x.au = [...m.values()].sort((p, q) => p.a - q.a); } // a book's chapter audio in the cloud (v101), one entry per file (v108: two voices of a chapter both stay listed, so deleting the book removes both)
   return Object.keys(x).length ? Object.assign({}, out, x) : out;
 }
 function mergeGenItem0(a, b) {
@@ -935,6 +935,7 @@ function mergeStates(a, b) {
   m.lsn = Object.assign({}, m.lsn); for (const id in o.lsn || {}) m.lsn[id] = byId(m.lsn[id] || [], o.lsn[id] || [], "t").sort((p, q) => p.t - q.t).slice(-20);
   { const k = kfMerge(m.ktv, o.ktv); if (k) m.ktv = k; } // lyric feed stumbles (v74)
   m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
+  { const tu = Object.assign({}, o.ttsUse); for (const d in m.ttsUse || {}) { const x = m.ttsUse[d], y = tu[d]; tu[d] = !y || !x ? x || y : x.m > y.m || (x.m === y.m && x.n >= y.n) ? x : y; } if (Object.keys(tu).length) m.ttsUse = tu; } // book audio characters this month, per device (v108)
   m.r2del = [...new Set([...(m.r2del || []), ...(o.r2del || [])])];
   m.reqDone = [...new Set([...(m.reqDone || []), ...(o.reqDone || [])])].slice(-500);
   m.mgDone = [...new Set([...(m.mgDone || []), ...(o.mgDone || [])])].slice(-400);
@@ -4599,8 +4600,27 @@ const gttsKey = () => { const p = provGet(); return (p.keys && p.keys.gtts) || "
 function gttsSetKey(k) { const p = provGet(); p.keys = Object.assign({}, p.keys); if (k) p.keys.gtts = k; else delete p.keys.gtts; provSet(p); }
 function audVoice() { try { return localStorage.getItem("zwlgf:gttsvoice") || "cmn-CN-Chirp3-HD-Aoede"; } catch (e) { return "cmn-CN-Chirp3-HD-Aoede"; } }
 const audVoiceName = v => String(v || "").replace(/^cmn-CN-Chirp3-HD-/, "");
-function audUse() { const m = dayKey().slice(0, 7); try { const u = JSON.parse(localStorage.getItem("zwlgf:gttsuse") || "{}"); return u.m === m ? u : { m, n: 0, more: false }; } catch (e) { return { m, n: 0, more: false }; } }
-function audUseSet(u) { try { localStorage.setItem("zwlgf:gttsuse", JSON.stringify(u)); } catch (e) {} }
+// characters sent this month, all devices together (v108): S.ttsUse = {device: {m: "2026-11", n}}, synced and merged
+// per device; the 900,000 stop goes by the total. "Go on this month" (more) stays per device.
+function audUse() {
+  const m = dayKey().slice(0, 7), me = devId(), all = S.ttsUse || {};
+  if (!all[me]) { try { const old = JSON.parse(localStorage.getItem("zwlgf:gttsuse") || "{}"); if (old.m === m && old.n) { S.ttsUse = Object.assign({}, all, { [me]: { m, n: old.n } }); } } catch (e) {} } // (v101–v107 counted on this device only)
+  const by = {}; let n = 0;
+  for (const [d, x] of Object.entries(S.ttsUse || {})) if (x && x.m === m && x.n) { by[d] = x.n; n += x.n; }
+  let more = false; try { const l = JSON.parse(localStorage.getItem("zwlgf:gttsuse") || "{}"); more = l.m === m && !!l.more; } catch (e) {}
+  return { m, n, mine: by[me] || 0, by, more };
+}
+let AUD_USE_T = null;
+function audUseAdd(k) {
+  const m = dayKey().slice(0, 7), me = devId(), x = (S.ttsUse || {})[me];
+  S.ttsUse = Object.assign({}, S.ttsUse, { [me]: { m, n: (x && x.m === m ? x.n : 0) + k } });
+  if (!AUD_USE_T) AUD_USE_T = setTimeout(() => { AUD_USE_T = null; save(); }, 4000); // (saved and synced every few seconds while making)
+}
+function audUseMore() { try { localStorage.setItem("zwlgf:gttsuse", JSON.stringify({ m: dayKey().slice(0, 7), more: true })); } catch (e) {} }
+function audUseLine(u) {
+  const others = Object.keys(u.by).length > 1 || (u.n && !u.mine);
+  return `这个月一共用了 ${u.n.toLocaleString()} / ${AUD_CAP.toLocaleString()} 字${others ? `（这台设备 ${u.mine.toLocaleString()}）` : ""} · This month, all devices: ${u.n.toLocaleString()} of ${AUD_CAP.toLocaleString()} characters${others ? ` (this device ${u.mine.toLocaleString()})` : ""}`;
+}
 const AUD_CAPERR = { code: "cap", message: "这个月已经用了 900,000 字（Google 每月免费 100 万字）。要继续的话点「这个月继续」，超过 100 万字会收费 · This month's 900,000 characters are used (Google gives 1 M free a month). To go on, tap \"Go on this month\"; past 1 M it's charged." };
 function gttsErr(st, t) {
   let m = ""; try { m = (JSON.parse(t).error || {}).message || ""; } catch (e) { m = String(t || "").slice(0, 200); }
@@ -4814,7 +4834,7 @@ async function audRun() {
           if (e && e.code === "rate") { AUD_CONC = Math.max(1, AUD_CONC >> 1); AUDR.err = e; audDraw(); todo.push(p); await new Promise(z => setTimeout(z, 15000)); AUDR.err = null; continue; }
           fail = e; return;
         }
-        const u2 = audUse(); u2.n += n; audUseSet(u2);
+        audUseAdd(n);
         await adbPut("clip", ck, said.buf.byteLength ? { buf: said.buf, st: said.st } : { e: 1 });
         have.add(p); AUDR.job.done++; AUDR.err = null; audDraw();
         if (++okN % 20 === 0) AUD_CONC = Math.min(AUD_CONC_MAX, AUD_CONC + 1);
@@ -4860,7 +4880,7 @@ async function audUpload(id) {
       const base = audR2Base(id, h);
       await r2Put(base + ".mp3", c.blob);
       await r2Put(base + ".json", new Blob([JSON.stringify({ v: 1, a: c.a, b: c.b, voice: c.voice, d: c.d, ps: c.ps, ss: c.ss })], { type: "application/json" }));
-      r.au = (r.au || []).filter(x => !(x.a === h.a && x.b === h.b)).concat([{ k: base, a: h.a, b: h.b, v: h.v, d: c.d, z: c.z }]); touch(r, "audio"); save();
+      r.au = (r.au || []).filter(x => x.k !== base).concat([{ k: base, a: h.a, b: h.b, v: h.v, d: c.d, z: c.z }]); touch(r, "audio"); save();
       if (R2.usage) r2UseSet({ bytes: R2.usage.bytes + c.z, n: R2.usage.n + 2 });
       AUDR.up.done++; audDraw();
     }
@@ -4870,7 +4890,7 @@ async function audUpload(id) {
 }
 async function audDownload(id) {
   const r = bookRec(id), l = await audList(id); if (!r || !r2Cfg()) return;
-  const todo = (r.au || []).filter(x => !l.some(h => h.a === x.a && h.b === x.b)); if (!todo.length) return;
+  const todo = audCloudPick(r, l); if (!todo.length) return;
   AUDR.down = { id, done: 0, n: todo.length }; audDraw();
   try {
     for (const x of todo) {
@@ -4882,11 +4902,17 @@ async function audDownload(id) {
   } catch (e) { AUDR.err = e && e.message ? e : { message: "下载没成功 · Download failed" }; noteErr("book audio download", e); }
   finally { AUDR.down = null; audDraw(); }
 }
+// the cloud's chapters this device doesn't have: one version each (this device's voice if there is one)
+function audCloudPick(r, l) {
+  const v = audVoice(), pick = new Map();
+  for (const x of r.au || []) { if (l.some(h => h.a === x.a && h.b === x.b)) continue; const k = x.a + "-" + x.b, y = pick.get(k); if (!y || (x.v === v && y.v !== v)) pick.set(k, x); }
+  return [...pick.values()].sort((p, q) => p.a - q.a);
+}
 // the book's ⋯ screen: switch, progress, this month's characters, cloud
 function audCardHtml(r, m) {
   const k = gttsKey(), l = AUDL.get(m.id) || [], rs = audRanges(m), have = rs.filter(([a, b]) => l.some(h => h.a === a && h.b === b)).length;
   const u = audUse(), j = AUDR.job && AUDR.job.id === m.id ? AUDR.job : null, cloud = r2Cfg();
-  const inCloud = new Set((r.au || []).map(x => x.a + "-" + x.b)), up = l.filter(h => !inCloud.has(h.a + "-" + h.b)).length, down = (r.au || []).filter(x => !l.some(h => h.a === x.a && h.b === x.b));
+  const inCloud = new Set((r.au || []).map(x => x.a + "-" + x.b)), up = l.filter(h => !inCloud.has(h.a + "-" + h.b)).length, down = audCloudPick(r, l);
   const downMB = down.reduce((s, x) => s + (x.z || 0), 0);
   return `<span class="label">🎧 书的音频 · Book audio</span>
     ${!k ? `<p class="small muted">用 Google 的声音提前把书做成音频：静音模式下、锁屏时都能听 · Make the book into real audio ahead of time with a Google voice: it plays on silent and with the screen locked.</p><button class="btn soft" id="audsetup">设置 Google 的钥匙 · Set up a Google key</button>`
@@ -4895,7 +4921,7 @@ function audCardHtml(r, m) {
     ${AUDR.err ? `<p class="small" style="color:var(--bad)">${esc(AUDR.err.message || "")}</p>` : ""}
     ${k && AUDR.err && AUDR.err.code === "cap" && !u.more ? `<button class="btn ghost" id="audmore">这个月继续（超过 100 万字会收费）· Go on this month (past 1 M is charged)</button>` : ""}
     ${k ? `<div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn ghost" id="audwhole">${m.awhole ? "停止做整本书 · Stop making the whole book" : "整本书都做 · Make the whole book"}</button>${l.length || (AUDC.get(m.id) || new Set()).size ? `<button class="btn ghost" id="audredo">🔁 重做这台设备上的音频 · Remake this device's audio</button>` : ""}</div>
-    <p class="small muted">这个月这台设备用了 ${u.n.toLocaleString()} / ${AUD_CAP.toLocaleString()} 字 · This month on this device: ${u.n.toLocaleString()} of ${AUD_CAP.toLocaleString()} characters · 声音 Voice: ${esc(audVoiceName(audVoice()))}</p>` : ""}
+    <p class="small muted">${audUseLine(u)} · 声音 Voice: ${esc(audVoiceName(audVoice()))}</p>` : ""}
     ${cloud ? `<div class="row" style="gap:8px">${up ? `<button class="btn soft" id="audup" ${AUDR.up ? "disabled" : ""}>☁ 上传 ${up} 章 · Upload ${up} chapter${up > 1 ? "s" : ""}</button>` : ""}${down.length ? `<button class="btn soft" id="auddown" ${AUDR.down ? "disabled" : ""}>⬇ 下载 ${down.length} 章 · Download ${down.length} (${fmtMB(downMB)})</button>` : ""}</div>
       ${AUDR.up && AUDR.up.id === m.id ? `<p class="small"><span class="spin"></span> 上传中 ${AUDR.up.done}/${AUDR.up.n} · Uploading</p>` : ""}${AUDR.down && AUDR.down.id === m.id ? `<p class="small"><span class="spin"></span> 下载中 ${AUDR.down.done}/${AUDR.down.n} · Downloading</p>` : ""}
       ${!up && !down.length && l.length ? `<p class="small muted">☁ 云端和这台设备一样 · The cloud has the same chapters</p>` : ""}` : ""}`;
@@ -4905,7 +4931,7 @@ function audCardBind(r, m) {
   const s = $("#audsetup", c); if (s) s.onclick = () => { READ = null; setView("me"); setTimeout(() => { const g = $("#gttscard"); if (g) g.scrollIntoView({ block: "start" }); }, 50); };
   const on = $("#audon", c); if (on) on.onchange = () => { m.aon = on.checked; bookMetaPut(m).catch(e => noteErr("book audio switch", e)); if (m.aon) audKick(); else if (!m.awhole) AUDR.stop = true; audDraw(); };
   const w = $("#audwhole", c); if (w) w.onclick = () => { m.awhole = !m.awhole; bookMetaPut(m).catch(e => noteErr("book audio switch", e)); if (m.awhole) audKick(); else if (!m.aon) AUDR.stop = true; audDraw(); };
-  const mo = $("#audmore", c); if (mo) mo.onclick = () => { const u = audUse(); u.more = true; audUseSet(u); AUDR.err = null; audKick(); audDraw(); };
+  const mo = $("#audmore", c); if (mo) mo.onclick = () => { audUseMore(); AUDR.err = null; audKick(); audDraw(); };
   const up = $("#audup", c); if (up) up.onclick = () => audUpload(m.id);
   const rd = $("#audredo", c); if (rd) rd.onclick = async () => { // (two taps: it costs characters to make again)
     if (!rd.dataset.sure) { rd.dataset.sure = "1"; rd.textContent = "再点一下：删掉这台设备上的音频重新做（云端的不动）· Tap again: delete this device's audio and make it again (the cloud copy stays)"; return; }
@@ -4943,7 +4969,7 @@ function gttsCard() {
       <button class="btn soft" id="gtlist" ${!k || GTTS_UI.busy ? "disabled" : ""} style="min-height:38px;padding:8px 12px">全部声音 · All voices</button></div>
     <div class="row" style="gap:8px;align-items:center"><button class="btn" id="gtsample" ${!k || GTTS_UI.busy ? "disabled" : ""}>${GTTS_UI.busy ? `<span class="spin"></span>` : "▶"} 试听 · Sample</button>${GTTS_UI.sample ? `<audio controls id="gtaud" src="${GTTS_UI.sample}" style="flex:1;min-width:0;height:36px"></audio>` : ""}</div>
     ${GTTS_UI.err ? `<p class="small" style="color:var(--bad)">${esc(GTTS_UI.err)}</p>` : GTTS_UI.ok ? `<p class="small" style="color:var(--good)">✓ 钥匙能用 · The key works</p>` : ""}
-    ${k ? `<p class="small muted">这个月这台设备用了 ${u.n.toLocaleString()} / ${AUD_CAP.toLocaleString()} 字 · This month on this device: ${u.n.toLocaleString()} characters</p>` : ""}`;
+    ${k ? `<p class="small muted">${audUseLine(u)}</p><p class="small muted">Google 自己的数字（可能晚一天）：Cloud 控制台 → Billing → Reports，服务选 Cloud Text-to-Speech · Google's own figure (can lag a day): Cloud console → Billing → Reports, service Cloud Text-to-Speech.</p>` : ""}`;
 }
 function gttsBind() {
   const c = $("#gttscard"); if (!c) return;
@@ -4953,7 +4979,7 @@ function gttsBind() {
   $("#gtlist", c).onclick = async () => { GTTS_UI.busy = true; GTTS_UI.err = ""; redraw(); try { const l = await gttsVoices(); if (l.length) GTTS_UI.voices = l; GTTS_UI.ok = true; } catch (e) { GTTS_UI.err = e.message || String(e); } GTTS_UI.busy = false; redraw(); };
   $("#gtsample", c).onclick = async () => {
     GTTS_UI.busy = true; GTTS_UI.err = ""; redraw();
-    try { const buf = await gttsSay(AUD_SAMPLE, audVoice()); if (GTTS_UI.sample) URL.revokeObjectURL(GTTS_UI.sample); GTTS_UI.sample = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" })); GTTS_UI.ok = true; const u = audUse(); u.n += Array.from(AUD_SAMPLE).length; audUseSet(u); }
+    try { const buf = await gttsSay(AUD_SAMPLE, audVoice()); if (GTTS_UI.sample) URL.revokeObjectURL(GTTS_UI.sample); GTTS_UI.sample = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" })); GTTS_UI.ok = true; audUseAdd(Array.from(AUD_SAMPLE).length); }
     catch (e) { GTTS_UI.err = e.message || String(e); }
     GTTS_UI.busy = false; redraw(); const a = $("#gtaud"); if (a) a.play().catch(() => {}); // (if the phone refuses, its ▶ plays it)
   };
