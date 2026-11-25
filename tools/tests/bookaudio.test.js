@@ -111,6 +111,11 @@ async function dev(seedBook) {
   ok(G.reqs.every(r => Array.from(r.input.text).length <= 120) && G.reqs.filter((r, i) => Array.from(r.input.text).length <= 50).length >= 4, "a piece Google still calls too long is cut again and sent in smaller pieces (" + G.reqs.map(r => Array.from(r.input.text).length).join(",") + ")");
   ok(said.st.length === said.n && said.st.every((x, i) => i === 0 || x > said.st[i - 1]) && said.d > 4.25 * 2, "…and the pieces are joined, each sentence with its start (" + said.st.join(", ") + ")");
   G.tooLong = 0;
+  // v107: symbols the voice would read out by name are cleaned out of what it's given
+  const cl = await page.evaluate(() => [ttsClean("他（小王）说：“走吧。”"), ttsClean("《三体》/ 第一部 #1"), ttsClean("（注）"), ttsClean("好的。)")]);
+  ok(cl[0] === "他，小王，说：走吧。" && !/[《》\/#]/.test(cl[1]) && cl[2] === "注" && cl[3] === "好的。", "brackets become a pause, quotes / title marks / symbols go: " + JSON.stringify(cl));
+  G.reqs = []; await page.evaluate(async () => { await audSayPara("他（小王）说：“走吧。”然后他们走了。", audVoice()); });
+  ok(G.reqs.length === 1 && !/[（）“”]/.test(G.reqs[0].input.text), "…in what's sent to Google: " + (G.reqs[0] || { input: {} }).input.text);
   // ---- a jump: that chapter first ----
   await page.click("#bkib"); await page.click("[data-bkgo]"); await page.waitForSelector("#bkc p");
   G.reqs = [];
@@ -202,6 +207,11 @@ async function dev(seedBook) {
   ok(/下载 10 章/.test(await p2.textContent("#audcard")), "the other device's card offers ⬇ 下载 10 章 (from the synced list)");
   await p2.click("#auddown"); await p2.waitForFunction(id => !AUDR.down && (AUDL.get(id) || []).length === 10, r.id, { timeout: 20000 });
   ok(await p2.evaluate(async id => { const h = AUDL.get(id).find(x => x.a === 4); const c = await adbGet("ch", h.k); return c && c.blob.size > 1000 && c.ss.length === 10; }, r.id), "download: the chapters' audio and timings arrive on the other device");
+  // v107: remaking this device's audio (two taps; the cloud copy stays)
+  await p2.evaluate(id => { gttsSetKey("GOOD-KEY"); READ = { book: id, sub: "info" }; render(); }, r.id); await p2.waitForSelector("#audredo");
+  await p2.click("#audredo"); ok(/再点一下/.test(await p2.textContent("#audredo")), "🔁 重做 asks for a second tap");
+  await p2.click("#audredo"); await p2.waitForFunction(id => (AUDL.get(id) || []).length === 0, r.id, { timeout: 5000 });
+  ok(await p2.evaluate(id => (bookRec(id).au || []).length === 10 && /下载 10 章/.test($("#audcard").textContent), r.id), "…then this device's chapters are gone (to be made again); the cloud's are still listed");
   ok(await p2.evaluate(au => { const a = { id: "b", u: 1, au: au.slice(0, 3) }, b = { id: "b", u: 2, au: au.slice(2) }; return mergeGenItem(a, b).au.length === au.length; }, r.au), "merging two devices' records unites their cloud audio lists");
   // ---- deleting the book for good takes its audio along ----
   await page.evaluate(id => { const e = trashBook(bookRec(id)); purgeTrash(e); }, r.id);

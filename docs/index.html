@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-glN8P/4xHvonnY7VInK1quqBrqSIvYQo4UociL5sc2c='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-+jCkOGedAEX8cOBtydE02WIV1TvPApUDUm+FBNtCZw4='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3431,7 +3431,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v106 · 11/25 02:21"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v107 · 11/25 02:31"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4340,6 +4340,11 @@ function bkSents(i) {
   }
   return (cache[i] = out);
 }
+// (v107) what the voices are given: brackets become a pause (voices read a lone ） as 右括号), quotes, book-title
+// marks and symbols that get read out by name go; the text on screen and all positions stay as they are
+const ttsClean = t => String(t).replace(/[（(]/g, "，").replace(/[）)]/g, "，")
+  .replace(/[\[\]【】〔〕［］{}｛｝<>《》〈〉“”‘’「」『』"'*#~|_\\/＼／＊＃～｜＿^＾=＝+＋@＠&＆%％$＄]/g, " ")
+  .replace(/([，、；：。！？…])\s*，+/g, "$1").replace(/，\s*([。！？；…])/g, "$1").replace(/\s+/g, " ").replace(/(?<=[^\x00-\x7F])\s+|\s+(?=[^\x00-\x7F])/g, "").replace(/^[\s，]+|[\s，]+$/g, "").trim();
 const ttsText = (p, s) => { const se = bkSents(p)[s]; return se ? bkToks(p).slice(se[0], se[1]).join("").replace(/\//g, "") : ""; };
 // time: counted while it's reading
 function ttsTick() { if (!TTS || !TTS.since) return; const dt = (now() - TTS.since) / 1000; if (dt > 0) TTS.pend += Math.min(dt, 3600); TTS.since = TTS.playing && !document.hidden ? now() : null; }
@@ -4413,7 +4418,7 @@ function ttsSpeak() {
   TTS.mode = "voice";
   if (!TTS_OK) { ttsPause(); toast("这个浏览器不能朗读，这一章也还没有音频 · This browser can't read aloud, and this chapter has no audio yet", 3500); return; }
   ttsWake(true); ttsHint(); ttsVoiceNote();
-  const g = ++TTS.gen, u = new SpeechSynthesisUtterance(ttsText(TTS.p, TTS.s)), v = ttsVoice();
+  const g = ++TTS.gen, u = new SpeechSynthesisUtterance(ttsClean(ttsText(TTS.p, TTS.s)) || ttsText(TTS.p, TTS.s)), v = ttsVoice();
   u.lang = v ? v.lang : "zh-CN"; if (v) u.voice = v; u.rate = ttsRate();
   const t0 = performance.now(), len = Array.from(u.text).length;
   u.onend = () => {
@@ -4677,7 +4682,7 @@ async function audSayPara(t, voice) {
   const ch = Array.from(t), starts = sentCuts(t).map(r => r[0]), parts = [], st = new Array(starts.length).fill(null);
   let T = 0, chars = 0;
   const one = async (x, y, lim) => {
-    const txt = ch.slice(x, y).join(""); if (!/[\p{L}\p{N}]/u.test(txt)) return;
+    const txt = ttsClean(ch.slice(x, y).join("")); if (!/[\p{L}\p{N}]/u.test(txt)) return;
     let buf;
     try { buf = await gttsSay(txt, voice); }
     catch (e) { if (audTooLong(e) && lim > 20) { for (const [a, b] of audPieces(t, Math.floor(lim / 2), x, y)) await one(a, b, Math.floor(lim / 2)); return; } throw e; }
@@ -4890,7 +4895,7 @@ function audCardHtml(r, m) {
     <p class="small">这台设备有 ${have} / ${rs.length} 章的音频 · ${have} of ${rs.length} chapters on this device${j ? `<br><span class="spin"></span> 正在做：${esc(j.ch || "第 " + (rs.findIndex(x => x[0] === j.a) + 1) + " 章")} · ${j.done}/${j.b - j.a} 段 · Making ${j.done}/${j.b - j.a} paragraphs` : ""}</p>
     ${AUDR.err ? `<p class="small" style="color:var(--bad)">${esc(AUDR.err.message || "")}</p>` : ""}
     ${k && AUDR.err && AUDR.err.code === "cap" && !u.more ? `<button class="btn ghost" id="audmore">这个月继续（超过 100 万字会收费）· Go on this month (past 1 M is charged)</button>` : ""}
-    ${k ? `<div class="row" style="gap:8px"><button class="btn ghost" id="audwhole">${m.awhole ? "停止做整本书 · Stop making the whole book" : "整本书都做 · Make the whole book"}</button></div>
+    ${k ? `<div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn ghost" id="audwhole">${m.awhole ? "停止做整本书 · Stop making the whole book" : "整本书都做 · Make the whole book"}</button>${l.length || (AUDC.get(m.id) || new Set()).size ? `<button class="btn ghost" id="audredo">🔁 重做这台设备上的音频 · Remake this device's audio</button>` : ""}</div>
     <p class="small muted">这个月这台设备用了 ${u.n.toLocaleString()} / ${AUD_CAP.toLocaleString()} 字 · This month on this device: ${u.n.toLocaleString()} of ${AUD_CAP.toLocaleString()} characters · 声音 Voice: ${esc(audVoiceName(audVoice()))}</p>` : ""}
     ${cloud ? `<div class="row" style="gap:8px">${up ? `<button class="btn soft" id="audup" ${AUDR.up ? "disabled" : ""}>☁ 上传 ${up} 章 · Upload ${up} chapter${up > 1 ? "s" : ""}</button>` : ""}${down.length ? `<button class="btn soft" id="auddown" ${AUDR.down ? "disabled" : ""}>⬇ 下载 ${down.length} 章 · Download ${down.length} (${fmtMB(downMB)})</button>` : ""}</div>
       ${AUDR.up && AUDR.up.id === m.id ? `<p class="small"><span class="spin"></span> 上传中 ${AUDR.up.done}/${AUDR.up.n} · Uploading</p>` : ""}${AUDR.down && AUDR.down.id === m.id ? `<p class="small"><span class="spin"></span> 下载中 ${AUDR.down.done}/${AUDR.down.n} · Downloading</p>` : ""}
@@ -4903,6 +4908,13 @@ function audCardBind(r, m) {
   const w = $("#audwhole", c); if (w) w.onclick = () => { m.awhole = !m.awhole; bookMetaPut(m).catch(e => noteErr("book audio switch", e)); if (m.awhole) audKick(); else if (!m.aon) AUDR.stop = true; audDraw(); };
   const mo = $("#audmore", c); if (mo) mo.onclick = () => { const u = audUse(); u.more = true; audUseSet(u); AUDR.err = null; audKick(); audDraw(); };
   const up = $("#audup", c); if (up) up.onclick = () => audUpload(m.id);
+  const rd = $("#audredo", c); if (rd) rd.onclick = async () => { // (two taps: it costs characters to make again)
+    if (!rd.dataset.sure) { rd.dataset.sure = "1"; rd.textContent = "再点一下：删掉这台设备上的音频重新做（云端的不动）· Tap again: delete this device's audio and make it again (the cloud copy stays)"; return; }
+    AUDR.stop = true; while (AUDR.busy) await new Promise(z => setTimeout(z, 200));
+    if (TTS && TTS.book === m.id) ttsStop();
+    await audDelBook(m.id); AUDC.delete(m.id); if (TAEL_REC && TAEL_REC.id === m.id) TAEL_REC = null;
+    AUDR.err = null; audDraw(); audKick();
+  };
   const dn = $("#auddown", c); if (dn) dn.onclick = () => audDownload(m.id);
 }
 function audDraw() {

@@ -69,7 +69,7 @@ const FAKE = () => {
   await page.waitForFunction(() => TTS && TTS.p >= 5, null, { timeout: 10000 });
   await page.evaluate(() => ttsPause());
   said = await page.evaluate(() => window.__said.map(x => x.text));
-  ok(said.slice(0, 7).join("|") === [...SPOKEN, SENT[0]].join("|"), "it reads on sentence by sentence and into the next paragraph: " + said.slice(0, 7).join(" | "));
+  ok(said.slice(0, 7).join("|") === [...SPOKEN, SENT[0]].map(x => x.replace(/[“”]/g, "")).join("|"), "it reads on sentence by sentence and into the next paragraph: " + said.slice(0, 7).join(" | "));
   const pos = await page.evaluate(() => ({ pos: BK.pos, tp: TTS.p, mp: BK.meta.pos.p }));
   ok(pos.pos === pos.tp && pos.mp === pos.tp, "the place follows the voice (paragraph " + pos.tp + ")");
   ok(await page.evaluate(() => window.__wl.held === 0), "paused: the screen may turn off again");
