@@ -161,6 +161,7 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .kf .sbar{gap:8px} .kfbtns{gap:6px;flex:none;flex-wrap:nowrap;margin-left:auto} .kfbtns .tagc{padding-left:9px;padding-right:9px}
 .kfview{position:relative;flex:1;overflow:hidden;display:flex;align-items:center}
 .kfcol{width:100%}
+html.bkscroll{scrollbar-width:none} html.bkscroll::-webkit-scrollbar,html.bkscroll body::-webkit-scrollbar{display:none;width:0;height:0}
 html.bklock,html.bklock body{overflow:hidden;overscroll-behavior:none;height:100%} html.bklock main{padding-bottom:8px}
 .bkbar{position:sticky;top:0;z-index:6;background:var(--bg);display:flex;align-items:center;gap:8px;padding:8px 0;margin-bottom:-8px}
 .bkbar .bkt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -944,6 +945,7 @@ function mergeStates(a, b) {
   m.packsDone = [...new Set([...(m.packsDone || []), ...(o.packsDone || [])])].slice(-300);
   { const tu = Object.assign({}, o.ttsUse); for (const d in m.ttsUse || {}) { const x = m.ttsUse[d], y = tu[d]; tu[d] = !y || !x ? x || y : x.m > y.m || (x.m === y.m && x.n >= y.n) ? x : y; } if (Object.keys(tu).length) m.ttsUse = tu; } // book audio characters this month, per device (v108)
   m.r2del = [...new Set([...(m.r2del || []), ...(o.r2del || [])])];
+  { const bs = JSON.parse(JSON.stringify(m.bkSplit || {})); for (const id in o.bkSplit || {}) { const t = bs[id] = bs[id] || {}; for (const w in o.bkSplit[id]) { const x = o.bkSplit[id][w], y = t[w]; if (!y || x[0] > y[0]) t[w] = x; } } if (Object.keys(bs).length) m.bkSplit = bs; } // book 拆开 marks (v114): newer wins
   m.reqDone = [...new Set([...(m.reqDone || []), ...(o.reqDone || [])])].slice(-500);
   m.mgDone = [...new Set([...(m.mgDone || []), ...(o.mgDone || [])])].slice(-400);
   { const om = new Map((o.mg || []).map(z => [z.k, z])); // same entry on both devices: keep the model's feedback / Claude's answer from either
@@ -1217,9 +1219,24 @@ function lookupAll(tok, gl = {}) {
   const add = (r) => { const k = pyKey(r.py); if (seen.has(k)) { const ex = out.find(x => pyKey(x.py) === k); if (ex) { ex.here = ex.here || r.here; ex.anki = ex.anki || r.anki; } return; } seen.add(k); out.push(r); };
   if (g) add({ py: g[0], gl: g[1], here: true, anki: !!(d && pyKey(d.py.split("/")[0]) === pyKey(g[0])) });
   if (d) for (const py of d.py.split("/")) add({ py, gl: cedGl(py) || d.gl, anki: true });
-  for (const [py, cg] of ced) add({ py, gl: cg });
+  for (const [py, cg] of ced) add({ py, gl: cedFollow(cg) });
   if (!out.length) return null;
   return { readings: out, tier: d ? d.tier : (ced.length || g ? "n" : null), lv: d ? d.lv : 0 };
+}
+// (v114) CC-CEDICT files some words only as "variant of 梭鏢|梭镖" / "see 基友": add the meaning of the word it points to
+const CED_REF = /^(?:(?:old |Japanese |erhua |archaic |Taiwan )?variant of|see(?: also)?|same as|equivalent to) (?:[^\s|,;]+\|)?([\u3400-\u9fff\uf900-\ufaff\u{20000}-\u{2ffff}]+)/u;
+function cedFollow(g) {
+  const m = CED && CED_REF.exec(g || ""); if (!m) return g;
+  const t = CED.get(m[1]); const hit = t && t.find(([, x]) => !CED_REF.test(x));
+  return hit ? `${g} → ${m[1]}：${hit[1]}` : g;
+}
+// (v114) a word with no meaning of its own (not in the dictionary, or a lyric chunk with pinyin only): the longest
+// dictionary words inside it, e.g. 重归于好 → 重归 / 于 / 好 … whatever the dictionary has
+function subWords(tok, gl = {}) {
+  const ch = Array.from(tok.replace(/\//g, "")); if (ch.length < 3 || !CED) return [];
+  const out = []; let i = 0;
+  while (i < ch.length) { let L = Math.min(6, ch.length - i - (i === 0 ? 1 : 0)); for (; L > 1; L--) { const w = ch.slice(i, i + L).join(""); if (DICT.has(w) || CED.has(w)) break; } out.push(ch.slice(i, i + L).join("")); i += L; }
+  return out.length < ch.length ? out.map(x => ({ x, d: lookup(x, gl) })) : [];
 }
 function lookup(tok, gl = {}) {
   const a = lookupAll(tok, gl);
@@ -1759,6 +1776,7 @@ function render() {
   dropBar(); // the listening player bar belongs to an item's page only; drawPlayer puts it back
   $("#tabs").hidden = (VIEW === "session" && SESSION && !SESSION.ended) || VIEW === "place" || (VIEW === "listen" && LST && LST.feed && KF && !KF.ended) || (VIEW === "read" && !!READ && !!READ.book && READ.sub !== "info");
   document.documentElement.classList.toggle("bklock", !!(VIEW === "read" && READ && READ.book && !READ.sub && bookPref().mode === "page")); // book in pages: the page itself never scrolls
+  document.documentElement.classList.toggle("bkscroll", !!(VIEW === "read" && READ && READ.book && !READ.sub && bookPref().mode !== "page")); // (v114) book scrolling: no scroll bar (only a few chunks are drawn, so it never showed the place in the book)
   document.documentElement.classList.toggle("kflock", !!(VIEW === "listen" && LST && LST.feed && KF && !KF.ended)); // lyric feed: the page itself never scrolls
   $$("#tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === VIEW ? "page" : "false"));
   if (VIEW === "home") renderHome(main);
@@ -3359,16 +3377,25 @@ function renderRead(main) {
   bindMineSection(main);
 }
 // Split unsegmented text (titles) into words by longest dictionary match.
-function segmentText(text, gl = {}) {
-  const ch = Array.from(String(text || "")), out = [];
-  let i = 0;
-  while (i < ch.length) {
-    if (/[A-Za-z0-9]/.test(ch[i])) { let j = i; while (j < ch.length && /[A-Za-z0-9.%]/.test(ch[j])) j++; out.push(ch.slice(i, j).join("")); i = j; continue; }
-    let len = 1;
-    if (!isPunct(ch[i])) for (let L = Math.min(6, ch.length - i); L > 1; L--) { const w = ch.slice(i, i + L).join(""); const v = unVariant(w); if (DICT.has(w) || gl[w] || (CED && CED.has(w)) || (v !== w && (DICT.has(v) || (CED && CED.has(v))))) { len = L; break; } }
-    out.push(ch.slice(i, i + len).join("")); i += len;
+/* (v114) Splitting running text into words: the split with the fewest words wins (each single character costs a
+   bit extra, a word that's only in CC-CEDICT a little more than one in your list or this text's notes), instead of
+   the longest word at each point from the left, which made 研究生/命 out of 研究生命. ban: words never to use (a
+   book's 拆开 · Split, bkSplitSet). */
+function segmentText(text, gl = {}, ban = null) {
+  const ch = Array.from(String(text || "")), n = ch.length;
+  const best = new Array(n + 1).fill(Infinity), from = new Array(n + 1).fill(0); best[0] = 0;
+  const known = w => { if (ban && ban.has(w)) return 0; if (gl[w]) return 1; if (DICT.has(w)) return 2; if (CED && CED.has(w)) return 3; const v = unVariant(w); return v !== w && (DICT.has(v) || (CED && CED.has(v))) ? 3 : 0; };
+  const COST = [0, 0.8, 1, 1.15];
+  for (let i = 0; i < n; i++) {
+    if (best[i] === Infinity) continue;
+    const step = (j, c) => { if (best[i] + c < best[j] - 1e-9) { best[j] = best[i] + c; from[j] = i; } };
+    if (/[A-Za-z0-9]/.test(ch[i])) { let j = i; while (j < n && /[A-Za-z0-9.%]/.test(ch[j])) j++; step(j, 1); continue; }
+    step(i + 1, isPunct(ch[i]) ? 1 : 1.6);
+    if (isPunct(ch[i])) continue;
+    for (let L = 2; L <= Math.min(6, n - i); L++) { if (isPunct(ch[i + L - 1])) break; const k = known(ch.slice(i, i + L).join("")); if (k) step(i + L, COST[k]); }
   }
-  return out;
+  const out = []; for (let j = n; j > 0; j = from[j]) out.push(ch.slice(from[j], j).join(""));
+  return out.reverse();
 }
 const tokHtml = (t, k, looked) => {
   const show = t.replace(/\//g, "");
@@ -3446,7 +3473,8 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const tok = paras[pi][ti], word = tok.replace(/\//g, "");
   const A = lookupAll(tok, p.gl || {});
   const L = A ? { py: A.readings[0].py, gl: A.readings[0].gl, tier: A.tier, lv: A.lv } : null;
-  const parts = tok.includes("/") ? tok.split("/").map(x => ({ x, d: lookup(x, p.gl || {}) })) : [];
+  const noGl = !A || A.readings.every(r => !r.gl); // (v114) e.g. a re-chunked lyric line: pinyin but no meaning
+  const parts = tok.includes("/") ? tok.split("/").map(x => ({ x, d: lookup(x, p.gl || {}) })) : noGl ? subWords(tok, p.gl || {}) : [];
   const chars = charBreak(tok);
   const inBank = !!S.bank[word] && !isAutoWord(S.bank[word]);
   const wide = window.innerWidth >= 900;
@@ -3457,8 +3485,9 @@ function openSheet(p, paras, pi, ti, tokEl) {
   const rdHtml = r => `<div class="rd"><b>${esc(r.py)}</b>${multi && r.here ? '<span class="rtag here">这里 here</span>' : ""}${multi && r.anki && !r.here ? '<span class="rtag">你学过 Anki</span>' : ""}<span>${esc(r.gl)}</span></div>`;
   sh.innerHTML = `<div class="in"><div class="spread"><div class="row" style="gap:10px;align-items:baseline"><span class="w">${esc(word)}</span>${p.trad && ZHC && toTrad(word) !== word ? `<span class="w" style="font-size:22px;color:var(--muted)">${esc(toTrad(word))}</span>` : ""}${L && L.tier ? `<span class="tier ${L.tier}">${TIER_NAME[L.tier]}${L.lv && L.lv < 7 ? " · HSK" + L.lv : L.lv === 7 ? " · HSK7-9" : ""}</span>` : ""}</div><button class="x" id="cls" aria-label="关闭">×</button></div>
     ${rds.length ? `<div class="rds">${rds.slice(0, 3).map(rdHtml).join("")}</div>` : `<p class="muted">${CED ? `词典里没有这个词 · This word isn't in the dictionary.${chars.length > 1 || parts.length ? "<br>下面是每个部分的意思 · Here's what each part means." : ""}` : CED_FAIL ? "完整词典没能加载（可能没网）· The full dictionary couldn't load (offline?). 你的词表和这篇的注释照样能查 · Your word list and this passage's notes still work." : "完整词典还在加载… The full dictionary is still loading."}</p>`}
-    <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more && rds.length ? `<button class="btn ghost" id="more">更多 More</button>` : ""}</div>
-    <div id="moreb" ${rds.length ? "hidden" : ""}>
+    <div class="row"><button class="btn ${inBank ? "ghost" : "soft"}" id="addb">${inBank ? "移出复习 Remove from review" : "加入复习 Add to review"}</button>${more && rds.length && !noGl ? `<button class="btn ghost" id="more">更多 More</button>` : ""}${BK && p === BK.p && Array.from(word).length > 1 ? `<button class="btn ghost" id="splitb">拆开 Split</button>` : ""}</div>
+    ${rds.length && noGl && CED && (parts.length || chars.length > 1) ? `<p class="small muted">词典里没有这个词的解释，下面是每个部分的意思 · No meaning for this word in the dictionary; here's what each part means.</p>` : ""}
+    <div id="moreb" ${rds.length && !noGl ? "hidden" : ""}>
     ${rds.length > 3 ? `<div class="rds">${rds.slice(3).map(rdHtml).join("")}</div>` : ""}
     ${parts.length ? `<div class="chars">${parts.map(o => `<div><span class="zh">${esc(o.x)}</span>${o.d ? esc(o.d.py) + " · " + esc(o.d.gl) : ""}</div>`).join("")}</div>` : ""}
     ${chars.length > 1 ? `<div class="chars" style="margin-top:6px">${chars.map(c => `<div><span class="zh">${esc(c.ch)}</span>${esc(c.py)} ${c.gl ? "· " + esc(c.gl) : ""}</div>`).join("")}</div>` : ""}</div></div>`;
@@ -3491,7 +3520,22 @@ function openSheet(p, paras, pi, ti, tokEl) {
     }
   };
   place();
+  // (v114) scrolling: the card moves with the word while it's on screen, and closes once the word leaves (or slides
+  // under the bottom sheet); scrolling inside the card itself doesn't count
+  if (tokEl) {
+    const follow = e => {
+      if (!sh.isConnected) return removeEventListener("scroll", follow, true);
+      if (e && e.target && e.target.nodeType === 1 && sh.contains(e.target)) return;
+      const r = tokEl.getBoundingClientRect(), inner = sh.querySelector(".in"), vh = innerHeight;
+      if (!tokEl.isConnected || r.bottom < 0 || r.top > vh) return closeSheet();
+      if (wide) { const h = inner.offsetHeight; sh.style.left = Math.max(16, Math.min(r.left, innerWidth - sh.offsetWidth - 16)) + "px"; sh.style.top = (r.bottom + h + 12 < vh ? r.bottom + 8 : Math.max(8, r.top - h - 8)) + "px"; return; }
+      if (sh.classList.contains("popm")) { const t = r.top - inner.offsetHeight - 8; if (t < 0) return closeSheet(); sh.style.top = t + "px"; }
+      else if (r.bottom > sh.getBoundingClientRect().top + 4) closeSheet();
+    };
+    addEventListener("scroll", follow, { capture: true, passive: true }); SHEET_FOLLOW = follow;
+  }
   $("#cls", sh).onclick = closeSheet;
+  const sb = $("#splitb", sh); if (sb) sb.onclick = () => { bkSplitMark(word, true); toastAction(`「${word}」在这本书里拆开了 · Split in this book`, "撤销 Undo", () => bkSplitMark(word, false), 5000); };
   const mb = $("#more", sh); if (mb) mb.onclick = () => { $("#moreb", sh).hidden = !$("#moreb", sh).hidden; mb.textContent = $("#moreb", sh).hidden ? "更多 More" : "收起 Less"; place(); };
   $("#addb", sh).onclick = () => {
     if (S.bank[word] && isAutoWord(S.bank[word])) { S.bank[word].saved = true; save(); closeSheet(); toast("已在复习中 · Already in your review"); return; }
@@ -3502,7 +3546,8 @@ function openSheet(p, paras, pi, ti, tokEl) {
     toastAction("已加入 " + word, "撤销 Undo", () => { removeFromBank(word, false); toast("已撤销 Undone"); });
   };
 }
-function closeSheet() { const s = $("#sheet"); if (s) s.remove(); document.body.style.paddingBottom = ""; }
+let SHEET_FOLLOW = null;
+function closeSheet() { const s = $("#sheet"); if (s) s.remove(); document.body.style.paddingBottom = ""; if (SHEET_FOLLOW) { removeEventListener("scroll", SHEET_FOLLOW, true); SHEET_FOLLOW = null; } }
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
 // a tap anywhere outside the word popup closes it (a tap on another word opens that word instead; scrolling doesn't count)
 document.addEventListener("click", e => {
@@ -4122,7 +4167,16 @@ async function bookOpen(id) {
 }
 const bkOrig = () => !!(BK.meta.trad && BK.meta.orig && BK.simp);
 const bkSimp = i => BK.simp ? BK.simp[i] : BK.paras[i];
-const bkToks = i => BK.toks[i] || (BK.toks[i] = segmentText(bkSimp(i)));
+// (v114) 拆开 · Split: words the learner split in this book are never used there again. S.bkSplit[bookId][word] =
+// [time, 1 split | 0 undone]; synced, the newer mark wins (mergeStates).
+const bkSplitSet = id => new Set(Object.entries((S.bkSplit || {})[id] || {}).filter(([, v]) => v && v[1]).map(([w]) => w));
+const bkToks = i => BK.toks[i] || (BK.toks[i] = segmentText(bkSimp(i), {}, BK.ban || (BK.ban = bkSplitSet(BK.id))));
+function bkSplitMark(word, on) {
+  if (!BK) return;
+  S.bkSplit = Object.assign({}, S.bkSplit); S.bkSplit[BK.id] = Object.assign({}, S.bkSplit[BK.id], { [word]: [now(), on ? 1 : 0] });
+  save(); BK.ban = null; BK.toks = []; BK.sents = []; BK.looked = new Set(); closeSheet();
+  if (VIEW === "read" && READ && READ.book === BK.id && !READ.sub) render();
+}
 const bkChunkOf = p => { let c = 0; for (let k = 0; k < BK.chunks.length; k++) if (BK.chunks[k] <= p) c = k; else break; return c; };
 function bkParaHtml(i) {
   const toks = bkToks(i), sa = Array.from(bkSimp(i)), oa = bkOrig() ? Array.from(BK.paras[i]) : null, useO = oa && oa.length === sa.length;
@@ -5115,9 +5169,10 @@ function audMedia() {
     ms.setActionHandler("previoustrack", () => { if (TTS) ttsStep(-1); });
     ms.setActionHandler("nexttrack", () => { if (TTS) ttsStep(1); });
     for (const k of ["seekbackward", "seekforward"]) try { ms.setActionHandler(k, null); } catch (e) {}
+    if (TAEL) msSeekable(TAEL);
   } catch (e) {}
 }
-function audMediaOff() { try { if ("mediaSession" in navigator) { navigator.mediaSession.metadata = null; for (const k of ["play", "pause", "previoustrack", "nexttrack"]) navigator.mediaSession.setActionHandler(k, null); } } catch (e) {} }
+function audMediaOff() { try { if ("mediaSession" in navigator) { navigator.mediaSession.metadata = null; for (const k of ["play", "pause", "previoustrack", "nexttrack"]) navigator.mediaSession.setActionHandler(k, null); try { navigator.mediaSession.setActionHandler("seekto", null); } catch (e) {} MS_EL = null; } } catch (e) {} }
 // the device voice is standing in for a chapter whose audio isn't made yet: say so (once per chapter)
 function ttsVoiceNote() {
   const m = BK && BK.meta; if (!m || !(m.aon || m.awhole) || !TTS) return;
@@ -6059,6 +6114,18 @@ async function plLoad(it) {
 function plEnded(it) { if (PL && PL.ids[PL.i] === it.id) plGo(1); }
 const plOn = it => !!(PL && PL.ids[PL.i] === it.id);
 const plHereOk = it => it.kind === "file" && itemType(it) === "song" && plSongs().length > 1;
+/* (v114) the lock screen / Control Centre scrubber: tell the phone where the audio is (setPositionState) and let it
+   seek (seekto). MS_EL = the element the lock screen is showing (a song's AUD or a book's chapter audio TAEL). */
+let MS_EL = null;
+function msPos(el) {
+  try { if (!("mediaSession" in navigator) || el !== MS_EL || !navigator.mediaSession.setPositionState) return; const d = el.duration; if (!d || !isFinite(d)) return; navigator.mediaSession.setPositionState({ duration: d, playbackRate: el.playbackRate || 1, position: Math.max(0, Math.min(el.currentTime || 0, d)) }); } catch (e) {}
+}
+function msSeekable(el) {
+  if (!el) return; MS_EL = el;
+  if (!el._msw) { el._msw = true; for (const ev of ["loadedmetadata", "durationchange", "ratechange", "seeked", "play", "pause"]) el.addEventListener(ev, () => msPos(el)); }
+  try { navigator.mediaSession.setActionHandler("seekto", d => { if (MS_EL !== el || d.seekTime == null) return; if (d.fastSeek && el.fastSeek) el.fastSeek(d.seekTime); else el.currentTime = d.seekTime; msPos(el); }); } catch (e) {}
+  msPos(el);
+}
 function mediaMeta(it) {
   try {
     if (!("mediaSession" in navigator)) return;
@@ -6068,6 +6135,7 @@ function mediaMeta(it) {
     h("seekbackward", () => { if (AUD) AUD.currentTime = Math.max(0, AUD.currentTime - 5); });
     h("seekforward", () => { if (AUD) AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); });
     h("previoustrack", PL ? () => plGo(-1) : null); h("nexttrack", PL ? () => plGo(1) : null);
+    if (AUD) msSeekable(AUD);
   } catch (e) {}
 }
 /* ============ 刷歌词 · Lyric feed (KTV instant mode; v74, scrolling v75) ============

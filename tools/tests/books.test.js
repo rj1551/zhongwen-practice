@@ -110,6 +110,17 @@ function makeBook() {
   const tk = page.locator("#bkc .tk", { hasText: /^仓库$/ }).first();
   await tk.click(); await page.waitForSelector("#sheet");
   ok(/仓库/.test(await page.textContent("#sheet .w")) && /cāng/.test(await page.textContent("#sheet")), "tapping a word opens the usual popup (仓库 cāngkù)");
+  ok(await page.evaluate(() => document.documentElement.classList.contains("bkscroll")), "(v114) scrolling a book: no scroll bar (html.bkscroll)");
+  // (v114) 拆开 · Split: the word isn't used again in this book; 撤销 puts it back
+  const n0 = await page.evaluate(() => BK.toks.flat().filter(t => t === "仓库").length);
+  await page.click("#splitb"); await page.waitForFunction(() => !$("#sheet"));
+  const sp = await page.evaluate(() => ({ n: BK.toks.flat().filter(t => t === "仓库").length, drawn: $$("#bkc .tk").some(t => t.textContent === "仓库"), mark: S.bkSplit[BK.id]["仓库"][1] }));
+  ok(n0 > 0 && sp.n === 0 && !sp.drawn && sp.mark === 1, "拆开 Split: 仓库 is no longer one word in this book: " + JSON.stringify([n0, sp]));
+  await page.evaluate(() => $$(".toast.act button")[0].click()); await page.waitForFunction(() => $$("#bkc .tk").some(t => t.textContent === "仓库"));
+  ok(await page.evaluate(() => S.bkSplit[BK.id]["仓库"][1] === 0), "撤销 Undo puts it back");
+  ok(await page.evaluate(() => { const a = { bkSplit: { b1: { x: [5, 1], y: [9, 0] } } }, b = { bkSplit: { b1: { x: [7, 0] }, b2: { z: [3, 1] } } }; const m = mergeStates(Object.assign(freshState(), a, { updatedAt: 2 }), Object.assign(freshState(), b, { updatedAt: 1 })).bkSplit; return m.b1.x[0] === 7 && m.b1.x[1] === 0 && m.b1.y[1] === 0 && m.b2.z[1] === 1; }), "split marks merge: the newer mark wins, both books kept");
+  await page.waitForFunction(() => $$("#bkc .tk").some(t => t.textContent === "仓库"));
+  await page.locator("#bkc .tk", { hasText: /^仓库$/ }).first().click(); await page.waitForSelector("#sheet");
   await page.click("#addb");
   const bank = await page.evaluate(() => S.bank["仓库"]);
   ok(bank && /^book:bk/.test(bank.src) && bank.s.includes("仓库") && bank.s.length < 60, "加入复习 saves the word with its sentence from the book: " + (bank && bank.s));
