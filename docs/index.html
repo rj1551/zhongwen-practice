@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-xT31R56ptgjShflbVmyV2mifIROGSxDjjy5GfgZmeA4='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-T5mcoqG8Z7Ok11W7tMumAV6sQNJZBOX7pFIEy7U9oqI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3466,7 +3466,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v114 · 11/27 01:37"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v115 · 11/27 05:48"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5169,11 +5169,10 @@ function audMedia() {
     ms.setActionHandler("pause", () => { if (TTS && TTS.playing) ttsPause(); });
     ms.setActionHandler("previoustrack", () => { if (TTS) ttsStep(-1); });
     ms.setActionHandler("nexttrack", () => { if (TTS) ttsStep(1); });
-    for (const k of ["seekbackward", "seekforward"]) try { ms.setActionHandler(k, null); } catch (e) {}
-    if (TAEL) msSeekable(TAEL);
+    if (TAEL) msSeekable(TAEL); // (also −10 / +10)
   } catch (e) {}
 }
-function audMediaOff() { try { if ("mediaSession" in navigator) { navigator.mediaSession.metadata = null; for (const k of ["play", "pause", "previoustrack", "nexttrack"]) navigator.mediaSession.setActionHandler(k, null); try { navigator.mediaSession.setActionHandler("seekto", null); } catch (e) {} MS_EL = null; } } catch (e) {} }
+function audMediaOff() { try { if ("mediaSession" in navigator) { navigator.mediaSession.metadata = null; for (const k of ["play", "pause", "previoustrack", "nexttrack"]) navigator.mediaSession.setActionHandler(k, null); for (const k of ["seekto", "seekbackward", "seekforward"]) try { navigator.mediaSession.setActionHandler(k, null); } catch (e) {} MS_EL = null; } } catch (e) {} }
 // the device voice is standing in for a chapter whose audio isn't made yet: say so (once per chapter)
 function ttsVoiceNote() {
   const m = BK && BK.meta; if (!m || !(m.aon || m.awhole) || !TTS) return;
@@ -6124,6 +6123,9 @@ function msPos(el) {
 function msSeekable(el) {
   if (!el) return; MS_EL = el;
   if (!el._msw) { el._msw = true; for (const ev of ["loadedmetadata", "durationchange", "ratechange", "seeked", "play", "pause"]) el.addEventListener(ev, () => msPos(el)); }
+  // (v115) the lock screen's −10 / +10: they did nothing for book audio (no handler) and moved a song only 5 s
+  const jump = dir => d => { if (MS_EL !== el) return; const o = (d && d.seekOffset) || 10, t = Math.max(0, Math.min((el.duration || 1e9) - 0.1, (el.currentTime || 0) + dir * o)); el.currentTime = t; msPos(el); };
+  for (const [k, dir] of [["seekbackward", -1], ["seekforward", 1]]) try { navigator.mediaSession.setActionHandler(k, jump(dir)); } catch (e) {}
   try { navigator.mediaSession.setActionHandler("seekto", d => { if (MS_EL !== el || d.seekTime == null) return; if (d.fastSeek && el.fastSeek) el.fastSeek(d.seekTime); else el.currentTime = d.seekTime; msPos(el); }); } catch (e) {}
   msPos(el);
 }
@@ -6133,8 +6135,6 @@ function mediaMeta(it) {
     navigator.mediaSession.metadata = new MediaMetadata({ title: it.title || "", artist: PL ? `连播 ${PL.i + 1}/${PL.ids.length}` : "中文练功房", album: "中文练功房" });
     const h = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch (e) {} };
     h("play", () => AUD && AUD.play()); h("pause", () => AUD && AUD.pause());
-    h("seekbackward", () => { if (AUD) AUD.currentTime = Math.max(0, AUD.currentTime - 5); });
-    h("seekforward", () => { if (AUD) AUD.currentTime = Math.min(AUD.duration || 1e9, AUD.currentTime + 5); });
     h("previoustrack", PL ? () => plGo(-1) : null); h("nexttrack", PL ? () => plGo(1) : null);
     if (AUD) msSeekable(AUD);
   } catch (e) {}

@@ -34,9 +34,10 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
     ok(fl.pm && fl.moved === 40 && fl.gone, "the card moves with the word on scroll (40 px) and closes when the word leaves the screen: " + JSON.stringify(fl));
     // lock-screen scrubber: position state + seekto
     const ms = await pg.evaluate(() => { const calls = []; const orig = navigator.mediaSession.setPositionState; navigator.mediaSession.setPositionState = x => calls.push(x); const hs = {}; const oh = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession); navigator.mediaSession.setActionHandler = (k, f) => { hs[k] = f; };
-      const el = { _msw: true, duration: 200, currentTime: 30, playbackRate: 1, addEventListener() {} }; msSeekable(el); hs.seekto && hs.seekto({ seekTime: 90 });
-      navigator.mediaSession.setPositionState = orig; navigator.mediaSession.setActionHandler = oh; return { calls, cur: el.currentTime, has: !!hs.seekto }; });
-    ok(ms.has && ms.cur === 90 && ms.calls.length >= 2 && ms.calls[0].duration === 200 && ms.calls[ms.calls.length - 1].position === 90, "lock screen: the position is told and seekto moves the audio: " + JSON.stringify(ms));
+      const el = { _msw: true, duration: 200, currentTime: 30, playbackRate: 1, addEventListener() {} }; msSeekable(el); hs.seekto && hs.seekto({ seekTime: 90 }); const j = []; hs.seekbackward && hs.seekbackward({ seekOffset: 10 }); j.push(el.currentTime); hs.seekforward && hs.seekforward({}); hs.seekforward && hs.seekforward({}); j.push(el.currentTime); el.currentTime = 195; hs.seekforward && hs.seekforward({}); j.push(el.currentTime); el.currentTime = 4; hs.seekbackward && hs.seekbackward({}); j.push(el.currentTime);
+      navigator.mediaSession.setPositionState = orig; navigator.mediaSession.setActionHandler = oh; return { calls, cur: 90, has: !!hs.seekto, j }; });
+    ok(JSON.stringify(ms.j) === "[80,100,199.9,0]", "lock screen −10 / +10 move the audio 10 s (and stop at the ends): " + JSON.stringify(ms.j));
+    ok(ms.has && ms.cur === 90 && ms.calls.length >= 2 && ms.calls[0].duration === 200 && ms.calls[1].position === 90, "lock screen: the position is told and seekto moves the audio: " + JSON.stringify(ms));
     const c = await open("唯心主义", {});
     ok(c.more && c.hidden && !/每个部分/.test(c.text), "a word with a meaning: as before (更多 for the characters)");
   } catch (e) { ok(false, "error " + e); }
