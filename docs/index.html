@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-GDyqCbRoesjVUa2DKDivlDvrdxQOgUyyMumuMYBqyvM='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-kIEWEzbeiDt+qu437sOuy1OBmKAswgrsNcvP3sP/vL4='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -8,6 +8,9 @@
 @font-face{font-family:"Figtree";src:url("data/fonts/Figtree.woff") format("woff");font-weight:400 700;font-display:swap}
 @font-face{font-family:"Noto Serif SC";src:url("data/fonts/NotoSerifSC-500.woff") format("woff");font-weight:400 600;font-display:swap}
 @font-face{font-family:"Noto Serif SC";src:url("data/fonts/NotoSerifSC-700.woff") format("woff");font-weight:700 900;font-display:swap}
+/* (v113) the traditional forms of those characters (for 繁 and books' 原文), in their own family right after it so the simplified files stay as they are */
+@font-face{font-family:"Noto Serif SC T";src:url("data/fonts/NotoSerifSC-trad-500.woff") format("woff");font-weight:400 600;font-display:swap}
+@font-face{font-family:"Noto Serif SC T";src:url("data/fonts/NotoSerifSC-trad-700.woff") format("woff");font-weight:700 900;font-display:swap}
 /* Layout: one phone-width column, bottom tab bar; practice cards fill the column. Grid-paper (稿纸) answer boxes are the signature detail. */
 :root{
   --bg:#f1f3f6; --surface:#ffffff; --ink:#18202b; --muted:#5b6676; --line:#dce1e8;
@@ -15,7 +18,7 @@
   --good:#1d8566; --good-soft:#dcf1ea; --bad:#c2412d; --bad-soft:#f8e2dd; --gold:#a77a14; --gold-soft:#f5ead0; --plum:#8a4fbf;
   --grid:rgba(47,75,168,.10);
   --f-ui:"Figtree","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
-  --f-zh:"Noto Serif SC","Songti SC","STSong","SimSun","PingFang SC",serif;
+  --f-zh:"Noto Serif SC","Noto Serif SC T","Songti SC","STSong","SimSun","PingFang SC",serif;
   --r:14px;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
@@ -233,6 +236,7 @@ html.kflock,html.kflock body{overflow:hidden;overscroll-behavior:none;height:100
 .sheet.popm{bottom:auto;padding:0 12px} .sheet.popm .in{border-radius:14px;border-bottom:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.22)}
 .tagc{font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)} .tagc.on{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
 .inp{font:inherit;font-size:16px;padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%}
+.inp.zh{font-family:var(--f-zh)} /* (v113) .inp's font:inherit came later than .zh and won: the free-writing box and the cloze box were in the UI font */
 .sheet.pop .in{border-radius:14px;border-bottom:1px solid var(--line);max-height:60vh}
 .pitem.done{opacity:.62;background:transparent}
 .cue{display:block;padding:4px 8px;margin:0 -8px;border-radius:8px;font-family:var(--f-zh);font-size:19px;line-height:1.7;text-align:left;width:calc(100% + 16px)}
@@ -2866,7 +2870,7 @@ function renderFw(card, el, onResult, onNext) {
     <div class="reading"><h2 class="zh" id="fwq" style="font-size:21px;line-height:1.7">${toks.map((t, ti) => tokHtml(t, "0:" + ti, false)).join("")}</h2></div>
     ${it.en ? `<details><summary class="small muted">英文 English</summary><p class="small">${esc(it.en)}</p></details>` : ""}
     <p class="small muted">${x.back ? "上次写过这题，这次不看，再写一遍 · You answered this before: write it again without looking." : "用一句话回答，多写也可以 · Answer in a sentence (more is fine). Tap a word to look it up."}</p>
-    <textarea class="inp zh" id="fwans" rows="3" lang="zh" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-size:18px"></textarea>
+    <textarea class="inp zh" id="fwans" rows="3" lang="zh-CN" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%;font-size:18px"></textarea>
     <button class="btn wide" id="fwgo">提交 Submit</button><div id="fb"></div></div>`;
   const cc = $("#cc", el), paras = [toks];
   $$("#fwq .tk", el).forEach(s => s.onclick = () => { const [pi, ti] = s.dataset.k.split(":").map(Number); s.classList.add("looked"); openSheet(pseudo, paras, pi, ti, s); });
@@ -3435,7 +3439,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v112 · 11/25 15:06"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v113 · 11/27 01:12"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -4252,8 +4256,10 @@ function bkPageInit(main) {
 function bkPageLayout(c, at) { // at: {p} (the page holding paragraph p, or the search hit), {last: true}, or {pg}
   const pw = $("#bkpw"), pi = $("#bkpi"); if (!pw || !pi) return;
   BK.pc = c;
-  const bar = $(".bkpb"), tsb = $("#ttsbar"), H = Math.max(200, innerHeight - pw.getBoundingClientRect().top - (bar ? bar.offsetHeight : 44) - (tsb ? tsb.offsetHeight + 6 : 0) - 12);
+  const bar = $(".bkpb"), tsb = $("#ttsbar"); let H = Math.max(200, innerHeight - pw.getBoundingClientRect().top - (bar ? bar.offsetHeight : 44) - (tsb ? tsb.offsetHeight + 6 : 0) - 12);
   pw.style.height = H + "px";
+  // (v113) the guess above left the ‹ › bar a few px below the screen's edge (cut off); measure and pull it back in, 4 px to spare
+  if (bar) { const ov = Math.ceil(Math.max(bar.getBoundingClientRect().bottom, tsb ? tsb.getBoundingClientRect().bottom : 0) + 4 - innerHeight); if (ov > 0 && H - ov >= 200) { H -= ov; pw.style.height = H + "px"; } }
   const W = pw.clientWidth;
   pi.style.transition = "none"; pi.style.transform = "none";
   pi.style.width = W + "px"; pi.style.height = H + "px"; pi.style.columnWidth = W + "px"; pi.style.columnGap = BK_GAP + "px";

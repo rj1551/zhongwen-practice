@@ -167,6 +167,8 @@ function makeBook() {
   const pg = await page.evaluate(() => ({ lock: document.documentElement.classList.contains("bklock"), pages: BK.pages, pg: BK.pg, pos: BK.pos, sw: document.documentElement.scrollWidth, menu: !!$("#aapop") }));
   ok(pg.lock && pg.pages > 1 && pg.pos === posA && pg.sw <= 390 && !pg.menu, "翻页 Pages: the page doesn't scroll, the chunk is laid out in pages, same place, nothing sticks out sideways: " + JSON.stringify(pg));
   await page.screenshot({ path: OUT + "/books-page.png" });
+  const pbar = await page.evaluate(() => [$(".bkpb").getBoundingClientRect().bottom, $("#bknext").getBoundingClientRect().bottom, innerHeight]);
+  ok(pbar[0] <= pbar[2] && pbar[1] <= pbar[2], "(v113) the ‹ › bar sits wholly on screen, not cut off at the bottom: " + JSON.stringify(pbar));
   const vis = async () => page.evaluate(() => { const w = $("#bkpw").getBoundingClientRect(); return $$("#bkpi .tk").filter(t => { const r = t.getBoundingClientRect(); return r.left >= w.left - 1 && r.right <= w.right + 1 && r.width > 0; }).length; });
   ok(await vis() > 30, "the current page shows text");
   const p0 = await page.evaluate(() => [BK.pc, BK.pg]);

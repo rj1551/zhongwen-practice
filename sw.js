@@ -2,11 +2,12 @@
 // Two stores (v68): CACHE holds the app and is renewed with every release; DATA holds the big files that almost
 // never change (the 7 MB dictionary, the 简/繁 table) and is renewed only when DATA's number is bumped. Before v68
 // every release downloaded those ~7.3 MB again. Bump DATA only when cedict.txt or zhconv.txt changes.
-const CACHE = "zwlgf-v112";
+const CACHE = "zwlgf-v113";
 const DATA = "zwlgf-data-1";
 
 // (v112) the app's own fonts (data/fonts) are kept here too: ~3.8 MB, downloaded once and kept across releases
-const BIG = ["data/cedict.txt", "data/zhconv.txt", "data/fonts/NotoSerifSC-500.woff", "data/fonts/NotoSerifSC-700.woff", "data/fonts/Figtree.woff"];
+// (v113) + the traditional forms (~1.6 MB), new files so phones fetch only them; the simplified ones stay
+const BIG = ["data/cedict.txt", "data/zhconv.txt", "data/fonts/NotoSerifSC-500.woff", "data/fonts/NotoSerifSC-700.woff", "data/fonts/Figtree.woff", "data/fonts/NotoSerifSC-trad-500.woff", "data/fonts/NotoSerifSC-trad-700.woff"];
 const FILES = ["./", "index.html", "data/words.json", "data/content.json", "data/slang.json", "manifest.json", "icon-192.png", "icon-512.png", "icon-180.png"];
 const isBig = url => BIG.some(f => new URL(f, self.registration.scope).href === url.split(/[?#]/)[0]);
 const storeFor = url => isBig(url) ? DATA : CACHE;
