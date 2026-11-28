@@ -140,7 +140,22 @@ if ((pk.passages || []).filter(x => x && x.kind === "wb").length > 2) problems.p
 let ob = {}; try { ob = readJson(path.join(DATA, "outbox.json")); } catch (e) {}
 const reqs = new Map((ob.requests || []).map(r => [r.rid, r]));
 // "held": requests (and hints) that tools/daily-run/inputs.js held back as suspicious, reported to the learner
-const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics", "pyfix", "fw", "fwchecks"];
+const KNOWN_TOP = ["zwpack", "id", "made", "by", "ladder", "sen", "passages", "sentences", "questions", "regrades", "held", "lyrics", "pyfix", "pygl", "fw", "fwchecks"];
+// (v117) a word the pinyin check makes (one part, 2+ characters) that CC-CEDICT lacks must come with a meaning ("gl"):
+// the app shows it as a word and the learner can save it (重归于好 had pinyin only). The dictionary is the app's own
+// data/cedict.txt (simplified headwords); traditional lyrics are converted with data/zhconv.txt first.
+let CEDW = null, T2S = null;
+function inCedict(w) {
+  if (!CEDW) {
+    CEDW = new Set(); for (const l of fs.readFileSync(path.join(APP, "data", "cedict.txt"), "utf8").split("\n")) { const i = l.indexOf("\t"); if (i > 0) CEDW.add(l.slice(0, i)); }
+    T2S = new Map(); let cur = null;
+    for (const l of fs.readFileSync(path.join(APP, "data", "zhconv.txt"), "utf8").split("\n")) { if (l.startsWith("## ")) { cur = l.slice(3).trim(); continue; } if (cur !== "t2s" || !l || l[0] === "#") continue; const i = l.indexOf("\t"); if (i > 0) T2S.set(l.slice(0, i), l.slice(i + 1)); }
+  }
+  if (CEDW.has(w)) return true;
+  const whole = T2S.get(w); if (whole && CEDW.has(whole)) return true;
+  return CEDW.has(Array.from(w).map(c => T2S.get(c) || c).join(""));
+}
+const oneWord = f => Array.from(String(f.w || "")).length > 1 && (f.split == null || (Array.isArray(f.split) && f.split.length === 1));
 // "pyfix": corrections to the app's pinyin / word grouping for a song — only the spots, never the lines
 if (pk.pyfix !== undefined) {
   const cap = 30;
@@ -165,6 +180,27 @@ if (pk.pyfix !== undefined) {
         if (f.split != null && (!Array.isArray(f.split) || !f.split.every(x => Number.isInteger(x) && x > 0) || f.split.reduce((p, q) => p + q, 0) !== w.length)) problems.push(fa + ': "split" must be lengths adding up to w');
         if (f.gl != null && (typeof f.gl !== "string" || f.gl.length > 80)) problems.push(fa + ': "gl" must be a few words');
         if (f.py == null && f.split == null && f.gl == null) problems.push(fa + ": nothing to fix (needs py, split or gl)");
+        else if (oneWord(f) && !(typeof f.gl === "string" && f.gl.trim()) && !inCedict(String(f.w))) problems.push(fa + `: ${f.w} is shown as one word but isn't in the dictionary (data/cedict.txt): give "gl", a few words of what it means in this song`);
+      });
+    });
+  }
+}
+// "pygl" (v117): meanings for words an earlier pinyin check made (requests kind "pygl", rid g:<id>, words [{l, at, w}])
+if (pk.pygl !== undefined) {
+  if (!Array.isArray(pk.pygl)) problems.push("pygl: must be a list");
+  else {
+    if (pk.pygl.length > 30) problems.push("pygl: at most 30 songs this run");
+    pk.pygl.forEach((a, n) => {
+      const at = `pygl ${n + 1} ${a && a.rid}`, rq = a && reqs.get(a.rid);
+      if (!rq || rq.kind !== "pygl") return problems.push(at + ": rid must be a pygl request in outbox.json");
+      if (a.h !== rq.h) problems.push(at + `: "h" must be copied from the request (${rq.h})`);
+      if (!Array.isArray(a.words)) return problems.push(at + ': needs "words"');
+      const want = new Map((rq.words || []).map(x => [x.l + ":" + x.at + ":" + x.w, x]));
+      a.words.forEach((x, j) => {
+        const wa = `${at} word ${j + 1}`;
+        if (!x || !want.has(x.l + ":" + x.at + ":" + x.w)) return problems.push(wa + ": l, at and w must be copied from the request");
+        if (typeof x.gl !== "string" || x.gl.length > 80) return problems.push(wa + ': "gl" must be a few words (or "" if the dictionary has the word)');
+        if (!x.gl.trim() && !inCedict(String(x.w))) problems.push(wa + `: ${x.w} isn't in the dictionary (data/cedict.txt): "gl" can't be empty`);
       });
     });
   }

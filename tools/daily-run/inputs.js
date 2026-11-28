@@ -36,7 +36,7 @@ const SUSPECT = [
 const suspect = s => SUSPECT.find(r => r.test(s));
 const held = [];
 const hold = (rid, why) => held.push({ rid: str(rid, 90), why });
-const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, fwcheck: /^x:[\w.-]{1,40}:[ab]$/, fwtopic: /^wt:[a-z0-9]{1,15}$/, fwdrill: /^wd:[\w.-]{1,40}:[ab]$/, lyrics: /^y:[\w.-]{1,60}$/, pyfix: /^f:[\w.-]{1,60}$/ };
+const RID = { sentence: /^w:[^\s]{1,20}$/, questions: /^q:(mine|listen):[\w.-]{1,60}$/, regrade: /^r:[\w.-]{1,40}:\d{1,13}$/, check: /^c:[\w.-]{1,40}:\d{1,13}$/, passage: /^p:\d{1,15}$/, fwcheck: /^x:[\w.-]{1,40}:[ab]$/, fwtopic: /^wt:[a-z0-9]{1,15}$/, fwdrill: /^wd:[\w.-]{1,40}:[ab]$/, lyrics: /^y:[\w.-]{1,60}$/, pyfix: /^f:[\w.-]{1,60}$/, pygl: /^g:[\w.-]{1,60}$/ };
 const GENRES = ["xhs", "news", "book", "travel", "wb"];
 
 const o = readJson("outbox.json");
@@ -88,6 +88,18 @@ for (const r of Array.isArray(o.requests) ? o.requests.slice(0, 400) : []) {
     if (auto.length !== lines.length) { hold(rid, "the app's pinyin doesn't match the song's lines"); continue; }
     texts[rid] = { kind: "pyfix", title: str(it.title, 60), lines, auto };
     q = { rid, kind, id, h };
+  }
+  else if (kind === "pygl") { // (v117) meanings for words an earlier pinyin check made: only those spots and their lines
+    const id = str(r.id, 60), h = str(r.h, 12);
+    if (rid !== "g:" + id || !/^[a-z0-9]{1,12}$/.test(h)) { hold(rid, "request doesn't match its id"); continue; }
+    const it = findItem("gen-listen-", id);
+    if (!it || !Array.isArray(it.cues)) { hold(rid, "the song wasn't found"); continue; }
+    const words = (Array.isArray(r.words) ? r.words : []).slice(0, 25).map(x => ({ l: x && x.l, at: x && x.at, w: str(x && x.w, 4) }))
+      .filter(x => Number.isInteger(x.l) && Number.isInteger(x.at) && Array.isArray(it.cues[x.l]) && Array.from(String(it.cues[x.l][1])).slice(x.at, x.at + Array.from(x.w).length).join("") === x.w)
+      .map(x => Object.assign(x, { line: str(it.cues[x.l][1], 200) }));
+    if (!words.length) { hold(rid, "the words don't match the song's lines"); continue; }
+    texts[rid] = { kind: "pygl", title: str(it.title, 60), words };
+    q = { rid, kind, id, h, words: words.map(({ l, at, w }) => ({ l, at, w })) };
   }
   else if (kind === "lyrics") { hold(rid, "lyric analysis is switched off (it would reproduce the lyrics); nothing was sent to the run"); continue; }
   else if (false) {

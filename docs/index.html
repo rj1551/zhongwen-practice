@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-99nkRwq9IkO+eUWGB50eRS5rTiCQtZTIB4SSoWail4E='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-BNM3rkDM/6jiqzv/Hf7IUNnIQ22HFTmrBo1mAPCXZHI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -3480,7 +3480,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v116 · 11/28 04:47"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v117 · 11/28 06:07"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -5560,6 +5560,11 @@ function lyrGl(it) { const g = {};
    ignored. Requests are derived (rid f:<id>), 5 songs a night or all with "Do all in the next run". */
 const PYFIX_PER_RUN = 30, PYFIX_MAX = 25; // learner: 30 songs a run, no Do-all button
 const pyfOk = it => !!(it.pyf && it.pyf.h === lyrHash(it) && Array.isArray(it.pyf.fixes));
+// (v117) a fix that makes one word of 2+ characters is shown as a word with Claude's pinyin: it needs a meaning when
+// the dictionary has none (重归于好). Older checks gave none: ask the run for those (requests g:<id>, pack "pygl").
+const pyglOne = f => !!f && Array.from(f.w || "").length > 1 && (!Array.isArray(f.split) || f.split.length === 1);
+const pyglNeed = f => pyglOne(f) && !f.gl && !f.glOk && !(CED && CED.has(toSimp(f.w)));
+const pyglBacklog = () => (S.gen.listen || []).filter(it => pyfOk(it) && it.pyf.fixes.some(pyglNeed));
 const pyfWanted = it => itemType(it) === "song" && (it.cues || []).length > 0 && !pyfOk(it);
 function pyfFor(it, i) { // a fix also applies to every line with the same text (choruses are fixed once)
   if (!pyfOk(it)) return []; const txt = it.cues[i][1];
@@ -7682,6 +7687,7 @@ function outboxRequests() {
   const pb = pyfBacklog();
   if (pb.length && (!CED || !ZHC)) { if (!CED) loadCedict().then(m => { if (m) outboxSoon(true); }); if (!ZHC) loadZhc().then(() => outboxSoon(true)).catch(e => noteErr("简/繁 table", e)); } // ask once the full dictionary and 简/繁 table are here (many lyrics are traditional)
   else for (const it of pb.slice(0, PYFIX_PER_RUN)) out.push({ rid: "f:" + it.id, kind: "pyfix", id: it.id, h: lyrHash(it), auto: autoLines(it) });
+  for (const it of pyglBacklog().slice(0, PYFIX_PER_RUN)) out.push({ rid: "g:" + it.id, kind: "pygl", id: it.id, h: lyrHash(it), words: it.pyf.fixes.filter(pyglNeed).map(f => ({ l: f.l, at: f.at, w: f.w })) });
   return out;
 }
 // the app's pinyin per line for the check, cached per lyrics version (the note is recomputed after every save)
@@ -7712,9 +7718,23 @@ function applyAnswers(pk, r) {
       if (typeof f.py === "string" && f.py.trim()) x.py = f.py.trim().slice(0, 40);
       if (Array.isArray(f.split) && f.split.every(n => Number.isInteger(n) && n > 0) && f.split.reduce((p, q) => p + q, 0) === w.length) x.split = f.split;
       if (typeof f.gl === "string" && f.gl.trim()) x.gl = f.gl.trim().slice(0, 80);
+      else if (pyglOne(x)) x.glOk = 1; // (v117) the pack check makes the run give a meaning to any such word the dictionary lacks
       if (x.py || x.split || x.gl) fixes.push(x);
     }
     it.pyf = { h: a.h, fixes, t: now() }; touch(it, "lyr"); r.pf++;
+  }
+  r.pg = 0; // (v117) meanings for words the pinyin check made that the dictionary doesn't have ("" = it has them)
+  for (const a of Array.isArray(pk.pygl) ? pk.pygl.slice(0, 100) : []) {
+    const m = String(a && a.rid || "").match(/^g:(.+)$/), it = m && (S.gen.listen || []).find(x => x.id === m[1]);
+    if (!it || !Array.isArray(a.words)) { r.bad++; continue; }
+    if (a.h !== lyrHash(it) || !pyfOk(it)) continue;
+    let n = 0;
+    for (const x of a.words.slice(0, PYFIX_MAX)) {
+      if (!x || typeof x.gl !== "string") continue;
+      const f = it.pyf.fixes.find(f => f.l === x.l && f.at === x.at && f.w === x.w); if (!f || !pyglOne(f)) continue;
+      if (x.gl.trim()) { f.gl = x.gl.trim().slice(0, 80); delete f.glOk; } else f.glOk = 1; n++;
+    }
+    if (n) { touch(it, "lyr"); r.pg++; }
   }
   r.ly = 0;
   for (const a of Array.isArray(pk.lyrics) ? pk.lyrics.slice(0, 100) : []) {
@@ -7893,11 +7913,11 @@ function applyPack(pk, src) {
     S.heldLog = [{ rid: h.rid.slice(0, 90), why: String(h.why || "").slice(0, 200), t: now(), pack: pk.id }].concat(S.heldLog || []).slice(0, 60);
   }
   S.packsDone = (S.packsDone || []).concat([pk.id]).slice(-300);
-  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, pf: r.pf, fw: r.fw, fwc: r.fwc, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
+  S.packLog = [{ id: pk.id, t: now(), src, lad: r.lad, sen: r.sen, psg: r.psg, ws: r.ws, qs: r.qs, rg: r.rg, ly: r.ly, pf: r.pf, pg: r.pg, fw: r.fw, fwc: r.fwc, held: r.held, bad: r.bad }].concat((S.packLog || []).filter(x => x.id !== pk.id)).slice(0, 20);
   save(); if (r.psg) loadCedict();
   return r;
 }
-const packSummary = r => [r.fw ? `+${r.fw} 自由写题目 free-writing prompts` : "", r.fwc ? `Claude 看了 ${r.fwc} 篇自由写 · checked ${r.fwc} free-writing answer${r.fwc > 1 ? "s" : ""}` : "", r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.pf ? `🎵 ${r.pf} 首歌的拼音检查好了 · pinyin checked for ${r.pf} song${r.pf > 1 ? "s" : ""}` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
+const packSummary = r => [r.fw ? `+${r.fw} 自由写题目 free-writing prompts` : "", r.fwc ? `Claude 看了 ${r.fwc} 篇自由写 · checked ${r.fwc} free-writing answer${r.fwc > 1 ? "s" : ""}` : "", r.held ? `Claude 没做 ${r.held} 个请求（原因在“备货”）· ${r.held} request${r.held > 1 ? "s" : ""} not done (reasons under 备货 Stock)` : "", r.lad ? `+${r.lad} 造句 drills` : "", r.ly ? `🎵 ${r.ly} 首歌词分析好了 · ${r.ly} song${r.ly > 1 ? "s" : ""} analysed` : "", r.pf ? `🎵 ${r.pf} 首歌的拼音检查好了 · pinyin checked for ${r.pf} song${r.pf > 1 ? "s" : ""}` : "", r.pg ? `🎵 ${r.pg} 首歌的词补上了意思 · meanings added in ${r.pg} song${r.pg > 1 ? "s" : ""}` : "", r.sen ? `+${r.sen} 短句 sentences` : "", r.psg ? `+${r.psg} 短文 passages` : "", r.ws ? `${r.ws} 个例句 example sentence${r.ws > 1 ? "s" : ""}` : "", r.qs ? `${r.qs} 份问题 question set${r.qs > 1 ? "s" : ""}` : "", r.rg ? `Claude 看了 ${r.rg} 句 · ${r.rg} regrade${r.rg > 1 ? "s" : ""}` : "", r.ck ? `Claude 抽查了 ${r.ck} 句 · ${r.ck} check${r.ck > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "没有新内容 · nothing new";
 // after every sync: apply packs from the repo this device's progress hasn't seen
 function applyRepoPacks() {
   if (!COL || !COL.packs) return;
