@@ -2,7 +2,7 @@
 // Two stores (v68): CACHE holds the app and is renewed with every release; DATA holds the big files that almost
 // never change (the 7 MB dictionary, the 简/繁 table) and is renewed only when DATA's number is bumped. Before v68
 // every release downloaded those ~7.3 MB again. Bump DATA only when cedict.txt or zhconv.txt changes.
-const CACHE = "zwlgf-v115";
+const CACHE = "zwlgf-v116";
 const DATA = "zwlgf-data-1";
 
 // (v112) the app's own fonts (data/fonts) are kept here too: ~3.8 MB, downloaded once and kept across releases

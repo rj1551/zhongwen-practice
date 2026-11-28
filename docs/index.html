@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-T5mcoqG8Z7Ok11W7tMumAV6sQNJZBOX7pFIEy7U9oqI='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-99nkRwq9IkO+eUWGB50eRS5rTiCQtZTIB4SSoWail4E='; worker-src 'self'; connect-src 'self' https:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-180.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}</style></head><body>
 <title>中文练功房</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="theme-color" content="#2f4ba8">
@@ -923,7 +923,8 @@ function mergeStates(a, b) {
     if (!y) { m.bank[k] = x; continue; }
     const hasS = b => !!b.s && !b.needS;
     const keep = hasS(y) || !hasS(x) ? y : x, tags = [...new Set([...(y.tags || []), ...(x.tags || [])])];
-    m.bank[k] = Object.assign({}, keep, tags.length ? { tags } : {}, x.saved || y.saved ? { saved: true } : {});
+    const other = keep === y ? x : y; // (v116) a meaning worked out later on one device isn't lost
+    m.bank[k] = Object.assign({}, keep, !keep.gl && other.gl ? { gl: other.gl } : {}, tags.length ? { tags } : {}, x.saved || y.saved ? { saved: true } : {});
   }
   for (const k in o.reads || {}) {
     const x = o.reads[k], y = m.reads[k];
@@ -1238,6 +1239,13 @@ function subWords(tok, gl = {}) {
   const out = []; let i = 0;
   while (i < ch.length) { let L = Math.min(6, ch.length - i - (i === 0 ? 1 : 0)); for (; L > 1; L--) { const w = ch.slice(i, i + L).join(""); if (DICT.has(w) || CED.has(w)) break; } out.push(ch.slice(i, i + L).join("")); i += L; }
   return out.length < ch.length ? out.map(x => ({ x, d: lookup(x, gl) })) : [];
+}
+// (v116) a meaning for a word that has none of its own (e.g. 重归于好 saved from a lyric): its dictionary meaning if
+// there is one now, else the first meaning of each part — "重 heavy · 归于 to belong to · 好 good"
+function wordGlossFallback(zh, gl = {}) {
+  const d = lookup(zh, gl); if (d && d.gl) return d.gl;
+  const ps = subWords(zh, gl), list = ps.length ? ps.map(x => [x.x, x.d]) : Array.from(zh).map(c => [c, lookup(c, gl)]);
+  return list.filter(([, d]) => d && d.gl).map(([x, d]) => x + " " + d.gl.split(/[;；]/)[0].trim()).join(" · ");
 }
 function lookup(tok, gl = {}) {
   const a = lookupAll(tok, gl);
@@ -2608,6 +2616,11 @@ function renderCtx(item, el, onResult, onNext, placement) {
     nextButton(cc, onNext);
   });
 }
+// (v116) a saved word with no meaning: work one out (wordGlossFallback) once the dictionary is loaded, show it, keep it
+function fillGloss(b, span) {
+  const go = () => { const g = wordGlossFallback(b.zh); if (!g || b.gl) return; b.gl = g; save(); if (span && span.isConnected) span.textContent = g; };
+  if (CED) go(); else loadCedict().then(go).catch(() => {});
+}
 function renderBank(id, el, onResult, onNext) {
   const b = S.bank[id];
   if (isAutoWord(b) && !S.items["B:" + id]) return renderNewWord(id, el, onResult, onNext);
@@ -2617,8 +2630,9 @@ function renderBank(id, el, onResult, onNext) {
   const cc = $("#cc", el);
   $("#rev", el).onclick = () => {
     $("#rev", el).remove();
-    $("#fb", el).innerHTML = `<div class="fb mid"><span><span class="zh" style="font-size:22px">${esc(b.zh)}</span> ${esc(b.py || "")}</span><span>${esc(b.gl || "")}</span>
+    $("#fb", el).innerHTML = `<div class="fb mid"><span><span class="zh" style="font-size:22px">${esc(b.zh)}</span> ${esc(b.py || "")}</span><span id="bgl">${esc(b.gl || "")}</span>
       <div class="row"><button class="btn soft" data-k="1">记得 Knew it</button><button class="btn soft" data-k="0">忘了 Forgot</button></div></div>`;
+    if (!b.gl) fillGloss(b, $("#bgl", el)); // (v116) saved with no meaning (a lyric chunk before v114)
     $$("[data-k]", el).forEach(x => x.onclick = () => {
       const ok = x.dataset.k === "1";
       recordBox("B:" + id, "bank", ok, "ctx");
@@ -3466,7 +3480,7 @@ function toastAction(msg, label, fn, ms = 2500) {
   document.body.append(t); placeToasts(); setTimeout(() => t.remove(), ms);
 }
 function removeFromBank(word, bin = true) { if (bin && S.bank[word]) return trashWord(word); delete S.bank[word]; delete S.items["B:" + word]; goneMark("bank:" + word); save(); return null; }
-const APP_VERSION = "zwlgf-v115 · 11/27 05:48"; // stamped by build.sh: sw.js CACHE · build time (New York)
+const APP_VERSION = "zwlgf-v116 · 11/28 04:47"; // stamped by build.sh: sw.js CACHE · build time (New York)
 let SHEET_ARGS = null; // the open popup, so it can be redrawn when the full dictionary finishes loading
 function openSheet(p, paras, pi, ti, tokEl) {
   closeSheet(); SHEET_ARGS = [p, paras, pi, ti, tokEl];
@@ -3541,7 +3555,7 @@ function openSheet(p, paras, pi, ti, tokEl) {
   $("#addb", sh).onclick = () => {
     if (S.bank[word] && isAutoWord(S.bank[word])) { S.bank[word].saved = true; save(); closeSheet(); toast("已在复习中 · Already in your review"); return; }
     if (S.bank[word]) { removeFromBank(word); toast("已移出复习 Removed"); closeSheet(); return; }
-    S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? L.gl : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
+    S.bank[word] = { zh: word, s: sentenceAround(paras[pi], ti), py: L ? L.py : chars.map(c => c.py).join(" "), gl: L ? (L.gl || wordGlossFallback(word, p.gl || {})) : chars.map(c => c.ch + " " + c.gl).join("; "), t: now(), src: p.id };
     if (p.tags && p.tags.length) S.bank[word].tags = p.tags.slice();
     save(); closeSheet();
     toastAction("已加入 " + word, "撤销 Undo", () => { removeFromBank(word, false); toast("已撤销 Undone"); });

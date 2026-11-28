@@ -38,6 +38,13 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); 
       navigator.mediaSession.setPositionState = orig; navigator.mediaSession.setActionHandler = oh; return { calls, cur: 90, has: !!hs.seekto, j }; });
     ok(JSON.stringify(ms.j) === "[80,100,199.9,0]", "lock screen −10 / +10 move the audio 10 s (and stop at the ends): " + JSON.stringify(ms.j));
     ok(ms.has && ms.cur === 90 && ms.calls.length >= 2 && ms.calls[0].duration === 200 && ms.calls[1].position === 90, "lock screen: the position is told and seekto moves the audio: " + JSON.stringify(ms));
+    // (v116) a saved word with no meaning (重归于好 from a lyric before v114) gets one from its parts; new saves get it too
+    const fg = await pg.evaluate(() => [wordGlossFallback("重归于好"), wordGlossFallback("梭标")]);
+    ok(/^重 .+ · 归于 to belong to .*· 好 /.test(fg[0]) && /spear/.test(fg[1]), "meaning from the parts / the dictionary: " + JSON.stringify(fg));
+    const bk = await pg.evaluate(async () => { S.bank["重归于好"] = { zh: "重归于好", s: "就别重归于好", py: "chóngguīyúhǎo", gl: "", t: now() }; const el = document.createElement("div"); document.body.append(el); renderBank("重归于好", el, () => {}, () => {}); $("#rev", el).click(); const g = $("#bgl", el).textContent; el.remove();
+      const m = mergeStates(Object.assign(freshState(), { bank: { w: { zh: "w", s: "w句", gl: "" } }, updatedAt: 2 }), Object.assign(freshState(), { bank: { w: { zh: "w", s: "w句", gl: "meaning" } }, updatedAt: 1 })).bank.w.gl;
+      return { g, saved: S.bank["重归于好"].gl, m }; });
+    ok(/归于/.test(bk.g) && bk.saved === bk.g && bk.m === "meaning", "the review card shows and keeps it; a merge keeps a meaning one side has: " + JSON.stringify(bk));
     const c = await open("唯心主义", {});
     ok(c.more && c.hidden && !/每个部分/.test(c.text), "a word with a meaning: as before (更多 for the characters)");
   } catch (e) { ok(false, "error " + e); }
